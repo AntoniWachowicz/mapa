@@ -14,13 +14,13 @@
 </script>
 
 <svelte:head>
-  <title>Login - Map Builder</title>
+  <title>Logowanie - Mapa Builder</title>
 </svelte:head>
 
 <div class="login-container">
   <div class="login-card">
-    <h1>🗺️ Map Builder</h1>
-    <h2>Please sign in</h2>
+    <h1>🗺️ Mapa Builder</h1>
+    <h2>Proszę się zalogować</h2>
     
     <form 
       method="POST" 
@@ -40,7 +40,7 @@
       }}
     >
       <div class="form-group">
-        <label for="username">Username:</label>
+        <label for="username">Nazwa użytkownika:</label>
         <input 
           id="username"
           name="username" 
@@ -52,7 +52,7 @@
       </div>
       
       <div class="form-group">
-        <label for="password">Password:</label>
+        <label for="password">Hasło:</label>
         <input 
           id="password"
           name="password" 
@@ -70,12 +70,12 @@
       {/if}
       
       <button type="submit" disabled={loading}>
-        {loading ? 'Signing in...' : 'Sign In'}
+        {loading ? 'Logowanie...' : 'Zaloguj się'}
       </button>
     </form>
     
     <p class="help-text">
-      Contact the administrator if you need access credentials.
+      Skontaktuj się z administratorem jeśli potrzebujesz danych dostępowych.
     </p>
   </div>
 </div>

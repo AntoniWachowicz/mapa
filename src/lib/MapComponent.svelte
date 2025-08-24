@@ -60,8 +60,9 @@
     ];
     map.setMaxBounds(bounds);
     
-    map.setMinZoom(mapConfig.defaultZoom);
-    map.setMaxZoom(mapConfig.maxCustomZoom);
+    // Set zoom range based on configuration
+    map.setMinZoom(mapConfig.defaultZoom);  // Default zoom is the furthest users can zoom out
+    map.setMaxZoom(18); // Allow maximum detail zoom
 
     // Create OpenStreetMap tile layer (but don't add it yet)
     osmTileLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {

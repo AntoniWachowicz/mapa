@@ -1,0 +1,102 @@
+FIELD TYPES FOR LGD INVESTMENT MAP
+=====================================
+
+This file contains suggestions for different field types that could be useful for displaying local investments and projects to citizens.
+
+CURRENTLY IMPLEMENTED:
+- text (basic text input)
+- number (numeric input)
+- checkbox (yes/no toggle)
+- tags (major + minor tags with colors)
+
+SUGGESTED NEW FIELD TYPES:
+==========================
+
+BASIC INPUT TYPES:
+- email (text input with email validation)
+- phone (formatted phone number input)
+- url (web address with validation)
+- date (date picker)
+- textarea (multi-line text input)
+
+SELECTION TYPES:
+- select (dropdown with predefined options)
+- radio (single choice from options)
+- multiselect (multiple choices from predefined options)
+
+FINANCIAL/NUMERIC:
+- currency (money amount with currency symbol)
+- percentage (0-100% with % symbol)
+- rating (star rating system 1-5)
+
+MEDIA TYPES:
+- image (single image upload/URL)
+- images (multiple image gallery)
+- youtube (YouTube video embed URL)
+- file (PDF/document upload)
+- files (multiple file attachments)
+
+SPECIALIZED:
+- status (predefined status options with colors)
+- priority (high/medium/low with visual indicators)
+- daterange (start and end date picker)
+- timeline (milestone tracking)
+- location (address/coordinates separate from main map)
+- richtext (formatted text with bold/italic/links)
+
+MOST PRACTICAL FOR IMMEDIATE IMPLEMENTATION:
+============================================
+
+1. EMAIL - Simple validation, useful for contact info
+2. DATE - Very common need for project dates
+3. SELECT - Dropdown for status, category, funding source
+4. CURRENCY - Essential for showing investment amounts
+5. TEXTAREA - Longer descriptions than single-line text
+6. URL - Links to project websites, news articles
+7. PERCENTAGE - Project completion, funding percentages
+
+EXAMPLES OF USE CASES:
+=====================
+
+PROJECT STATUS dropdown:
+- Planowany (Planned)
+- W trakcie (In Progress) 
+- Ukończony (Completed)
+- Wstrzymany (On Hold)
+
+FUNDING SOURCE dropdown:
+- Fundusze UE (EU Funds)
+- Budżet krajowy (National Budget)
+- Budżet lokalny (Local Budget)
+- Środki prywatne (Private Funds)
+
+PROJECT CATEGORY dropdown:
+- Infrastruktura (Infrastructure)
+- Turystyka (Tourism)
+- Rolnictwo (Agriculture)
+- Środowisko (Environment)
+- Kultura (Culture)
+- Sport (Sports)
+
+INVESTMENT AMOUNT (currency):
+- Display with Polish złoty (PLN) symbol
+- Proper number formatting (123 456,78 zł)
+
+PROJECT DATES:
+- Data rozpoczęcia (Start Date)
+- Planowane zakończenie (Planned Completion)
+- Rzeczywiste zakończenie (Actual Completion)
+
+CONTACT INFO:
+- Email kontaktowy (Contact Email)
+- Strona internetowa projektu (Project Website)
+
+DESCRIPTION:
+- Opis projektu (Project Description) - textarea
+- Cele projektu (Project Goals) - textarea
+
+COMPLETION:
+- Procent ukończenia (Completion Percentage)
+- Ocena projektu (Project Rating)
+
+These field types would provide a rich set of options for describing local investments while being practical to implement and useful for citizens wanting to learn about their area.

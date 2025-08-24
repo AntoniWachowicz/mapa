@@ -11,44 +11,44 @@
 </script>
 
 <svelte:head>
-  <title>Map Builder - Home</title>
+  <title>Mapa Builder - Strona Główna</title>
 </svelte:head>
 
 <div class="home-container">
-  <h1>🗺️ Welcome to Map Builder</h1>
+  <h1>🗺️ Witamy w Mapa Builder</h1>
   
   {#if data.user}
     <div class="welcome-message">
-      <h2>Hello, {data.user.username}! 👋</h2>
-      <p>Your map building application is ready to use.</p>
+      <h2>Witaj, {data.user.username}! 👋</h2>
+      <p>Twoja aplikacja do tworzenia map jest gotowa do użycia.</p>
     </div>
     
     <div class="quick-actions">
-      <h3>Quick Actions</h3>
+      <h3>Szybkie Działania</h3>
       
       <div class="action-cards">
         <a href="/schema-builder" class="action-card">
           <div class="card-icon">📝</div>
-          <h4>Schema Builder</h4>
-          <p>Create and manage your data fields</p>
+          <h4>Kreator Schematu</h4>
+          <p>Twórz i zarządzaj polami danych</p>
         </a>
         
         <a href="/map" class="action-card">
           <div class="card-icon">📍</div>
-          <h4>Map View</h4>
-          <p>Add pins and view your map</p>
+          <h4>Widok Mapy</h4>
+          <p>Dodawaj pinezki i przeglądaj mapę</p>
         </a>
         
         <a href="/admin" class="action-card">
           <div class="card-icon">🔧</div>
-          <h4>Admin Settings</h4>
-          <p>Configure map bounds and settings</p>
+          <h4>Ustawienia Admin</h4>
+          <p>Konfiguruj granice mapy i ustawienia</p>
         </a>
       </div>
     </div>
   {:else}
     <div class="login-prompt">
-      <p>Please <a href="/login">sign in</a> to access the application.</p>
+      <p>Proszę <a href="/login">zaloguj się</a> aby uzyskać dostęp do aplikacji.</p>
     </div>
   {/if}
 </div>

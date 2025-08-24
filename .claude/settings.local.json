@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:omikron.info.pl)",
+      "Bash(rg:*)",
+      "Bash(npm run check:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

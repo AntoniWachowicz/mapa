@@ -42,7 +42,9 @@ export const actions = {
       throw new Error('Invalid template data');
     }
     const template: Template = JSON.parse(templateString);
-    updateTemplate(template);
+    console.log('Updating template:', template); // Debug log
+    await updateTemplate(template);
+    console.log('Template updated successfully'); // Debug log
     return { success: true };
   },
   
@@ -53,7 +55,7 @@ export const actions = {
       throw new Error('Invalid object data');
     }
     const objectData: ProjectData = JSON.parse(objectDataString);
-    createObject(objectData);
+    await createObject(objectData);
     return { success: true };
   },
   
@@ -63,7 +65,7 @@ export const actions = {
     if (typeof objectId !== 'string') {
       throw new Error('Invalid object ID');
     }
-    deleteObject(objectId);
+    await deleteObject(objectId);
     return { success: true };
   },
 
@@ -77,7 +79,7 @@ export const actions = {
       }
       
       const objectData: ProjectData = JSON.parse(objectDataString);
-      const updatedObject = updateObject(objectId, objectData);
+      const updatedObject = await updateObject(objectId, objectData);
       
       if (!updatedObject) {
         throw new Error('Object not found');

@@ -1,7 +1,7 @@
 <script lang="ts">
   import MapComponent from '$lib/MapComponent.svelte';
   import PinManager from '$lib/PinManager.svelte';
-  import type { Template, ProjectData, SavedObject, MapObject, MapConfig } from '$lib/types.js';
+  import type { Template, ProjectData, SavedObject, MapObject, MapConfig, TagFieldData } from '$lib/types.js';
   
   interface PageData {
     template: Template;
@@ -112,7 +112,7 @@
   }
   
   // Parse coordinates for map
-  function parseCoordinates(coordString: string | number | boolean): {lat: number, lng: number} | null {
+  function parseCoordinates(coordString: string | number | boolean | TagFieldData): {lat: number, lng: number} | null {
     if (typeof coordString !== 'string') return null;
     const parts = coordString.split(',').map(s => s.trim());
     if (parts.length !== 2) return null;
@@ -138,7 +138,7 @@
 </script>
 
 <svelte:head>
-  <title>Map View</title>
+  <title>Widok Mapy - Mapa Builder</title>
 </svelte:head>
 
 <svelte:window 
@@ -147,32 +147,11 @@
 />
 
 <div class="page-container">
-  <h1>Map View</h1>
+  <h1>Widok Mapy</h1>
   
   <div class="split-container" bind:this={splitContainer}>
-    <!-- Map Panel -->
-    <div class="map-panel" style="width: {splitPosition}%">
-      <MapComponent 
-        objects={validMapObjects()}
-        onMapClick={handleMapClick}
-        selectedCoordinates={selectedCoordinates}
-        focusCoordinates={focusCoordinates}
-        mapConfig={mapConfig}
-      />
-    </div>
-    
-    <!-- Draggable Divider -->
-    <button 
-      class="divider"
-      aria-label="Resize panels"
-      onmousedown={handleMouseDown}
-      onkeydown={handleKeyDown}
-    >
-      <span class="divider-handle">⋮⋮</span>
-    </button>
-    
-    <!-- Form Panel -->
-    <div class="form-panel" style="width: {100 - splitPosition}%">
+    <!-- Form Panel (now on left) -->
+    <div class="form-panel" style="width: {splitPosition}%">
       <div class="form-container">
         <PinManager 
           template={template} 
@@ -187,6 +166,27 @@
         />
       </div>
     </div>
+    
+    <!-- Draggable Divider -->
+    <button 
+      class="divider"
+      aria-label="Resize panels"
+      onmousedown={handleMouseDown}
+      onkeydown={handleKeyDown}
+    >
+      <span class="divider-handle">⋮⋮</span>
+    </button>
+    
+    <!-- Map Panel (now on right) -->
+    <div class="map-panel" style="width: {100 - splitPosition}%">
+      <MapComponent 
+        objects={validMapObjects()}
+        onMapClick={handleMapClick}
+        selectedCoordinates={selectedCoordinates}
+        focusCoordinates={focusCoordinates}
+        mapConfig={mapConfig}
+      />
+    </div>
   </div>
 </div>
 
@@ -195,60 +195,97 @@
     height: 100vh;
     display: flex;
     flex-direction: column;
+    background: #f8fafc;
   }
   
   .split-container {
     flex: 1;
     display: flex;
-    height: calc(100vh - 80px);
+    height: calc(100vh - 120px);
     position: relative;
+    gap: 2px;
+    background: #e5e7eb;
+    border-radius: 12px;
+    margin: 16px;
+    overflow: hidden;
+    box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
   }
   
   .map-panel {
     height: 100%;
     overflow: hidden;
+    background: #ffffff;
+    border-radius: 0 10px 10px 0;
   }
   
   .divider {
-    width: 8px;
-    background-color: #ccc;
+    width: 4px;
+    background: linear-gradient(to bottom, #e5e7eb, #d1d5db, #e5e7eb);
     border: none;
     cursor: col-resize;
-    transition: background-color 0.2s;
+    transition: all 0.2s ease;
     display: flex;
     align-items: center;
     justify-content: center;
     padding: 0;
+    position: relative;
+    flex-shrink: 0;
+  }
+  
+  .divider::before {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 2px;
+    height: 40px;
+    background: #9ca3af;
+    border-radius: 2px;
+    opacity: 0;
+    transition: all 0.2s ease;
   }
   
   .divider:hover,
   .divider:focus {
-    background-color: #999;
-    outline: 2px solid #007bff;
-    outline-offset: 2px;
+    background: linear-gradient(to bottom, #d1d5db, #9ca3af, #d1d5db);
+    outline: none;
+    width: 6px;
+  }
+  
+  .divider:hover::before {
+    opacity: 1;
+    background: #6b7280;
   }
   
   .divider-handle {
-    color: #666;
-    font-size: 12px;
-    line-height: 1;
-    user-select: none;
-    pointer-events: none;
+    display: none;
   }
   
   .form-panel {
     height: 100%;
     overflow-y: auto;
+    background: #ffffff;
+    border-radius: 10px 0 0 10px;
+    border-right: 1px solid #f1f5f9;
   }
   
   .form-container {
-    padding: 20px;
+    padding: 24px 32px 32px 32px;
+    height: calc(100% - 80px);
+    display: flex;
+    flex-direction: column;
   }
   
   h1 {
     margin: 0;
-    padding: 20px;
-    background: white;
-    border-bottom: 1px solid #eee;
+    padding: 24px 32px 20px 32px;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: #ffffff;
+    font-size: 24px;
+    font-weight: 600;
+    letter-spacing: -0.025em;
+    text-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+    border-bottom: none;
   }
 </style>

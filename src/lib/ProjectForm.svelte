@@ -93,6 +93,7 @@
   function getFieldValue(key: string): string | number {
     const value = formData[key];
     if (typeof value === 'boolean') return '';
+    if (typeof value === 'object') return ''; // Handle TagFieldData
     return value || '';
   }
   
