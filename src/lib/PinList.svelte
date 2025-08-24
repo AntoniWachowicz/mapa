@@ -102,8 +102,11 @@
   {:else}
     <div class="pins-grid">
       {#each objects as obj}
-        <div class="pin-card">
+        <div class="pin-card" class:incomplete={obj.hasIncompleteData}>
           <div class="pin-header">
+            {#if obj.hasIncompleteData}
+              <span class="incomplete-badge" title="Pinezka ma niekompletne dane - wymaga uzupełnienia">⚠️</span>
+            {/if}
             <h5 class="pin-title">{obj.data.title || 'Bez tytułu'}</h5>
             {#if onFocus}
               <button 
@@ -115,6 +118,34 @@
               </button>
             {/if}
           </div>
+
+          <!-- Display tags if tags field exists -->
+          {#each template.fields.filter(f => f.type === 'tags') as tagsField}
+            {#if obj.data[tagsField.key]}
+              {@const tagData = obj.data[tagsField.key] as TagFieldData}
+            <div class="pin-tags">
+              {#if tagData.majorTag}
+                {@const majorTag = availableTags.find(t => t.id === tagData.majorTag)}
+                {#if majorTag}
+                  <span class="pin-tag major" style="background-color: {majorTag.color}">
+                    {majorTag.displayName || majorTag.name}
+                  </span>
+                {/if}
+              {/if}
+              
+              {#if tagData.minorTags && tagData.minorTags.length > 0}
+                {#each tagData.minorTags as minorTagId}
+                  {@const minorTag = availableTags.find(t => t.id === minorTagId)}
+                  {#if minorTag}
+                    <span class="pin-tag minor" style="background-color: {minorTag.color}; opacity: 0.8">
+                      {minorTag.displayName || minorTag.name}
+                    </span>
+                  {/if}
+                {/each}
+              {/if}
+            </div>
+            {/if}
+          {/each}
           
           <!-- Display key fields -->
           <div class="pin-details">
@@ -153,32 +184,6 @@
               {/if}
             {/each}
           </div>
-          
-          <!-- Display tags if tags field exists -->
-          {#if template.fields.some(f => f.type === 'tags') && obj.data.tags}
-            {@const tagData = obj.data.tags as TagFieldData}
-            <div class="pin-tags">
-              {#if tagData.majorTag}
-                {@const majorTag = availableTags.find(t => t.id === tagData.majorTag)}
-                {#if majorTag}
-                  <span class="pin-tag major" style="background-color: {majorTag.color}">
-                    {majorTag.displayName || majorTag.name}
-                  </span>
-                {/if}
-              {/if}
-              
-              {#if tagData.minorTags && tagData.minorTags.length > 0}
-                {#each tagData.minorTags as minorTagId}
-                  {@const minorTag = availableTags.find(t => t.id === minorTagId)}
-                  {#if minorTag}
-                    <span class="pin-tag minor" style="background-color: {minorTag.color}; opacity: 0.8">
-                      {minorTag.displayName || minorTag.name}
-                    </span>
-                  {/if}
-                {/each}
-              {/if}
-            </div>
-          {/if}
           
           <!-- Actions -->
           {#if showActions && (onEdit || onDelete)}
@@ -285,6 +290,17 @@
     border-color: #d1d5db;
     box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
     transform: translateY(-1px);
+  }
+
+  .pin-card.incomplete {
+    background: #fef3c7;
+    border-color: #f59e0b;
+    position: relative;
+  }
+
+  .pin-card.incomplete:hover {
+    background: #fde68a;
+    border-color: #d97706;
   }
   
   .pin-header {
@@ -410,7 +426,8 @@
     display: flex;
     flex-wrap: wrap;
     gap: 6px;
-    margin-bottom: 12px;
+    margin-bottom: 16px;
+    margin-top: 4px;
   }
   
   .pin-tag {
@@ -474,5 +491,22 @@
   .delete-btn:hover {
     background: #ef4444;
     color: white;
+  }
+
+  .incomplete-badge {
+    background: #f59e0b;
+    color: white;
+    font-size: 12px;
+    padding: 2px 6px;
+    border-radius: 50%;
+    margin-right: 8px;
+    font-weight: bold;
+    line-height: 1;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 20px;
+    height: 20px;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
   }
 </style>

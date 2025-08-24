@@ -51,11 +51,16 @@ export const actions = {
   createObject: async ({ request }: RequestEvent) => {
     const data = await request.formData();
     const objectDataString = data.get('data');
+    const hasIncompleteDataString = data.get('hasIncompleteData');
+    
     if (typeof objectDataString !== 'string') {
       throw new Error('Invalid object data');
     }
+    
     const objectData: ProjectData = JSON.parse(objectDataString);
-    await createObject(objectData);
+    const hasIncompleteData = hasIncompleteDataString === 'true';
+    
+    await createObject(objectData, hasIncompleteData);
     return { success: true };
   },
   

@@ -14,6 +14,7 @@
   let required = $state(false);
   let maxMinorTags = $state(3); // For tags field type
   let selectOptions = $state(''); // For select field type (comma-separated)
+  let addressSync = $state(false); // For address field type (auto-sync with coordinates)
   let editingFieldIndex = $state<number | null>(null);
   
   // Check if tags field already exists
@@ -42,7 +43,8 @@
           selectConfig: { 
             options: selectOptions.split(',').map(opt => opt.trim()).filter(opt => opt.length > 0)
           } 
-        })
+        }),
+        ...(type === 'address' && { addressSync })
       };
       const updatedTemplate: Template = {
         ...template,
@@ -55,6 +57,7 @@
       required = false;
       maxMinorTags = 3;
       selectOptions = '';
+      addressSync = false;
     }
   }
   
@@ -166,6 +169,7 @@
       'select': 'lista',
       'image': 'obraz',
       'youtube': 'youtube',
+      'address': 'adres',
       'checkbox': 'tak/nie',
       'tags': 'tagi'
     };
@@ -202,6 +206,7 @@
         <option value="select">Lista wyboru</option>
         <option value="image">Obraz</option>
         <option value="youtube">Film YouTube</option>
+        <option value="address">Adres</option>
         <option value="checkbox">Tak/Nie</option>
         <option value="tags" disabled={hasTagsField}>Tagi {hasTagsField ? '(już istnieje)' : ''}</option>
       </select>
@@ -233,6 +238,23 @@
           class="field-input"
         >
         <small class="help-text">Np: Planowany, W trakcie, Ukończony, Wstrzymany</small>
+      </div>
+    {/if}
+    
+    {#if type === 'address'}
+      <div class="form-group">
+        <label class="checkbox-label">
+          <input 
+            type="checkbox" 
+            bind:checked={addressSync}
+            class="field-checkbox"
+          >
+          Automatyczna synchronizacja z współrzędnymi
+        </label>
+        <small class="help-text">
+          Gdy włączone: wpisanie adresu automatycznie znajdzie współrzędne na mapie, 
+          a kliknięcie na mapę automatycznie wypełni adres.
+        </small>
       </div>
     {/if}
     

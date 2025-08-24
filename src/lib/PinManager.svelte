@@ -6,7 +6,7 @@
     template: Template;
     objects: SavedObject[];
     selectedCoordinates?: {lat: number, lng: number} | null;
-    onSave: (data: ProjectData) => Promise<void>;
+    onSave: (data: ProjectData, hasIncompleteData?: boolean) => Promise<void>;
     onUpdate?: (id: string, data: ProjectData) => Promise<void>;
     onDelete?: (id: string) => Promise<void>;
     showForm?: boolean;
@@ -18,6 +18,13 @@
   
   let formData = $state<ProjectData>({});
   let editingObject = $state<SavedObject | null>(null);
+  let isGeocodingAddress = $state(false);
+  let showImportModal = $state(false);
+  let importedData = $state<any[]>([]);
+  let selectedImportRows = $state<Set<number>>(new Set());
+  let isImporting = $state(false);
+  let importProgress = $state({ current: 0, total: 0, message: '' });
+  let importController = $state<AbortController | null>(null);
 
   // Initialize form data when template changes
   $effect(() => {
@@ -45,6 +52,12 @@
           ...formData,
           [coordField.key]: `${selectedCoordinates.lat.toFixed(6)}, ${selectedCoordinates.lng.toFixed(6)}`
         };
+        
+        // Trigger reverse geocoding if there's an address field with sync enabled
+        const addressField = template.fields.find(f => f.type === 'address' && f.addressSync);
+        if (addressField) {
+          handleCoordinatesReverseGeocode();
+        }
       }
     }
   });
@@ -77,7 +90,7 @@
         
         if (field.type === 'checkbox') {
           continue; // Checkboxes don't need validation
-        } else if (['text', 'textarea', 'email', 'url', 'date', 'select', 'image', 'youtube'].includes(field.type)) {
+        } else if (['text', 'textarea', 'email', 'url', 'date', 'select', 'image', 'youtube', 'address'].includes(field.type)) {
           if (!value || (typeof value === 'string' && value.trim() === '')) {
             emptyRequiredFields.push(field.displayLabel || field.label);
           }
@@ -199,11 +212,428 @@
     }
   }
 }
+
+  // File upload handler
+  async function handleImageUpload(fieldKey: string, event: Event): Promise<void> {
+    const input = event.target as HTMLInputElement;
+    const file = input.files?.[0];
+    
+    if (!file) return;
+    
+    if (!file.type.startsWith('image/')) {
+      alert('Proszę wybrać plik obrazu');
+      return;
+    }
+    
+    if (file.size > 5 * 1024 * 1024) {
+      alert('Plik jest za duży. Maksymalny rozmiar to 5MB');
+      return;
+    }
+    
+    try {
+      const formData = new FormData();
+      formData.append('image', file);
+      
+      const response = await fetch('/api/upload', {
+        method: 'POST',
+        body: formData
+      });
+      
+      const result = await response.json();
+      
+      if (result.success) {
+        handleTextInput(fieldKey, { target: { value: result.imageUrl } } as any);
+      } else {
+        alert('Błąd podczas przesyłania obrazu');
+      }
+    } catch (error) {
+      console.error('Upload error:', error);
+      alert('Błąd podczas przesyłania obrazu');
+    }
+  }
+
+  // Address geocoding handler
+  async function handleAddressGeocode(fieldKey: string): Promise<void> {
+    const addressValue = formData[fieldKey] as string;
+    if (!addressValue || !addressValue.trim()) {
+      return;
+    }
+    
+    isGeocodingAddress = true;
+    
+    try {
+      const response = await fetch('/api/geocode', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ address: addressValue.trim() })
+      });
+      
+      const result = await response.json();
+      
+      if (result.success && result.coordinates) {
+        // Update coordinates field
+        const coordField = template.fields.find(f => f.key === 'coordinates');
+        if (coordField) {
+          const coordinatesString = `${result.coordinates.lat.toFixed(6)}, ${result.coordinates.lng.toFixed(6)}`;
+          formData = {
+            ...formData,
+            [coordField.key]: coordinatesString
+          };
+        }
+        
+        // Update address with formatted version
+        if (result.formattedAddress) {
+          formData = {
+            ...formData,
+            [fieldKey]: result.formattedAddress
+          };
+        }
+      } else {
+        alert(result.error || 'Nie udało się znaleźć adresu');
+      }
+    } catch (error) {
+      console.error('Geocoding error:', error);
+      alert('Błąd podczas wyszukiwania adresu');
+    } finally {
+      isGeocodingAddress = false;
+    }
+  }
+
+  // Reverse geocoding when coordinates change
+  async function handleCoordinatesReverseGeocode(): Promise<void> {
+    if (!selectedCoordinates) return;
+    
+    const addressField = template.fields.find(f => f.type === 'address' && f.addressSync);
+    if (!addressField) return;
+    
+    try {
+      const response = await fetch('/api/reverse-geocode', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          lat: selectedCoordinates.lat,
+          lng: selectedCoordinates.lng
+        })
+      });
+      
+      const result = await response.json();
+      
+      if (result.success && result.address) {
+        formData = {
+          ...formData,
+          [addressField.key]: result.address
+        };
+      }
+    } catch (error) {
+      console.error('Reverse geocoding error:', error);
+    }
+  }
+
+  // Excel template download handler
+  async function handleTemplateDownload(): Promise<void> {
+    if (!template) {
+      alert('Brak zdefiniowanego schematu');
+      return;
+    }
+    
+    try {
+      const response = await fetch('/api/excel-template', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ template })
+      });
+      
+      if (response.ok) {
+        const blob = await response.blob();
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.style.display = 'none';
+        a.href = url;
+        a.download = `szablon-pinezki-${new Date().toISOString().split('T')[0]}.xlsx`;
+        document.body.appendChild(a);
+        a.click();
+        window.URL.revokeObjectURL(url);
+        document.body.removeChild(a);
+      } else {
+        alert('Błąd podczas pobierania szablonu');
+      }
+    } catch (error) {
+      console.error('Template download error:', error);
+      alert('Błąd podczas pobierania szablonu');
+    }
+  }
+
+  // Excel import handler with loading state
+  async function handleExcelImport(event: Event): Promise<void> {
+    const input = event.target as HTMLInputElement;
+    const file = input.files?.[0];
+    
+    if (!file) return;
+    
+    if (!file.name.endsWith('.xlsx') && !file.name.endsWith('.xls')) {
+      alert('Proszę wybrać plik Excel (.xlsx lub .xls)');
+      return;
+    }
+    
+    isImporting = true;
+    importProgress = { current: 0, total: 0, message: 'Wczytywanie pliku...' };
+    importController = new AbortController();
+    
+    try {
+      const formData = new FormData();
+      formData.append('excel', file);
+      
+      importProgress.message = 'Analizowanie danych...';
+      
+      const response = await fetch('/api/import-excel', {
+        method: 'POST',
+        body: formData,
+        signal: importController.signal
+      });
+      
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+      
+      const result = await response.json();
+      
+      if (result.success) {
+        importedData = result.data;
+        selectedImportRows = new Set();
+        showImportModal = true;
+        
+        if (result.incompleteDataCount > 0) {
+          alert(`Uwaga: ${result.incompleteDataCount} pinezek będzie miało niekompletne dane (wymagane dodatkowe uzupełnienie w aplikacji)`);
+        }
+      } else {
+        alert('Błąd podczas importu pliku Excel');
+      }
+    } catch (error: any) {
+      if (error.name === 'AbortError') {
+        console.log('Import cancelled by user');
+      } else {
+        console.error('Import error:', error);
+        alert('Błąd podczas importu pliku Excel: ' + error.message);
+      }
+    } finally {
+      isImporting = false;
+      importController = null;
+      // Clear input
+      input.value = '';
+    }
+  }
+
+  // Cancel import handler
+  function cancelImport(): void {
+    if (importController) {
+      importController.abort();
+    }
+  }
+
+  // Excel export handler
+  async function handleExcelExport(): Promise<void> {
+    if (!template || !objects || objects.length === 0) {
+      alert('Brak danych do eksportu');
+      return;
+    }
+    
+    try {
+      const response = await fetch('/api/export-excel', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          objects: objects,
+          template: template
+        })
+      });
+      
+      if (response.ok) {
+        // Download file
+        const blob = await response.blob();
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.style.display = 'none';
+        a.href = url;
+        a.download = `pinezki-export-${new Date().toISOString().split('T')[0]}.xlsx`;
+        document.body.appendChild(a);
+        a.click();
+        window.URL.revokeObjectURL(url);
+        document.body.removeChild(a);
+      } else {
+        alert('Błąd podczas eksportu do Excel');
+      }
+    } catch (error) {
+      console.error('Export error:', error);
+      alert('Błąd podczas eksportu do Excel');
+    }
+  }
+
+  // Import selected rows from Excel
+  async function importSelectedRows(): Promise<void> {
+    if (selectedImportRows.size === 0) {
+      alert('Proszę wybrać wiersze do zaimportowania');
+      return;
+    }
+    
+    const selectedRowsCount = selectedImportRows.size;
+    let importedCount = 0;
+    
+    try {
+      // Sort row indices to process in order
+      const sortedRowIndices = Array.from(selectedImportRows).sort((a, b) => a - b);
+      
+      for (const rowIndex of sortedRowIndices) {
+        const rowData = importedData[rowIndex];
+        if (rowData && rowData.coordinates) {
+          // Create new object
+          const newData: ProjectData = {};
+          let hasIncompleteData = rowData.hasIncompleteData || false;
+          
+          // Map original data to template fields
+          template.fields.forEach(field => {
+            if (field.key === 'coordinates' && rowData.coordinates) {
+              newData[field.key] = `${rowData.coordinates.lat.toFixed(6)}, ${rowData.coordinates.lng.toFixed(6)}`;
+            } else if (field.type === 'checkbox') {
+              // Try to map checkbox values
+              const matchingKey = Object.keys(rowData.originalData).find(key => 
+                key.toLowerCase().includes(field.key.toLowerCase()) ||
+                field.key.toLowerCase().includes(key.toLowerCase()) ||
+                key.toLowerCase() === (field.displayLabel || field.label).toLowerCase()
+              );
+              
+              if (matchingKey && rowData.originalData[matchingKey]) {
+                const value = String(rowData.originalData[matchingKey]).toLowerCase();
+                newData[field.key] = value === 'tak' || value === 'true' || value === '1' || value === 'yes';
+              } else {
+                newData[field.key] = false;
+              }
+            } else if (field.type === 'tags') {
+              // Tags can't be imported from Excel - mark as incomplete
+              newData[field.key] = { majorTag: null, minorTags: [] };
+              if (field.required) {
+                hasIncompleteData = true;
+              }
+            } else {
+              // Try to find matching field in imported data
+              const matchingKey = Object.keys(rowData.originalData).find(key => 
+                key.toLowerCase().includes(field.key.toLowerCase()) ||
+                field.key.toLowerCase().includes(key.toLowerCase()) ||
+                key.toLowerCase() === (field.displayLabel || field.label).toLowerCase()
+              );
+              
+              if (matchingKey && rowData.originalData[matchingKey] !== undefined && rowData.originalData[matchingKey] !== '') {
+                let value = rowData.originalData[matchingKey];
+                
+                // Type conversion based on field type
+                if (field.type === 'number' || field.type === 'currency' || field.type === 'percentage') {
+                  const numValue = parseFloat(String(value));
+                  value = isNaN(numValue) ? 0 : numValue;
+                } else {
+                  value = String(value);
+                }
+                
+                newData[field.key] = value;
+              } else {
+                if (field.type === 'number' || field.type === 'currency' || field.type === 'percentage') {
+                  newData[field.key] = 0;
+                } else {
+                  newData[field.key] = '';
+                }
+                
+                if (field.required) {
+                  hasIncompleteData = true;
+                }
+              }
+            }
+          });
+          
+          // Save the object with incomplete data flag
+          const savedData = await onSave(newData, hasIncompleteData);
+          
+          // If the save function returns the saved object with ID, mark it as incomplete
+          // Note: This assumes onSave returns the saved object or we need to track it differently
+          importedCount++;
+        }
+      }
+      
+      showImportModal = false;
+      importedData = [];
+      selectedImportRows = new Set();
+      
+      const incompleteCount = importedData.filter((row, index) => 
+        sortedRowIndices.includes(index) && row.hasIncompleteData
+      ).length;
+      
+      if (incompleteCount > 0) {
+        alert(`Pomyślnie zaimportowano ${importedCount} pinezek. ${incompleteCount} pinezek ma niekompletne dane i zostanie oznaczone na mapie.`);
+      } else {
+        alert(`Pomyślnie zaimportowano ${importedCount} pinezek.`);
+      }
+      
+    } catch (error) {
+      console.error('Import rows error:', error);
+      alert('Błąd podczas importowania wybranych wierszy: ' + (error instanceof Error ? error.message : 'Nieznany błąd'));
+    }
+  }
 </script>
 
 {#if showForm}
   <div class="form-section">
     <h3>{editingObject ? 'Edytuj Pinezkę' : 'Dodaj Nową Pinezkę'}</h3>
+    
+    <!-- Import/Export buttons -->
+    <div class="import-export-controls">
+      <div class="import-controls">
+        <button 
+          type="button" 
+          onclick={handleTemplateDownload}
+          class="template-btn"
+          title="Pobierz szablon Excel dostosowany do aktualnego schematu"
+        >
+          📋 Pobierz szablon Excel
+        </button>
+        
+        <input 
+          type="file" 
+          accept=".xlsx,.xls" 
+          onchange={handleExcelImport}
+          style="display: none;"
+          id="excel-import"
+          disabled={isImporting}
+        >
+        <label for="excel-import" class="import-btn" class:disabled={isImporting}>
+          📥 {isImporting ? 'Importowanie...' : 'Importuj z Excel'}
+        </label>
+        <small class="help-text">
+          {#if isImporting}
+            Trwa przetwarzanie pliku... 
+            <button type="button" onclick={cancelImport} class="cancel-import-btn">
+              Anuluj
+            </button>
+          {:else}
+            Najpierw pobierz szablon, następnie importuj wypełniony plik
+          {/if}
+        </small>
+      </div>
+      
+      {#if objects && objects.length > 0}
+        <button 
+          type="button" 
+          onclick={handleExcelExport}
+          class="export-btn"
+        >
+          📤 Eksportuj do Excel
+        </button>
+      {/if}
+    </div>
     
     {#if visibleFields.length === 0}
       <p>Brak widocznych pól. Dodaj najpierw pola do schematu.</p>
@@ -315,18 +745,33 @@
                 {/each}
               </select>
             {:else if field.type === 'image'}
-              <input 
-                type="url" 
-                value={getFieldValue(field.key)}
-                oninput={(e) => handleTextInput(field.key, e)}
-                required={field.required}
-                placeholder="https://example.com/obraz.jpg"
-              >
-              {#if getFieldValue(field.key)}
-                <div class="image-preview">
-                  <img src={String(getFieldValue(field.key))} alt="Podgląd" loading="lazy" />
+              <div class="image-field">
+                <div class="image-input-options">
+                  <input 
+                    type="url" 
+                    value={getFieldValue(field.key)}
+                    oninput={(e) => handleTextInput(field.key, e)}
+                    required={field.required}
+                    placeholder="https://example.com/obraz.jpg lub przesłij plik"
+                  >
+                  <span class="input-separator">lub</span>
+                  <input 
+                    type="file" 
+                    accept="image/*" 
+                    onchange={(e) => handleImageUpload(field.key, e)}
+                    class="file-input"
+                    id="image-upload-{field.key}"
+                  >
+                  <label for="image-upload-{field.key}" class="file-upload-btn">
+                    📁 Prześlij plik
+                  </label>
                 </div>
-              {/if}
+                {#if getFieldValue(field.key)}
+                  <div class="image-preview">
+                    <img src={String(getFieldValue(field.key))} alt="Podgląd" loading="lazy" />
+                  </div>
+                {/if}
+              </div>
             {:else if field.type === 'youtube'}
               <input 
                 type="url" 
@@ -340,6 +785,35 @@
                   <small class="help-text">Film YouTube zostanie wyświetlony na liście pinezek</small>
                 </div>
               {/if}
+            {:else if field.type === 'address'}
+              <div class="address-field">
+                <div class="address-input-with-button">
+                  <input 
+                    type="text" 
+                    value={getFieldValue(field.key)}
+                    oninput={(e) => handleTextInput(field.key, e)}
+                    required={field.required}
+                    placeholder="Wpisz adres w Polsce, np. ul. Marszałkowska 1, Warszawa"
+                  >
+                  <button 
+                    type="button"
+                    onclick={() => handleAddressGeocode(field.key)}
+                    disabled={!getFieldValue(field.key) || isGeocodingAddress}
+                    class="geocode-btn"
+                    title="Znajdź współrzędne dla adresu"
+                  >
+                    {isGeocodingAddress ? '⏳' : '🔍'} 
+                    {isGeocodingAddress ? 'Szukam...' : 'Znajdź na mapie'}
+                  </button>
+                </div>
+                {#if field.addressSync}
+                  <div class="sync-status">
+                    <small class="help-text">
+                      ⚡ Automatyczna synchronizacja z współrzędnymi włączona
+                    </small>
+                  </div>
+                {/if}
+              </div>
             {:else if field.type === 'checkbox'}
               <input 
                 type="checkbox" 
@@ -450,6 +924,119 @@
   onFocus={onFocusPin}
   showActions={true}
 />
+
+<!-- Excel Import Modal -->
+{#if showImportModal}
+  <div class="modal-overlay">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3>Import danych z Excel</h3>
+        <button type="button" onclick={() => showImportModal = false} class="close-btn">✕</button>
+      </div>
+      
+      <div class="modal-body">
+        <p>Znaleziono <strong>{importedData.length}</strong> wierszy do zaimportowania.</p>
+        {#if importedData.filter(row => row.hasIncompleteData).length > 0}
+          {@const incompleteRows = importedData.filter(row => row.hasIncompleteData).length}
+          <div class="warning-box">
+            ⚠️ <strong>Uwaga:</strong> {incompleteRows} wierszy będzie miało niekompletne dane. 
+            Pinezki z niekompletnymi danymi zostaną oznaczone na mapie.
+          </div>
+        {/if}
+        <p>Wybierz które wiersze chcesz zaimportować:</p>
+        
+        <div class="import-data-table">
+          <div class="table-controls">
+            <button 
+              type="button" 
+              onclick={() => {
+                if (selectedImportRows.size === importedData.length) {
+                  selectedImportRows = new Set();
+                } else {
+                  selectedImportRows = new Set(importedData.map((_, i) => i));
+                }
+              }}
+              class="select-all-btn"
+            >
+              {selectedImportRows.size === importedData.length ? 'Odznacz wszystkie' : 'Zaznacz wszystkie'}
+            </button>
+            <span class="selection-count">
+              Wybrano: {selectedImportRows.size} / {importedData.length}
+            </span>
+          </div>
+          
+          <div class="import-table-scroll">
+            <table class="import-table">
+              <thead>
+                <tr>
+                  <th>Wybierz</th>
+                  <th>Współrzędne</th>
+                  <th>Dane</th>
+                </tr>
+              </thead>
+              <tbody>
+                {#each importedData as row, i}
+                  <tr class:selected={selectedImportRows.has(i)} class:incomplete={row.hasIncompleteData}>
+                    <td>
+                      <input 
+                        type="checkbox" 
+                        checked={selectedImportRows.has(i)}
+                        onchange={(e) => {
+                          const target = e.target as HTMLInputElement;
+                          if (target.checked) {
+                            selectedImportRows.add(i);
+                          } else {
+                            selectedImportRows.delete(i);
+                          }
+                          selectedImportRows = new Set(selectedImportRows);
+                        }}
+                      >
+                      {#if row.hasIncompleteData}
+                        <span class="incomplete-indicator" title="Pinezka będzie miała niekompletne dane">⚠️</span>
+                      {/if}
+                    </td>
+                    <td>
+                      {#if row.coordinates}
+                        <span class="coordinates">
+                          {row.coordinates.lat.toFixed(4)}, {row.coordinates.lng.toFixed(4)}
+                        </span>
+                      {:else}
+                        <span class="no-coordinates">Brak współrzędnych</span>
+                      {/if}
+                    </td>
+                    <td>
+                      <div class="row-data">
+                        {#each Object.entries(row.originalData) as [key, value]}
+                          <div class="data-item">
+                            <strong>{key}:</strong> {value}
+                          </div>
+                        {/each}
+                        {#if row.hasIncompleteData}
+                          <div class="data-item incomplete-notice">
+                            <em>⚠️ Wymaga uzupełnienia po imporcie</em>
+                          </div>
+                        {/if}
+                      </div>
+                    </td>
+                  </tr>
+                {/each}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+      
+      <div class="modal-footer">
+        <button type="button" onclick={() => showImportModal = false} class="cancel-btn">
+          Anuluj
+        </button>
+        <button type="button" onclick={importSelectedRows} class="import-confirm-btn">
+          Importuj wybrane ({selectedImportRows.size})
+        </button>
+      </div>
+    </div>
+  </div>
+{/if}
 
 <style>
   .form-section {
@@ -764,5 +1351,428 @@
     color: #6b7280;
     text-align: right;
   }
+
+  /* Import/Export Controls */
+  .import-export-controls {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    margin-bottom: 24px;
+    padding: 16px;
+    background: #f8fafc;
+    border-radius: 8px;
+    border: 1px solid #e2e8f0;
+    flex-wrap: wrap;
+    gap: 16px;
+  }
+
+  .import-controls {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .import-btn, .export-btn, .template-btn {
+    background: #3b82f6;
+    color: white;
+    padding: 10px 16px;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 14px;
+    font-weight: 500;
+    transition: all 0.2s ease;
+    text-decoration: none;
+    display: inline-block;
+    text-align: center;
+    margin-right: 8px;
+    margin-bottom: 8px;
+  }
+
+  .import-btn:hover, .export-btn:hover, .template-btn:hover {
+    background: #2563eb;
+    transform: translateY(-1px);
+  }
+
+  .import-btn.disabled {
+    background: #9ca3af;
+    cursor: not-allowed;
+    transform: none;
+  }
+
+  .import-btn.disabled:hover {
+    background: #9ca3af;
+    transform: none;
+  }
+
+  .template-btn {
+    background: #8b5cf6;
+  }
+
+  .template-btn:hover {
+    background: #7c3aed;
+  }
+
+  .export-btn {
+    background: #10b981;
+  }
+
+  .export-btn:hover {
+    background: #059669;
+  }
+
+  .cancel-import-btn {
+    background: #ef4444;
+    color: white;
+    border: none;
+    padding: 4px 8px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 12px;
+    margin-left: 8px;
+  }
+
+  .cancel-import-btn:hover {
+    background: #dc2626;
+  }
+
+  /* Address Field */
+  .address-field {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .address-input-with-button {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+  }
+
+  .address-input-with-button input {
+    flex: 1;
+  }
+
+  .geocode-btn {
+    background: #8b5cf6;
+    color: white;
+    border: none;
+    padding: 12px 16px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 500;
+    transition: all 0.2s ease;
+    white-space: nowrap;
+    min-width: 140px;
+  }
+
+  .geocode-btn:hover:not(:disabled) {
+    background: #7c3aed;
+    transform: translateY(-1px);
+  }
+
+  .geocode-btn:disabled {
+    background: #d1d5db;
+    color: #9ca3af;
+    cursor: not-allowed;
+    transform: none;
+  }
+
+  .sync-status {
+    padding: 6px 12px;
+    background: #ecfdf5;
+    border: 1px solid #d1fae5;
+    border-radius: 6px;
+  }
+
+  /* Image Field Enhancements */
+  .image-field {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .image-input-options {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+
+  .image-input-options input[type="url"] {
+    flex: 1;
+    min-width: 200px;
+  }
+
+  .input-separator {
+    font-size: 14px;
+    color: #6b7280;
+    font-style: italic;
+  }
+
+  .file-input {
+    display: none;
+  }
+
+  .file-upload-btn {
+    background: #f59e0b;
+    color: white;
+    padding: 10px 14px;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 500;
+    transition: all 0.2s ease;
+    text-decoration: none;
+    display: inline-block;
+    white-space: nowrap;
+  }
+
+  .file-upload-btn:hover {
+    background: #d97706;
+    transform: translateY(-1px);
+  }
+
+  /* Modal Styles */
+  .modal-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.5);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+    padding: 20px;
+  }
+
+  .modal-content {
+    background: white;
+    border-radius: 12px;
+    box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
+    max-width: 90vw;
+    max-height: 90vh;
+    width: 800px;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 20px 24px;
+    border-bottom: 1px solid #e5e7eb;
+  }
+
+  .modal-header h3 {
+    margin: 0;
+    font-size: 18px;
+    font-weight: 600;
+    color: #1f2937;
+  }
+
+  .close-btn {
+    background: none;
+    border: none;
+    font-size: 24px;
+    cursor: pointer;
+    color: #9ca3af;
+    padding: 4px;
+    border-radius: 4px;
+    transition: all 0.2s ease;
+  }
+
+  .close-btn:hover {
+    background: #f3f4f6;
+    color: #374151;
+  }
+
+  .modal-body {
+    padding: 24px;
+    flex: 1;
+    overflow: auto;
+  }
+
+  .modal-footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: 12px;
+    padding: 20px 24px;
+    border-top: 1px solid #e5e7eb;
+    background: #f9fafb;
+    border-radius: 0 0 12px 12px;
+  }
+
+  /* Import Table */
+  .import-data-table {
+    margin-top: 16px;
+  }
+
+  .table-controls {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 12px;
+    padding: 12px;
+    background: #f8fafc;
+    border-radius: 6px;
+  }
+
+  .select-all-btn {
+    background: #6366f1;
+    color: white;
+    border: none;
+    padding: 6px 12px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 12px;
+    font-weight: 500;
+  }
+
+  .select-all-btn:hover {
+    background: #5856eb;
+  }
+
+  .selection-count {
+    font-size: 14px;
+    color: #6b7280;
+    font-weight: 500;
+  }
+
+  .import-table-scroll {
+    max-height: 400px;
+    overflow: auto;
+    border: 1px solid #d1d5db;
+    border-radius: 6px;
+  }
+
+  .import-table {
+    width: 100%;
+    border-collapse: collapse;
+  }
+
+  .import-table th {
+    background: #f9fafb;
+    padding: 12px;
+    text-align: left;
+    font-weight: 600;
+    color: #374151;
+    border-bottom: 1px solid #e5e7eb;
+    position: sticky;
+    top: 0;
+  }
+
+  .import-table td {
+    padding: 12px;
+    border-bottom: 1px solid #f3f4f6;
+    vertical-align: top;
+  }
+
+  .import-table tr.selected {
+    background: #eff6ff;
+  }
+
+  .import-table tr:hover {
+    background: #f8fafc;
+  }
+
+  .coordinates {
+    font-family: monospace;
+    font-size: 12px;
+    background: #ecfdf5;
+    padding: 4px 6px;
+    border-radius: 4px;
+    color: #065f46;
+  }
+
+  .no-coordinates {
+    font-size: 12px;
+    color: #ef4444;
+    font-style: italic;
+  }
+
+  .row-data {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    max-width: 300px;
+  }
+
+  .data-item {
+    font-size: 12px;
+    padding: 2px 0;
+  }
+
+  .data-item strong {
+    color: #374151;
+  }
+
+  .import-confirm-btn {
+    background: #10b981;
+    color: white;
+    border: none;
+    padding: 10px 20px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-weight: 600;
+    font-size: 14px;
+    transition: all 0.2s ease;
+  }
+
+  .import-confirm-btn:hover {
+    background: #059669;
+    transform: translateY(-1px);
+  }
+
+  .import-confirm-btn:disabled {
+    background: #d1d5db;
+    color: #9ca3af;
+    cursor: not-allowed;
+    transform: none;
+  }
+
+  /* Warning and Incomplete Data Styles */
+  .warning-box {
+    background: #fef3c7;
+    border: 1px solid #f59e0b;
+    border-radius: 6px;
+    padding: 12px;
+    margin-bottom: 16px;
+    font-size: 14px;
+    color: #92400e;
+  }
+
+  .import-table tr.incomplete {
+    background-color: #fef3c7 !important;
+  }
+
+  .import-table tr.incomplete:hover {
+    background-color: #fde68a !important;
+  }
+
+  .import-table tr.incomplete.selected {
+    background-color: #fed7aa !important;
+  }
+
+  .incomplete-indicator {
+    margin-left: 8px;
+    font-size: 14px;
+    color: #f59e0b;
+  }
+
+  .incomplete-notice {
+    color: #92400e !important;
+    font-size: 11px !important;
+    margin-top: 4px;
+    padding: 2px 6px;
+    background: #fed7aa;
+    border-radius: 3px;
+  }
+  
   
 </style>

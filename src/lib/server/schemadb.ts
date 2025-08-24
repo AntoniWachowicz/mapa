@@ -144,27 +144,46 @@ export async function getObjects(): Promise<SavedObject[]> {
     
     const results = await collection.find({}).toArray();
     
-    return results.map(doc => ({
-      id: doc._id.toString(),
-      data: doc.data
-    }));
+    return results.map(doc => {
+      const obj: SavedObject = {
+        id: doc._id.toString(),
+        data: doc.data
+      };
+      
+      if (doc.hasIncompleteData) {
+        obj.hasIncompleteData = doc.hasIncompleteData;
+      }
+      
+      return obj;
+    });
   } catch (error) {
     console.error('Error getting objects:', error);
     return [];
   }
 }
 
-export async function createObject(data: ProjectData): Promise<SavedObject> {
+export async function createObject(data: ProjectData, hasIncompleteData?: boolean): Promise<SavedObject> {
   try {
     const db = await connectToDatabase();
     const collection = db.collection('objects');
     
-    const result = await collection.insertOne({ data });
+    const objectData: any = { data };
+    if (hasIncompleteData) {
+      objectData.hasIncompleteData = hasIncompleteData;
+    }
     
-    return {
+    const result = await collection.insertOne(objectData);
+    
+    const savedObject: SavedObject = {
       id: result.insertedId.toString(),
       data
     };
+    
+    if (hasIncompleteData) {
+      savedObject.hasIncompleteData = hasIncompleteData;
+    }
+    
+    return savedObject;
   } catch (error) {
     console.error('Error creating object:', error);
     throw error;

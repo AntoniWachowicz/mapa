@@ -30,7 +30,7 @@
     selectedCoordinates = coordinates;
   }
   
-  async function saveObject(objectData: ProjectData): Promise<void> {
+  async function saveObject(objectData: ProjectData, hasIncompleteData?: boolean): Promise<void> {
     if (selectedCoordinates) {
       const coordField = template.fields.find(f => f.key === 'coordinates');
       if (coordField) {
@@ -40,6 +40,9 @@
     
     const formData = new FormData();
     formData.set('data', JSON.stringify(objectData));
+    if (hasIncompleteData) {
+      formData.set('hasIncompleteData', 'true');
+    }
     
     await fetch('/schema-builder?/createObject', {
       method: 'POST',

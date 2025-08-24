@@ -26,13 +26,14 @@ export interface Field {
   key: string;
   label: string;
   displayLabel?: string; // Polish display label
-  type: 'text' | 'number' | 'checkbox' | 'tags' | 'email' | 'url' | 'date' | 'textarea' | 'select' | 'currency' | 'percentage' | 'image' | 'youtube';
+  type: 'text' | 'number' | 'checkbox' | 'tags' | 'email' | 'url' | 'date' | 'textarea' | 'select' | 'currency' | 'percentage' | 'image' | 'youtube' | 'address';
   required: boolean;
   visible: boolean;
   protected: boolean; // Cannot be deleted
   adminVisible: boolean; // Can be hidden from admin interface
   tagConfig?: TagConfig; // For tags field type only
   selectConfig?: SelectConfig; // For select field type only
+  addressSync?: boolean; // For address field type - sync with coordinates
 }
 
 export interface Template {
@@ -47,6 +48,7 @@ export interface ProjectData {
 export interface SavedObject {
   id: string;
   data: ProjectData;
+  hasIncompleteData?: boolean; // Flag for objects imported with missing data
 }
 
 export interface MapObject extends SavedObject {

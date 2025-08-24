@@ -3,7 +3,10 @@
     "allow": [
       "WebFetch(domain:omikron.info.pl)",
       "Bash(rg:*)",
-      "Bash(npm run check:*)"
+      "Bash(npm run check:*)",
+      "Bash(npm install:*)",
+      "Bash(npm run build:*)",
+      "Bash(grep:*)"
     ],
     "deny": [],
     "ask": []

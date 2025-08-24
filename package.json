@@ -34,7 +34,10 @@
 		"vite-plugin-devtools-json": "^0.2.0"
 	},
 	"dependencies": {
+		"@types/multer": "^2.0.0",
 		"jsonwebtoken": "^9.0.2",
-		"mongodb": "^6.18.0"
+		"mongodb": "^6.18.0",
+		"multer": "^2.0.2",
+		"xlsx": "^0.18.5"
 	}
 }
