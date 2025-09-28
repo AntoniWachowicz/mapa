@@ -21,12 +21,24 @@
   let map: any;
   let L: any;
   let boundsRectangle: any = null;
+  let boundsOverlay: any = null;
   let centerMarker: any = null;
   let swMarker: any = null;
   let neMarker: any = null;
-  
-  // Corner selection state
-  let settingCorner = $state<'sw' | 'ne' | null>(null);
+  let nwMarker: any = null;
+  let seMarker: any = null;
+
+  // Dragging state
+  let isDragging = $state(false);
+  let dragCorner = $state<'sw' | 'ne' | 'nw' | 'se' | null>(null);
+
+  // Coordinate indicator positions
+  let coordinateIndicators = $state({
+    sw: { x: 0, y: 0 },
+    ne: { x: 0, y: 0 },
+    nw: { x: 0, y: 0 },
+    se: { x: 0, y: 0 }
+  });
   
   // Real-time zoom tracking
   let currentZoom = $state(12); // Will be updated when map initializes
@@ -42,6 +54,8 @@
     await loadLeaflet();
     initializeMap();
     updateMapVisualization();
+    // Set initial zoom constraints
+    updateZoomLevels();
   });
   
   async function loadLeaflet() {
@@ -70,77 +84,88 @@
       attribution: '© OpenStreetMap contributors'
     }).addTo(map);
     
-    // Handle map clicks for setting corners
-    map.on('click', handleMapClick);
+    // Disable map clicks for corner setting
+    // map.on('click', handleMapClick);
     
     // Track zoom changes for real-time feedback
     map.on('zoom', () => {
       currentZoom = map.getZoom();
       showingCustomImage = currentZoom <= config.maxCustomZoom && !!config.customImageUrl;
+      updateCoordinateIndicators();
     });
+
+    // Track view changes (pan/zoom) to update indicators - use more responsive events
+    map.on('move', updateCoordinateIndicators);
+    map.on('zoom', updateCoordinateIndicators);
+    map.on('moveend', updateCoordinateIndicators);
+    map.on('zoomend', updateCoordinateIndicators);
+    map.on('drag', updateCoordinateIndicators);
+    map.on('viewreset', updateCoordinateIndicators);
   }
   
-  function handleMapClick(e: any) {
-    const { lat, lng } = e.latlng;
-    
-    if (settingCorner === 'sw') {
-      config.swLat = lat;
-      config.swLng = lng;
-      settingCorner = null;
-      updateMapVisualization();
-    } else if (settingCorner === 'ne') {
-      config.neLat = lat;
-      config.neLng = lng;
-      settingCorner = null;
-      updateMapVisualization();
-    }
-  }
-  
-  function startSettingCorner(corner: 'sw' | 'ne') {
-    settingCorner = corner;
-    message = corner === 'sw' ? 'Click on the map to set Southwest corner' : 'Click on the map to set Northeast corner';
-  }
   
   function updateMapVisualization() {
     if (!map || !L) return;
-    
+
     // Clear existing visualizations
     if (boundsRectangle) map.removeLayer(boundsRectangle);
+    if (boundsOverlay) map.removeLayer(boundsOverlay);
     if (centerMarker) map.removeLayer(centerMarker);
     if (swMarker) map.removeLayer(swMarker);
     if (neMarker) map.removeLayer(neMarker);
-    
-    // Create bounds rectangle
+    if (nwMarker) map.removeLayer(nwMarker);
+    if (seMarker) map.removeLayer(seMarker);
+
+    // Create bounds rectangle with black border
     const bounds = [
       [config.swLat, config.swLng],
       [config.neLat, config.neLng]
     ];
-    
+
     boundsRectangle = L.rectangle(bounds, {
-      color: '#007bff',
+      color: '#000000',
       weight: 2,
+      fillOpacity: 0,
+      fillColor: 'transparent'
+    }).addTo(map);
+
+    // Create overlay to darken area outside bounds
+    const mapBounds = map.getBounds();
+    const worldBounds = [
+      [mapBounds.getSouth() - 10, mapBounds.getWest() - 10],
+      [mapBounds.getNorth() + 10, mapBounds.getEast() + 10]
+    ];
+
+    // Create a polygon with a hole for the bounds area
+    const outerRing = [
+      [worldBounds[0][0], worldBounds[0][1]], // SW
+      [worldBounds[1][0], worldBounds[0][1]], // NW
+      [worldBounds[1][0], worldBounds[1][1]], // NE
+      [worldBounds[0][0], worldBounds[1][1]], // SE
+      [worldBounds[0][0], worldBounds[0][1]]  // back to SW
+    ];
+
+    const innerRing = [
+      [config.swLat, config.swLng], // SW
+      [config.neLat, config.swLng], // NW
+      [config.neLat, config.neLng], // NE
+      [config.swLat, config.neLng], // SE
+      [config.swLat, config.swLng]  // back to SW
+    ];
+
+    boundsOverlay = L.polygon([outerRing, innerRing], {
+      color: 'transparent',
+      weight: 0,
+      fillColor: '#000000',
       fillOpacity: 0.2
     }).addTo(map);
-    
-    // Add corner markers
-    swMarker = L.marker([config.swLat, config.swLng], {
-      icon: L.divIcon({
-        className: 'corner-marker sw-marker',
-        html: 'SW',
-        iconSize: [30, 20],
-        iconAnchor: [15, 10]
-      })
-    }).addTo(map);
-    
-    neMarker = L.marker([config.neLat, config.neLng], {
-      icon: L.divIcon({
-        className: 'corner-marker ne-marker',
-        html: 'NE',
-        iconSize: [30, 20],
-        iconAnchor: [15, 10]
-      })
-    }).addTo(map);
-    
+
+    // Add draggable corner markers
+    swMarker = createDraggableMarker([config.swLat, config.swLng], 'sw');
+    neMarker = createDraggableMarker([config.neLat, config.neLng], 'ne');
+    nwMarker = createDraggableMarker([config.neLat, config.swLng], 'nw');
+    seMarker = createDraggableMarker([config.swLat, config.neLng], 'se');
+
     // Add center marker
     centerMarker = L.marker([center.lat, center.lng], {
       icon: L.divIcon({
@@ -150,21 +175,168 @@
         iconAnchor: [12, 12]
       })
     }).addTo(map);
-    
+
+    // Update zoom levels and constraints based on bounds
+    updateZoomLevels();
+
     // Auto-adjust zoom to fit bounds with some padding
     setTimeout(() => {
       const leafletBounds = L.latLngBounds(bounds);
       map.fitBounds(leafletBounds, { padding: [20, 20] });
-      
-      // Update the zoom setting to match what looks good
-      config.defaultZoom = map.getZoom();
+
+      // Update coordinate indicators after map adjusts
+      setTimeout(updateCoordinateIndicators, 100);
     }, 100);
+  }
+
+  function createDraggableMarker(position: [number, number], corner: 'sw' | 'ne' | 'nw' | 'se') {
+    const marker = L.marker(position, {
+      icon: L.divIcon({
+        className: `corner-marker ${corner}-marker`,
+        html: `<div class="corner-handle"></div>`,
+        iconSize: [20, 20],
+        iconAnchor: [10, 10]
+      }),
+      draggable: true
+    }).addTo(map);
+
+    marker.on('dragstart', () => {
+      isDragging = true;
+      dragCorner = corner;
+    });
+
+    marker.on('drag', (e: any) => {
+      const { lat, lng } = e.target.getLatLng();
+      updateBoundsFromCorner(corner, lat, lng);
+    });
+
+    marker.on('dragend', () => {
+      isDragging = false;
+      dragCorner = null;
+      updateMapVisualization();
+    });
+
+    return marker;
+  }
+
+  function updateBoundsFromCorner(corner: 'sw' | 'ne' | 'nw' | 'se', lat: number, lng: number) {
+    switch (corner) {
+      case 'sw':
+        config.swLat = lat;
+        config.swLng = lng;
+        break;
+      case 'ne':
+        config.neLat = lat;
+        config.neLng = lng;
+        break;
+      case 'nw':
+        config.neLat = lat;
+        config.swLng = lng;
+        break;
+      case 'se':
+        config.swLat = lat;
+        config.neLng = lng;
+        break;
+    }
+
+    // Update zoom levels based on new bounds
+    updateZoomLevels();
+
+    // Update bounds rectangle in real-time
+    if (boundsRectangle) {
+      const newBounds = [
+        [config.swLat, config.swLng],
+        [config.neLat, config.neLng]
+      ];
+      boundsRectangle.setBounds(newBounds);
+    }
+
+    // Update overlay in real-time
+    if (boundsOverlay) {
+      const mapBounds = map.getBounds();
+      const worldBounds = [
+        [mapBounds.getSouth() - 10, mapBounds.getWest() - 10],
+        [mapBounds.getNorth() + 10, mapBounds.getEast() + 10]
+      ];
+
+      const outerRing = [
+        [worldBounds[0][0], worldBounds[0][1]],
+        [worldBounds[1][0], worldBounds[0][1]],
+        [worldBounds[1][0], worldBounds[1][1]],
+        [worldBounds[0][0], worldBounds[1][1]],
+        [worldBounds[0][0], worldBounds[0][1]]
+      ];
+
+      const innerRing = [
+        [config.swLat, config.swLng],
+        [config.neLat, config.swLng],
+        [config.neLat, config.neLng],
+        [config.swLat, config.neLng],
+        [config.swLat, config.swLng]
+      ];
+
+      boundsOverlay.setLatLngs([outerRing, innerRing]);
+    }
+
+    // Update all marker positions except the one being dragged
+    if (swMarker && corner !== 'sw') swMarker.setLatLng([config.swLat, config.swLng]);
+    if (neMarker && corner !== 'ne') neMarker.setLatLng([config.neLat, config.neLng]);
+    if (nwMarker && corner !== 'nw') nwMarker.setLatLng([config.neLat, config.swLng]);
+    if (seMarker && corner !== 'se') seMarker.setLatLng([config.swLat, config.neLng]);
+
+    // Update center marker
+    if (centerMarker) centerMarker.setLatLng([center.lat, center.lng]);
+
+    // Update coordinate indicators
+    updateCoordinateIndicators();
+  }
+
+  function updateZoomLevels() {
+    if (!map || !L) return;
+
+    const bounds = L.latLngBounds([
+      [config.swLat, config.swLng],
+      [config.neLat, config.neLng]
+    ]);
+
+    // Calculate zoom level that fits the bounds with some padding
+    const boundsZoom = map.getBoundsZoom(bounds, false);
+
+    // Set minimum zoom to bounds zoom (user can't zoom out further than bounds)
+    config.defaultZoom = Math.max(boundsZoom - 1, 1); // Allow one level out for context
+    config.maxCustomZoom = boundsZoom + 5; // Allow zooming in for detail
+
+    // Update map zoom constraints
+    map.setMinZoom(config.defaultZoom);
+    map.setMaxZoom(config.maxCustomZoom);
+
+    // If current zoom is too far out, fit to bounds
+    if (map.getZoom() < config.defaultZoom) {
+      map.fitBounds(bounds, { padding: [20, 20] });
+    }
+  }
+
+  function updateCoordinateIndicators() {
+    if (!map) return;
+
+    const swPoint = map.latLngToContainerPoint([config.swLat, config.swLng]);
+    const nePoint = map.latLngToContainerPoint([config.neLat, config.neLng]);
+    const nwPoint = map.latLngToContainerPoint([config.neLat, config.swLng]);
+    const sePoint = map.latLngToContainerPoint([config.swLat, config.neLng]);
+
+    coordinateIndicators = {
+      sw: { x: swPoint.x, y: swPoint.y },
+      ne: { x: nePoint.x, y: nePoint.y },
+      nw: { x: nwPoint.x, y: nwPoint.y },
+      se: { x: sePoint.x, y: sePoint.y }
+    };
   }
   
   // Update visualization when config changes
   $effect(() => {
     if (map && L) {
       updateMapVisualization();
+      updateZoomLevels();
     }
   });
   
@@ -250,640 +422,300 @@
   <title>Konfiguracja Mapy - Admin</title>
 </svelte:head>
 
-<div class="admin-container">
-  <h1>🗺️ Konfiguracja Mapy</h1>
-  
-  <div class="admin-layout">
-    <!-- Left Panel: Interactive Map -->
-    <div class="map-panel">
-      <h2>Interactive Map Setup</h2>
-      <p>Click the buttons below, then click on the map to set corners:</p>
-      
-      <div class="map-controls">
-        <button 
-          onclick={() => startSettingCorner('sw')}
-          class:active={settingCorner === 'sw'}
-          disabled={saving}
-        >
-          <!-- 📍 Set Southwest Corner --> 📍 Ustaw Południowo-Zachodni Róg
-        </button>
-        
-        <button 
-          onclick={() => startSettingCorner('ne')}
-          class:active={settingCorner === 'ne'}
-          disabled={saving}
-        >
-          <!-- 📍 Set Northeast Corner --> 📍 Ustaw Północno-Wschodni Róg
-        </button>
-        
-        <button onclick={fitToCurrentBounds} disabled={saving}>
-          <!-- 🔍 Fit to Bounds --> 🔍 Dopasuj do Granic
-        </button>
+<div class="config-container">
+  <div class="map-view">
+    <div class="map-container" bind:this={mapContainer}>
+      <!-- Dynamic coordinate displays that follow corners -->
+      <div
+        class="coordinate-overlay"
+        style="left: {coordinateIndicators.sw.x}px; top: {coordinateIndicators.sw.y}px; transform: translate(-100%, 0);"
+      >
+        <div class="coord-display">
+          <div class="coord-label">SW</div>
+          <div class="coord-value">
+            <input
+              type="number"
+              step="0.000001"
+              bind:value={config.swLat}
+              class="coord-input"
+              disabled={saving}
+            >
+          </div>
+          <div class="coord-value">
+            <input
+              type="number"
+              step="0.000001"
+              bind:value={config.swLng}
+              class="coord-input"
+              disabled={saving}
+            >
+          </div>
+        </div>
       </div>
-      
-      <div class="map-container" bind:this={mapContainer}></div>
-      
-      <div class="map-legend">
-        <div class="legend-item">
-          <span class="legend-color sw"></span> <!-- Southwest Corner --> Południowo-Zachodni Róg
+
+      <div
+        class="coordinate-overlay"
+        style="left: {coordinateIndicators.ne.x}px; top: {coordinateIndicators.ne.y}px; transform: translate(0, -100%);"
+      >
+        <div class="coord-display">
+          <div class="coord-label">NE</div>
+          <div class="coord-value">
+            <input
+              type="number"
+              step="0.000001"
+              bind:value={config.neLat}
+              class="coord-input"
+              disabled={saving}
+            >
+          </div>
+          <div class="coord-value">
+            <input
+              type="number"
+              step="0.000001"
+              bind:value={config.neLng}
+              class="coord-input"
+              disabled={saving}
+            >
+          </div>
         </div>
-        <div class="legend-item">
-          <span class="legend-color ne"></span> <!-- Northeast Corner --> Północno-Wschodni Róg
+      </div>
+
+      <div
+        class="coordinate-overlay"
+        style="left: {coordinateIndicators.nw.x}px; top: {coordinateIndicators.nw.y}px; transform: translate(-100%, -100%);"
+      >
+        <div class="coord-display">
+          <div class="coord-label">NW</div>
+          <div class="coord-value">
+            <input
+              type="number"
+              step="0.000001"
+              bind:value={config.neLat}
+              class="coord-input"
+              disabled={saving}
+            >
+          </div>
+          <div class="coord-value">
+            <input
+              type="number"
+              step="0.000001"
+              bind:value={config.swLng}
+              class="coord-input"
+              disabled={saving}
+            >
+          </div>
         </div>
-        <div class="legend-item">
-          <span class="legend-emoji">🎯</span> <!-- Auto-calculated Center --> Środek
-        </div>
-        <div class="legend-item">
-          <span class="legend-color bounds"></span> <!-- User Bounds --> Granice
+      </div>
+
+      <div
+        class="coordinate-overlay"
+        style="left: {coordinateIndicators.se.x}px; top: {coordinateIndicators.se.y}px; transform: translate(0, 0);"
+      >
+        <div class="coord-display">
+          <div class="coord-label">SE</div>
+          <div class="coord-value">
+            <input
+              type="number"
+              step="0.000001"
+              bind:value={config.swLat}
+              class="coord-input"
+              disabled={saving}
+            >
+          </div>
+          <div class="coord-value">
+            <input
+              type="number"
+              step="0.000001"
+              bind:value={config.neLng}
+              class="coord-input"
+              disabled={saving}
+            >
+          </div>
         </div>
       </div>
     </div>
-    
-    <!-- Right Panel: Configuration Form -->
-    <div class="config-panel">
-      <h2><!-- Current Settings --> Aktualne Ustawienia</h2>
-      
-      <div class="coordinate-display">
-        <div class="coord-group">
-          <h3><!-- Southwest Corner --> Południowo-Zachodni Róg</h3>
-          <div class="coord-inputs">
-            <label>
-              <!-- Latitude: --> Szerokość:
-              <input 
-                type="number" 
-                step="0.000001" 
-                bind:value={config.swLat}
-                disabled={saving}
-              >
-            </label>
-            <label>
-              <!-- Longitude: --> Długość:
-              <input 
-                type="number" 
-                step="0.000001" 
-                bind:value={config.swLng}
-                disabled={saving}
-              >
-            </label>
-          </div>
-        </div>
-        
-        <div class="coord-group">
-          <h3><!-- Northeast Corner --> Północno-Wschodni Róg</h3>
-          <div class="coord-inputs">
-            <label>
-              <!-- Latitude: --> Szerokość:
-              <input 
-                type="number" 
-                step="0.000001" 
-                bind:value={config.neLat}
-                disabled={saving}
-              >
-            </label>
-            <label>
-              <!-- Longitude: --> Długość:
-              <input 
-                type="number" 
-                step="0.000001" 
-                bind:value={config.neLng}
-                disabled={saving}
-              >
-            </label>
-          </div>
-        </div>
-      </div>
-      
-      <div class="info-display">
-        <h3>Automatycznie Obliczony Środek</h3>
-        <p>Lat: {center.lat.toFixed(6)}, Lng: {center.lng.toFixed(6)}</p>
-      </div>
-      
-      <h3>Ustawienia Przybliżenia</h3>
-      
-      <!-- Current zoom display -->
-      {#if map}
-        <div class="current-zoom-display">
-          <div class="zoom-indicator">
-            <strong>Obecny zoom na mapie: {currentZoom}</strong>
-            <span class="zoom-description">({getZoomDescription(currentZoom)})</span>
-          </div>
-          <div class="layer-indicator" class:custom={showingCustomImage} class:osm={!showingCustomImage}>
-            {showingCustomImage ? '🖼️ Pokazuje niestandardowy obraz' : '🗺️ Pokazuje szczegółową mapę'}
-          </div>
-        </div>
-      {/if}
-      
-      <div class="zoom-controls">
-        <label class="zoom-control">
-          <div class="control-header">
-            <span class="control-title">Początkowy Poziom i Maksymalne Oddalenie</span>
-            <span class="control-value">{config.defaultZoom} - {getZoomDescription(config.defaultZoom)}</span>
-          </div>
-          <input 
-            type="range" 
-            min="1" 
-            max="18" 
-            bind:value={config.defaultZoom}
-            disabled={saving}
-            class="zoom-slider"
-          >
-          <div class="control-description">Poziom przybliżenia przy pierwszym załadowaniu mapy (również maksymalne oddalenie dla użytkowników)</div>
-        </label>
-        
-        <label class="zoom-control">
-          <div class="control-header">
-            <span class="control-title">Próg Przełączenia na Szczegółową Mapę</span>
-            <span class="control-value">{config.maxCustomZoom} - {getZoomDescription(config.maxCustomZoom)}</span>
-          </div>
-          <input 
-            type="range" 
-            min="1" 
-            max="18" 
-            bind:value={config.maxCustomZoom}
-            disabled={saving}
-            class="zoom-slider"
-          >
-          <div class="control-description">Powyżej tego poziomu zostanie wyświetlona szczegółowa mapa zamiast niestandardowego obrazu</div>
-        </label>
-      </div>
-      
-      <div class="zoom-behavior-explanation">
-        <h4>Jak działają ustawienia przybliżenia:</h4>
-        <ul>
-          <li><strong>Poziom {config.defaultZoom}</strong> - Początkowy widok i maksymalne oddalenie dla użytkowników</li>
-          <li><strong>Poziom {config.defaultZoom} do {config.maxCustomZoom}</strong> - Pokazuje Twój niestandardowy obraz (jeśli dodany)</li>
-          <li><strong>Poziom {config.maxCustomZoom + 1} do 18</strong> - Pokazuje szczegółową mapę OpenStreetMap</li>
-          <li>Użytkownicy mogą przybliżać do poziomu 18, ale nie mogą oddalić się bardziej niż poziom {config.defaultZoom}</li>
-        </ul>
-      </div>
-      
-      <h3>Obraz Niestandardowy</h3>
-      
-      <label>
-        URL obrazu (opcjonalne):
-        <input 
-          type="text" 
-          bind:value={config.customImageUrl}
-          placeholder="/uploads/map-images/custom-map.png"
-          disabled={saving}
-        >
-      </label>
-      
-      <p class="help-text">
-        Prześlij swoją niestandardową ilustrację do folderu static i wprowadź tutaj ścieżkę.
-        Obraz zostanie rozciągnięty, aby pasował do granic zdefiniowanych powyżej.
-      </p>
-      
-      <div class="form-actions">
-        <button onclick={saveConfig} disabled={saving}>
-          {saving ? 'Zapisywanie...' : 'Zapisz Ustawienia'}
-        </button>
-        
-        <button onclick={resetToDefaults} disabled={saving}>
-          <!-- Reset to Defaults --> Przywróć Ustawienia Podstawowe
-        </button>
-      </div>
-      
-      {#if message}
-        <div class="message" class:error={message.includes('Error')}>
-          {message}
-        </div>
-      {/if}
+
+    <div class="map-controls">
+      <button onclick={fitToCurrentBounds} class="btn" disabled={saving}>
+        Fit to Bounds
+      </button>
+
+      <button onclick={saveConfig} class="btn btn-primary" disabled={saving}>
+        {saving ? 'Saving...' : 'Save Configuration'}
+      </button>
     </div>
+
+    {#if message}
+      <div class="message" class:error={message.includes('Error')}>
+        {message}
+      </div>
+    {/if}
   </div>
 </div>
 
 <style>
-  .admin-container {
-    max-width: 1400px;
+  .config-container {
+    padding: var(--space-6);
+    height: calc(100vh - var(--nav-height));
+    max-width: var(--content-max-width);
     margin: 0 auto;
-    padding: 32px;
-    background: #ffffff;
-    min-height: calc(100vh - 120px);
   }
-  
-  .admin-layout {
-    display: grid;
-    grid-template-columns: 1fr 420px;
-    gap: 40px;
-    margin-top: 32px;
+
+  .map-view {
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-4);
   }
-  
-  .map-panel {
-    background: #ffffff;
-    padding: 32px;
-    border-radius: 12px;
-    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
-    border: 1px solid #e5e7eb;
+
+  .map-container {
+    flex: 1;
+    position: relative;
+    border-radius: var(--radius-lg);
+    overflow: hidden;
+    border: 1px solid var(--color-border);
+    min-height: 0;
   }
-  
-  .config-panel {
-    background: #ffffff;
-    padding: 32px;
-    border-radius: 12px;
-    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
-    border: 1px solid #e5e7eb;
-    height: fit-content;
+
+  .coordinate-overlay {
+    position: absolute;
+    z-index: 1000;
+    pointer-events: none;
   }
-  
+
+  .coord-display {
+    background: rgba(255, 255, 255, 0.95);
+    border: 1px solid var(--color-border);
+    border-radius: 0;
+    padding: 6px;
+    backdrop-filter: blur(4px);
+    box-shadow: var(--shadow-md);
+    pointer-events: auto;
+    width: fit-content;
+    white-space: nowrap;
+    line-height: 1;
+  }
+
+  .coord-label {
+    font-family: 'Space Mono', monospace;
+    font-size: 16px;
+    font-weight: 700;
+    color: #000;
+    margin: 0 0 1px 0;
+    padding: 0;
+    text-align: left;
+    line-height: 1;
+  }
+
+  .coord-value {
+    margin: 0 0 1px 0;
+    padding: 0;
+    line-height: 1;
+  }
+
+  .coord-value:last-child {
+    margin-bottom: 0;
+  }
+
+  .coord-input {
+    width: 160px;
+    padding: 0;
+    margin: 0;
+    border: none;
+    border-radius: 0;
+    font-family: 'Space Mono', monospace;
+    font-size: 16px;
+    font-weight: 400;
+    background: transparent;
+    text-align: left;
+    color: #000;
+    -moz-appearance: textfield;
+    min-width: 0;
+    line-height: 1;
+    display: block;
+  }
+
+  .coord-input::-webkit-outer-spin-button,
+  .coord-input::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+  }
+
+  .coord-input:focus {
+    outline: none;
+    background: rgba(0, 122, 204, 0.1);
+  }
+
   .map-controls {
     display: flex;
-    gap: 10px;
-    margin-bottom: 15px;
-    flex-wrap: wrap;
+    gap: var(--space-3);
+    padding: var(--space-4);
+    background: var(--color-surface);
+    border-radius: var(--radius-lg);
+    border: 1px solid var(--color-border);
   }
-  
-  .map-controls button {
-    padding: 12px 20px;
-    border: 1px solid #d1d5db;
-    border-radius: 8px;
-    background: #ffffff;
-    cursor: pointer;
-    font-size: 14px;
-    font-weight: 500;
-    color: #374151;
-    transition: all 0.2s ease;
+
+  .btn.active {
+    background: var(--color-accent);
+    color: white;
   }
-  
-  .map-controls button:hover:not(:disabled) {
-    background: #f9fafb;
-    border-color: #9ca3af;
-    transform: translateY(-1px);
-    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
-  }
-  
-  .map-controls button.active {
-    background: #1f2937;
-    color: #ffffff;
-    border-color: #1f2937;
-    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-  }
-  
-  .map-container {
-    width: 100%;
-    height: 500px;
-    border: 2px solid #dee2e6;
-    border-radius: 6px;
-    margin-bottom: 15px;
-  }
-  
-  .map-legend {
-    display: flex;
-    gap: 20px;
-    font-size: 12px;
-    flex-wrap: wrap;
-  }
-  
-  .legend-item {
-    display: flex;
-    align-items: center;
-    gap: 5px;
-  }
-  
-  .legend-color {
-    width: 16px;
-    height: 16px;
-    border-radius: 2px;
-  }
-  
-  .legend-color.sw {
-    background: #28a745;
-  }
-  
-  .legend-color.ne {
-    background: #dc3545;
-  }
-  
-  .legend-color.bounds {
-    background: rgba(0, 123, 255, 0.2);
-    border: 2px solid #007bff;
-  }
-  
-  .legend-emoji {
-    font-size: 16px;
-  }
-  
-  .coordinate-display {
-    margin-bottom: 20px;
-  }
-  
-  .coord-group {
-    margin-bottom: 15px;
-    padding: 15px;
-    border: 1px solid #ddd;
-    border-radius: 6px;
-    background: #f9f9f9;
-  }
-  
-  .coord-group h3 {
-    margin-top: 0;
-    margin-bottom: 10px;
-    color: #333;
-  }
-  
-  .coord-inputs {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 10px;
-  }
-  
-  .info-display {
-    background: #e3f2fd;
-    padding: 15px;
-    border-radius: 6px;
-    margin: 20px 0;
-  }
-  
-  .info-display h3 {
-    margin-top: 0;
-  }
-  
-  label {
-    display: block;
-    margin-bottom: 15px;
-    font-weight: 600;
-  }
-  
-  input[type="number"], input[type="text"] {
-    width: 100%;
-    padding: 12px;
-    border: 1px solid #d1d5db;
-    border-radius: 8px;
-    margin-top: 8px;
-    font-size: 14px;
-    background: #ffffff;
-    transition: border-color 0.2s ease;
-  }
-  
-  input[type="number"]:focus, input[type="text"]:focus {
-    outline: none;
-    border-color: #6b7280;
-    box-shadow: 0 0 0 3px rgba(107, 114, 128, 0.1);
-  }
-  
-  input[type="range"] {
-    width: 80%;
-    margin-right: 10px;
-  }
-  
-  .help-text {
-    font-size: 12px;
-    color: #666;
-    margin-top: 10px;
-  }
-  
-  .form-actions {
-    display: flex;
-    gap: 15px;
-    margin-top: 30px;
-  }
-  
-  .form-actions button {
-    padding: 12px 24px;
-    border: none;
-    border-radius: 4px;
-    cursor: pointer;
-    font-weight: 600;
-  }
-  
-  .form-actions button:first-child {
-    background: #1f2937;
-    color: #ffffff;
-    transition: all 0.2s ease;
-  }
-  
-  .form-actions button:first-child:hover:not(:disabled) {
-    background: #111827;
-    transform: translateY(-1px);
-    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-  }
-  
-  .form-actions button:last-child {
-    background: #6b7280;
-    color: #ffffff;
-    transition: all 0.2s ease;
-  }
-  
-  .form-actions button:disabled {
-    opacity: 0.6;
-    cursor: not-allowed;
-  }
-  
+
   .message {
-    padding: 12px;
-    border-radius: 4px;
-    margin-top: 15px;
-    background: #d4edda;
-    color: #155724;
-    border: 1px solid #c3e6cb;
+    padding: var(--space-3) var(--space-4);
+    border-radius: var(--radius-base);
+    background: var(--color-success);
+    color: white;
+    font-size: var(--text-sm);
   }
-  
+
   .message.error {
-    background: #f8d7da;
-    color: #721c24;
-    border-color: #f5c6cb;
+    background: var(--color-error);
   }
-  
+
   /* Custom marker styles */
   :global(.corner-marker) {
-    background: white;
-    border: 2px solid;
-    border-radius: 4px;
-    text-align: center;
-    font-weight: bold;
-    font-size: 10px;
-    line-height: 16px;
+    background: transparent;
+    border: none;
+    cursor: grab;
   }
-  
-  :global(.sw-marker) {
-    border-color: #28a745;
-    color: #28a745;
+
+  :global(.corner-marker:active) {
+    cursor: grabbing;
   }
-  
-  :global(.ne-marker) {
-    border-color: #dc3545;
-    color: #dc3545;
+
+  :global(.corner-handle) {
+    width: 20px;
+    height: 20px;
+    background: #007bff;
+    border: 3px solid white;
+    border-radius: 50%;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
+    transition: all 0.2s ease;
   }
-  
+
+  :global(.corner-handle:hover) {
+    transform: scale(1.2);
+    background: #0056b3;
+  }
+
   :global(.center-marker) {
     background: none;
     border: none;
     font-size: 20px;
   }
 
-  /* Zoom feedback styles */
-  .current-zoom-display {
-    background: #f0f9ff;
-    border: 2px solid #0ea5e9;
-    border-radius: 12px;
-    padding: 16px;
-    margin-bottom: 24px;
-  }
-
-  .zoom-indicator {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    margin-bottom: 8px;
-  }
-
-  .zoom-indicator strong {
-    color: #0c4a6e;
-    font-size: 16px;
-  }
-
-  .zoom-description {
-    color: #0369a1;
-    font-weight: 500;
-    background: rgba(14, 165, 233, 0.1);
-    padding: 4px 8px;
-    border-radius: 6px;
-  }
-
-  .layer-indicator {
-    padding: 8px 12px;
-    border-radius: 8px;
-    font-weight: 600;
-    font-size: 14px;
-  }
-
-  .layer-indicator.custom {
-    background: #fef3c7;
-    color: #92400e;
-    border: 1px solid #f59e0b;
-  }
-
-  .layer-indicator.osm {
-    background: #dcfce7;
-    color: #166534;
-    border: 1px solid #22c55e;
-  }
-
-  .zoom-controls {
-    display: flex;
-    flex-direction: column;
-    gap: 24px;
-  }
-
-  .zoom-control {
-    background: #ffffff;
-    border: 1px solid #e5e7eb;
-    border-radius: 12px;
-    padding: 20px;
-    transition: all 0.2s ease;
-  }
-
-  .zoom-control:hover {
-    border-color: #d1d5db;
-    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
-  }
-
-  .control-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 12px;
-  }
-
-  .control-title {
-    font-weight: 600;
-    color: #1f2937;
-    font-size: 16px;
-  }
-
-  .control-value {
-    font-weight: 500;
-    color: #6b7280;
-    background: #f3f4f6;
-    padding: 4px 12px;
-    border-radius: 6px;
-    font-size: 14px;
-  }
-
-  .zoom-slider {
-    width: 100%;
-    height: 8px;
-    border-radius: 4px;
-    background: #e5e7eb;
-    outline: none;
-    margin: 12px 0;
-  }
-
-  .zoom-slider::-webkit-slider-thumb {
-    appearance: none;
-    width: 20px;
-    height: 20px;
-    border-radius: 50%;
-    background: #3b82f6;
-    cursor: pointer;
-    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-    transition: all 0.2s ease;
-  }
-
-  .zoom-slider::-webkit-slider-thumb:hover {
-    background: #2563eb;
-    transform: scale(1.1);
-  }
-
-  .zoom-slider::-moz-range-thumb {
-    width: 20px;
-    height: 20px;
-    border-radius: 50%;
-    background: #3b82f6;
-    cursor: pointer;
-    border: none;
-    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-  }
-
-  .control-description {
-    color: #6b7280;
-    font-size: 13px;
-    line-height: 1.4;
-    font-style: italic;
-  }
-
-  .zoom-behavior-explanation {
-    background: #f8fafc;
-    border: 1px solid #e2e8f0;
-    border-radius: 12px;
-    padding: 20px;
-    margin: 20px 0;
-  }
-
-  .zoom-behavior-explanation h4 {
-    color: #1e293b;
-    margin: 0 0 12px 0;
-    font-size: 16px;
-    font-weight: 600;
-  }
-
-  .zoom-behavior-explanation ul {
-    margin: 0;
-    padding-left: 20px;
-  }
-
-  .zoom-behavior-explanation li {
-    margin-bottom: 8px;
-    color: #475569;
-    line-height: 1.5;
-  }
-
-  .zoom-behavior-explanation li:last-child {
-    margin-bottom: 0;
-  }
-
-  .zoom-behavior-explanation strong {
-    color: #1e293b;
-    font-weight: 600;
-  }
-  
-  @media (max-width: 1200px) {
-    .admin-layout {
-      grid-template-columns: 1fr;
+  @media (max-width: 768px) {
+    .map-controls {
+      flex-direction: column;
     }
-    
-    .config-panel {
-      order: -1;
+
+    .coord-input {
+      width: 80px;
+      font-size: 10px;
+    }
+
+    .coordinate-overlay {
+      transform: scale(0.9);
     }
   }
 </style>

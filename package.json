@@ -34,6 +34,8 @@
 		"vite-plugin-devtools-json": "^0.2.0"
 	},
 	"dependencies": {
+		"@fontsource/space-grotesk": "^5.2.10",
+		"@fontsource/space-mono": "^5.2.9",
 		"@types/multer": "^2.0.0",
 		"jsonwebtoken": "^9.0.2",
 		"mongodb": "^6.18.0",

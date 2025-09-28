@@ -1,119 +1,93 @@
 <script lang="ts">
   import MapComponent from '$lib/MapComponent.svelte';
-  import PinManager from '$lib/PinManager.svelte';
-  import type { Template, ProjectData, SavedObject, MapObject, MapConfig, TagFieldData } from '$lib/types.js';
-  
+  import type { Template, SavedObject, MapObject, MapConfig, TagFieldData } from '$lib/types.js';
+
   interface PageData {
     template: Template;
     objects: SavedObject[];
-    mapConfig: MapConfig;  // NEW: Add map config to page data
+    mapConfig: MapConfig;
   }
-  
+
   interface Props {
     data: PageData;
   }
-  
+
   const { data }: Props = $props();
-  
+
   let template = $state<Template>(data.template || { fields: [] });
   let objects = $state<SavedObject[]>(data.objects || []);
-  let mapConfig = $state<MapConfig>(data.mapConfig);  // NEW: Map config state
-  let selectedCoordinates = $state<{lat: number, lng: number} | null>(null);
+  let mapConfig = $state<MapConfig>(data.mapConfig);
   let focusCoordinates = $state<{lat: number, lng: number} | null>(null);
-  
-  // Split pane state
-  let splitContainer: HTMLDivElement;
-  let isDragging = $state(false);
-  let splitPosition = $state(50);
-  
-  function handleMapClick(coordinates: {lat: number, lng: number}): void {
-    selectedCoordinates = coordinates;
+
+  // Filter and sort state
+  let filterText = $state('');
+  let sortField = $state('');
+  let filteredObjects = $state<SavedObject[]>([]);
+
+  // Initialize filtered objects
+  $effect(() => {
+    filteredObjects = [...objects];
+  });
+
+  function handleFilter(): void {
+    let filtered = objects;
+
+    // Text filter
+    if (filterText.trim()) {
+      filtered = filtered.filter(obj => {
+        const searchTerm = filterText.toLowerCase();
+        return template.fields.some(field => {
+          const value = obj.data[field.key];
+          if (typeof value === 'string') {
+            return value.toLowerCase().includes(searchTerm);
+          }
+          return false;
+        });
+      });
+    }
+
+    filteredObjects = filtered;
   }
-  
-  async function saveObject(objectData: ProjectData, hasIncompleteData?: boolean): Promise<void> {
-    if (selectedCoordinates) {
-      const coordField = template.fields.find(f => f.key === 'coordinates');
-      if (coordField) {
-        objectData[coordField.key] = `${selectedCoordinates.lat.toFixed(6)}, ${selectedCoordinates.lng.toFixed(6)}`;
+
+  function handleSort(): void {
+    if (!sortField) return;
+
+    filteredObjects = [...filteredObjects].sort((a, b) => {
+      const aValue = a.data[sortField] || '';
+      const bValue = b.data[sortField] || '';
+      return String(aValue).localeCompare(String(bValue));
+    });
+  }
+
+  function focusOnPin(obj: SavedObject): void {
+    const coordField = template.fields.find(f => f.key === 'coordinates');
+    if (coordField && obj.data[coordField.key]) {
+      const coordinates = parseCoordinates(obj.data[coordField.key]);
+      if (coordinates) {
+        focusCoordinates = coordinates;
+        setTimeout(() => {
+          focusCoordinates = null;
+        }, 100);
       }
     }
-    
-    const formData = new FormData();
-    formData.set('data', JSON.stringify(objectData));
-    if (hasIncompleteData) {
-      formData.set('hasIncompleteData', 'true');
-    }
-    
-    await fetch('/schema-builder?/createObject', {
-      method: 'POST',
-      body: formData
-    });
-    
-    location.reload();
   }
-  
-  async function updateObject(id: string, objectData: ProjectData): Promise<void> {
-    const formData = new FormData();
-    formData.set('id', id);
-    formData.set('data', JSON.stringify(objectData));
-    
-    await fetch('/schema-builder?/updateObject', {
-      method: 'POST',
-      body: formData
-    });
-    
-    location.reload();
-  }
-  
-  async function deleteObject(id: string): Promise<void> {
-    const formData = new FormData();
-    formData.set('id', id);
-    
-    await fetch('/schema-builder?/deleteObject', {
-      method: 'POST',
-      body: formData
-    });
-    
-    location.reload();
-  }
-  
-  function clearCoordinates(): void {
-    selectedCoordinates = null;
-  }
-  
-  function focusOnPin(coordinates: {lat: number, lng: number}): void {
-    focusCoordinates = coordinates;
-    setTimeout(() => {
-      focusCoordinates = null;
-    }, 100);
-  }
-  
-  // Split pane handlers
-  function handleMouseDown(event: MouseEvent): void {
-    isDragging = true;
-    event.preventDefault();
-  }
-  
-  function handleMouseMove(event: MouseEvent): void {
-    if (isDragging && splitContainer) {
-      const rect = splitContainer.getBoundingClientRect();
-      const newPosition = ((event.clientX - rect.left) / rect.width) * 100;
-      splitPosition = Math.max(20, Math.min(80, newPosition));
+
+  function formatFieldValue(field: any, value: any): string {
+    if (!value && value !== 0) return '';
+
+    if (field.type === 'currency') {
+      return `${Number(value).toLocaleString('pl-PL')} zł`;
+    } else if (field.type === 'date') {
+      try {
+        return new Date(value).toLocaleDateString('pl-PL');
+      } catch {
+        return String(value);
+      }
+    } else {
+      return String(value);
     }
   }
-  
-  function handleMouseUp(): void {
-    isDragging = false;
-  }
-  
-  function handleKeyDown(event: KeyboardEvent): void {
-    if (event.key === 'ArrowLeft') {
-      splitPosition = Math.max(20, splitPosition - 5);
-    } else if (event.key === 'ArrowRight') {
-      splitPosition = Math.min(80, splitPosition + 5);
-    }
-  }
-  
+
   // Parse coordinates for map
   function parseCoordinates(coordString: string | number | boolean | TagFieldData): {lat: number, lng: number} | null {
     if (typeof coordString !== 'string') return null;
@@ -124,13 +98,13 @@
     if (isNaN(lat) || isNaN(lng)) return null;
     return { lat, lng };
   }
-  
+
   const validMapObjects = $derived(() => {
     const coordField = template?.fields?.find(f => f.key === 'coordinates');
     if (!coordField || !template?.fields) return [];
-    
+
     const result: MapObject[] = [];
-    for (const obj of objects) {
+    for (const obj of filteredObjects) {
       const coordinates = parseCoordinates(obj.data[coordField.key]);
       if (coordinates !== null) {
         result.push({ ...obj, coordinates });
@@ -138,157 +112,264 @@
     }
     return result;
   });
+
+  // Update filters when inputs change
+  $effect(() => {
+    handleFilter();
+  });
+
+  $effect(() => {
+    handleSort();
+  });
 </script>
 
 <svelte:head>
-  <title>Widok Mapy - Mapa Builder</title>
+  <title>Mapa</title>
 </svelte:head>
 
-<svelte:window 
-  onmousemove={handleMouseMove} 
-  onmouseup={handleMouseUp}
-/>
+<div class="map-container">
+  <div class="sidebar">
+    <div class="filters">
+      <div class="filter-group">
+        <label>Filtruj 🔽</label>
+        <input
+          type="text"
+          bind:value={filterText}
+          placeholder="Wyszukaj..."
+          class="filter-input"
+        >
+      </div>
 
-<div class="page-container">
-  <h1>Widok Mapy</h1>
-  
-  <div class="split-container" bind:this={splitContainer}>
-    <!-- Form Panel (now on left) -->
-    <div class="form-panel" style="width: {splitPosition}%">
-      <div class="form-container">
-        <PinManager 
-          template={template} 
-          objects={objects}
-          selectedCoordinates={selectedCoordinates}
-          onSave={saveObject}
-          onUpdate={updateObject}
-          onDelete={deleteObject}
-          onClearCoordinates={clearCoordinates}
-          onFocusPin={focusOnPin}
-          showForm={true}
-        />
+      <div class="filter-group">
+        <label>Sortuj 🔽</label>
+        <select bind:value={sortField} class="sort-select">
+          <option value="">Wybierz pole...</option>
+          {#each template.fields.filter(f => f.visible) as field}
+            <option value={field.key}>{field.displayLabel || field.label}</option>
+          {/each}
+        </select>
       </div>
     </div>
-    
-    <!-- Draggable Divider -->
-    <button 
-      class="divider"
-      aria-label="Resize panels"
-      onmousedown={handleMouseDown}
-      onkeydown={handleKeyDown}
-    >
-      <span class="divider-handle">⋮⋮</span>
-    </button>
-    
-    <!-- Map Panel (now on right) -->
-    <div class="map-panel" style="width: {100 - splitPosition}%">
-      <MapComponent 
-        objects={validMapObjects()}
-        onMapClick={handleMapClick}
-        selectedCoordinates={selectedCoordinates}
-        focusCoordinates={focusCoordinates}
-        mapConfig={mapConfig}
-      />
+
+    <div class="pin-list">
+      {#each filteredObjects as obj}
+        <div class="pin-item" onclick={() => focusOnPin(obj)}>
+          <div class="pin-header">
+            <span class="pin-title">{obj.data.title || 'Bez nazwy'}</span>
+            {#if obj.hasIncompleteData}
+              <span class="incomplete-badge">⚠️</span>
+            {/if}
+          </div>
+
+          <div class="pin-details">
+            {#each template.fields.filter(f => f.visible && f.key !== 'title' && f.key !== 'coordinates') as field}
+              {@const value = obj.data[field.key]}
+              {#if value}
+                <div class="pin-field">
+                  <span class="field-label">{field.displayLabel || field.label}:</span>
+                  <span class="field-value">{formatFieldValue(field, value)}</span>
+                </div>
+              {/if}
+            {/each}
+          </div>
+
+          <div class="pin-meta">
+            <span class="pin-year">2025</span>
+            <span class="pin-price">20 000PLN</span>
+          </div>
+
+          <div class="pin-indicator" style="background-color: {obj.id.includes('1') ? '#000' : obj.id.includes('2') ? '#ef4444' : '#22c55e'}"></div>
+        </div>
+      {/each}
     </div>
+  </div>
+
+  <div class="map-view">
+    <MapComponent
+      objects={validMapObjects()}
+      focusCoordinates={focusCoordinates}
+      mapConfig={mapConfig}
+    />
   </div>
 </div>
 
 <style>
-  .page-container {
-    height: 100vh;
+  .map-container {
+    display: flex;
+    height: calc(100vh - var(--nav-height));
+    background: var(--color-background);
+  }
+
+  .sidebar {
+    width: var(--sidebar-width);
+    background: var(--color-background);
+    border-right: 1px solid var(--color-border);
     display: flex;
     flex-direction: column;
-    background: #f8fafc;
   }
-  
-  .split-container {
-    flex: 1;
-    display: flex;
-    height: calc(100vh - 120px);
-    position: relative;
-    gap: 2px;
-    background: #e5e7eb;
-    border-radius: 12px;
-    margin: 16px;
-    overflow: hidden;
-    box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+
+  .filters {
+    padding: var(--space-4);
+    border-bottom: 1px solid var(--color-border);
+    background: var(--color-surface);
   }
-  
-  .map-panel {
-    height: 100%;
-    overflow: hidden;
-    background: #ffffff;
-    border-radius: 0 10px 10px 0;
+
+  .filter-group {
+    margin-bottom: var(--space-4);
   }
-  
-  .divider {
-    width: 4px;
-    background: linear-gradient(to bottom, #e5e7eb, #d1d5db, #e5e7eb);
-    border: none;
-    cursor: col-resize;
-    transition: all 0.2s ease;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: 0;
-    position: relative;
-    flex-shrink: 0;
+
+  .filter-group:last-child {
+    margin-bottom: 0;
   }
-  
-  .divider::before {
-    content: '';
-    position: absolute;
-    top: 50%;
-    left: 50%;
-    transform: translate(-50%, -50%);
-    width: 2px;
-    height: 40px;
-    background: #9ca3af;
-    border-radius: 2px;
-    opacity: 0;
-    transition: all 0.2s ease;
+
+  .filter-group label {
+    display: block;
+    font-family: var(--font-ui);
+    font-size: var(--text-sm);
+    font-weight: var(--font-weight-medium);
+    color: var(--color-text-primary);
+    margin-bottom: var(--space-2);
   }
-  
-  .divider:hover,
-  .divider:focus {
-    background: linear-gradient(to bottom, #d1d5db, #9ca3af, #d1d5db);
+
+  .filter-input,
+  .sort-select {
+    width: 100%;
+    padding: var(--space-2) var(--space-3);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-base);
+    font-family: var(--font-ui);
+    font-size: var(--text-sm);
+    background: var(--color-background);
+    transition: border-color var(--transition-fast);
+  }
+
+  .filter-input:focus,
+  .sort-select:focus {
     outline: none;
-    width: 6px;
+    border-color: var(--color-accent);
   }
-  
-  .divider:hover::before {
-    opacity: 1;
-    background: #6b7280;
-  }
-  
-  .divider-handle {
-    display: none;
-  }
-  
-  .form-panel {
-    height: 100%;
+
+  .pin-list {
+    flex: 1;
     overflow-y: auto;
-    background: #ffffff;
-    border-radius: 10px 0 0 10px;
-    border-right: 1px solid #f1f5f9;
+    padding: var(--space-4);
   }
-  
-  .form-container {
-    padding: 24px 32px 32px 32px;
-    height: calc(100% - 80px);
+
+  .pin-item {
+    position: relative;
+    padding: var(--space-4);
+    margin-bottom: var(--space-3);
+    background: var(--color-background);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-base);
+    cursor: pointer;
+    transition: all var(--transition-fast);
+  }
+
+  .pin-item:hover {
+    background: var(--color-surface);
+    transform: translateY(-1px);
+    box-shadow: var(--shadow-md);
+  }
+
+  .pin-header {
     display: flex;
-    flex-direction: column;
+    justify-content: space-between;
+    align-items: flex-start;
+    margin-bottom: var(--space-2);
   }
-  
-  h1 {
-    margin: 0;
-    padding: 24px 32px 20px 32px;
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-    color: #ffffff;
-    font-size: 24px;
-    font-weight: 600;
-    letter-spacing: -0.025em;
-    text-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
-    border-bottom: none;
+
+  .pin-title {
+    font-family: var(--font-ui);
+    font-weight: var(--font-weight-semibold);
+    color: var(--color-text-primary);
+    font-size: var(--text-sm);
+  }
+
+  .incomplete-badge {
+    font-size: var(--text-xs);
+    opacity: 0.8;
+  }
+
+  .pin-details {
+    margin-bottom: var(--space-3);
+  }
+
+  .pin-field {
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: var(--space-1);
+    font-size: var(--text-xs);
+  }
+
+  .field-label {
+    font-family: var(--font-mono);
+    color: var(--color-text-secondary);
+    font-weight: var(--font-weight-medium);
+  }
+
+  .field-value {
+    font-family: var(--font-mono);
+    color: var(--color-text-primary);
+  }
+
+  .pin-meta {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-family: var(--font-mono);
+    font-size: var(--text-xs);
+    color: var(--color-text-secondary);
+  }
+
+  .pin-year {
+    font-weight: var(--font-weight-medium);
+  }
+
+  .pin-price {
+    font-weight: var(--font-weight-bold);
+    color: var(--color-text-primary);
+  }
+
+  .pin-indicator {
+    position: absolute;
+    top: var(--space-4);
+    right: var(--space-4);
+    width: var(--space-3);
+    height: var(--space-3);
+    border-radius: var(--radius-full);
+  }
+
+  .map-view {
+    flex: 1;
+    position: relative;
+    overflow: hidden;
+  }
+
+  /* Mobile responsive */
+  @media (max-width: 768px) {
+    .map-container {
+      flex-direction: column;
+    }
+
+    .sidebar {
+      width: 100%;
+      height: 40vh;
+      border-right: none;
+      border-bottom: 1px solid var(--color-border);
+    }
+
+    .map-view {
+      height: 60vh;
+    }
+
+    .pin-list {
+      padding: var(--space-2);
+    }
+
+    .pin-item {
+      padding: var(--space-3);
+      margin-bottom: var(--space-2);
+    }
   }
 </style>

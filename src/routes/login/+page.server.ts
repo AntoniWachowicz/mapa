@@ -21,6 +21,7 @@ export const actions = {
       return fail(400, { error: 'Username and password are required' });
     }
     
+    
     if (!username || !password) {
       return fail(400, { error: 'Username and password are required' });
     }

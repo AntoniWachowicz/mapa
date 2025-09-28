@@ -6,7 +6,8 @@
       "Bash(npm run check:*)",
       "Bash(npm install:*)",
       "Bash(npm run build:*)",
-      "Bash(grep:*)"
+      "Bash(grep:*)",
+      "Read(//o/Pictures/**)"
     ],
     "deny": [],
     "ask": []
