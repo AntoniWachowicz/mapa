@@ -1,6 +1,9 @@
 <script lang="ts">
   import MapComponent from '$lib/MapComponent.svelte';
-  import type { Template, SavedObject, MapObject, MapConfig, TagFieldData } from '$lib/types.js';
+  import PinManager from '$lib/PinManager.svelte';
+  import PinList from '$lib/PinList.svelte';
+  import Icon from '$lib/Icon.svelte';
+  import type { Template, SavedObject, MapObject, MapConfig, CategoryFieldData, ProjectData } from '$lib/types.js';
 
   interface PageData {
     template: Template;
@@ -18,6 +21,10 @@
   let objects = $state<SavedObject[]>(data.objects || []);
   let mapConfig = $state<MapConfig>(data.mapConfig);
   let focusCoordinates = $state<{lat: number, lng: number} | null>(null);
+  let selectedCoordinates = $state<{lat: number, lng: number} | null>(null);
+  let sidebarWidth = $state(400); // Default sidebar width in pixels
+  let isDragging = $state(false);
+  let isPinSectionCollapsed = $state(false); // New state for pin section collapse
 
   // Filter and sort state
   let filterText = $state('');
@@ -72,6 +79,118 @@
     }
   }
 
+  function handleMapClick(coordinates: {lat: number, lng: number}): void {
+    selectedCoordinates = coordinates;
+  }
+
+  function clearSelectedCoordinates(): void {
+    selectedCoordinates = null;
+  }
+
+  function togglePinSection(): void {
+    isPinSectionCollapsed = !isPinSectionCollapsed;
+  }
+
+  function handleEditPin(obj: SavedObject): void {
+    // Expand the pin section when editing
+    if (isPinSectionCollapsed) {
+      isPinSectionCollapsed = false;
+    }
+    // TODO: Pass the editing object to PinManager
+    // This would require adding state management for edited object
+  }
+
+  function handleFocusPin(coordinates: {lat: number, lng: number}): void {
+    focusCoordinates = coordinates;
+    setTimeout(() => {
+      focusCoordinates = null;
+    }, 100);
+  }
+
+  // Pin management functions
+  async function handleSavePin(data: ProjectData, hasIncompleteData?: boolean): Promise<void> {
+    try {
+      const response = await fetch('/api/objects', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ data, hasIncompleteData })
+      });
+
+      if (response.ok) {
+        const result = await response.json();
+        if (result.success) {
+          // Add the new object to our local state
+          objects = [...objects, result.object];
+          // Clear selected coordinates after successful save
+          selectedCoordinates = null;
+        } else {
+          alert('Błąd podczas zapisywania pinezki');
+        }
+      } else {
+        alert('Błąd podczas zapisywania pinezki');
+      }
+    } catch (error) {
+      console.error('Save error:', error);
+      alert('Błąd podczas zapisywania pinezki');
+    }
+  }
+
+  async function handleUpdatePin(id: string, data: ProjectData): Promise<void> {
+    try {
+      const response = await fetch(`/api/objects/${id}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ data })
+      });
+
+      if (response.ok) {
+        const result = await response.json();
+        if (result.success) {
+          // Update the object in our local state
+          objects = objects.map(obj => obj.id === id ? result.object : obj);
+        } else {
+          alert('Błąd podczas aktualizacji pinezki');
+        }
+      } else {
+        alert('Błąd podczas aktualizacji pinezki');
+      }
+    } catch (error) {
+      console.error('Update error:', error);
+      alert('Błąd podczas aktualizacji pinezki');
+    }
+  }
+
+  async function handleDeletePin(id: string): Promise<void> {
+    if (!confirm('Czy na pewno chcesz usunąć tę pinezkę?')) {
+      return;
+    }
+
+    try {
+      const response = await fetch(`/api/objects/${id}`, {
+        method: 'DELETE'
+      });
+
+      if (response.ok) {
+        const result = await response.json();
+        if (result.success) {
+          // Remove the object from our local state
+          objects = objects.filter(obj => obj.id !== id);
+        } else {
+          alert('Błąd podczas usuwania pinezki');
+        }
+      } else {
+        alert('Błąd podczas usuwania pinezki');
+      }
+    } catch (error) {
+      console.error('Delete error:', error);
+      alert('Błąd podczas usuwania pinezki');
+    }
+  }
+
   function formatFieldValue(field: any, value: any): string {
     if (!value && value !== 0) return '';
 
@@ -89,7 +208,7 @@
   }
 
   // Parse coordinates for map
-  function parseCoordinates(coordString: string | number | boolean | TagFieldData): {lat: number, lng: number} | null {
+  function parseCoordinates(coordString: string | number | boolean | CategoryFieldData): {lat: number, lng: number} | null {
     if (typeof coordString !== 'string') return null;
     const parts = coordString.split(',').map(s => s.trim());
     if (parts.length !== 2) return null;
@@ -121,6 +240,28 @@
   $effect(() => {
     handleSort();
   });
+
+  // Resize functionality
+  function startResize(e: MouseEvent): void {
+    isDragging = true;
+    e.preventDefault();
+
+    function handleMouseMove(e: MouseEvent): void {
+      if (!isDragging) return;
+
+      const newWidth = Math.max(250, Math.min(800, e.clientX));
+      sidebarWidth = newWidth;
+    }
+
+    function handleMouseUp(): void {
+      isDragging = false;
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+    }
+
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', handleMouseUp);
+  }
 </script>
 
 <svelte:head>
@@ -128,10 +269,41 @@
 </svelte:head>
 
 <div class="map-container">
-  <div class="sidebar">
+  <div class="sidebar" style="width: {sidebarWidth}px;">
+    <!-- Pin Addition Section Header (Always Visible) -->
+    <div class="pin-section-header">
+      <h3>
+        <Icon name="Pin" size={16} />
+        Dodaj nową pinezkę
+      </h3>
+      <button class="toggle-btn" onclick={togglePinSection} title={isPinSectionCollapsed ? 'Rozwiń sekcję dodawania' : 'Zwiń sekcję dodawania'}>
+        <Icon name={isPinSectionCollapsed ? 'Chevron/Down' : 'Chevron/Up'} size={16} />
+      </button>
+    </div>
+
+    <!-- Pin Addition Section Content (Collapsible) -->
+    {#if !isPinSectionCollapsed}
+      <div class="pin-manager-container">
+        <PinManager
+          {template}
+          objects={filteredObjects}
+          {selectedCoordinates}
+          onSave={handleSavePin}
+          onUpdate={handleUpdatePin}
+          onDelete={handleDeletePin}
+          onClearCoordinates={clearSelectedCoordinates}
+          onFocusPin={handleFocusPin}
+          showForm={true}
+          showExcelFeatures={false}
+          showPinList={false}
+        />
+      </div>
+    {/if}
+
+    <!-- Filters Section (Always Visible) -->
     <div class="filters">
       <div class="filter-group">
-        <label>Filtruj 🔽</label>
+        <label>Filtruj <Icon name="Divider-1" size={12} /></label>
         <input
           type="text"
           bind:value={filterText}
@@ -141,7 +313,7 @@
       </div>
 
       <div class="filter-group">
-        <label>Sortuj 🔽</label>
+        <label>Sortuj <Icon name="Divider-1" size={12} /></label>
         <select bind:value={sortField} class="sort-select">
           <option value="">Wybierz pole...</option>
           {#each template.fields.filter(f => f.visible) as field}
@@ -151,44 +323,28 @@
       </div>
     </div>
 
-    <div class="pin-list">
-      {#each filteredObjects as obj}
-        <div class="pin-item" onclick={() => focusOnPin(obj)}>
-          <div class="pin-header">
-            <span class="pin-title">{obj.data.title || 'Bez nazwy'}</span>
-            {#if obj.hasIncompleteData}
-              <span class="incomplete-badge">⚠️</span>
-            {/if}
-          </div>
-
-          <div class="pin-details">
-            {#each template.fields.filter(f => f.visible && f.key !== 'title' && f.key !== 'coordinates') as field}
-              {@const value = obj.data[field.key]}
-              {#if value}
-                <div class="pin-field">
-                  <span class="field-label">{field.displayLabel || field.label}:</span>
-                  <span class="field-value">{formatFieldValue(field, value)}</span>
-                </div>
-              {/if}
-            {/each}
-          </div>
-
-          <div class="pin-meta">
-            <span class="pin-year">2025</span>
-            <span class="pin-price">20 000PLN</span>
-          </div>
-
-          <div class="pin-indicator" style="background-color: {obj.id.includes('1') ? '#000' : obj.id.includes('2') ? '#ef4444' : '#22c55e'}"></div>
-        </div>
-      {/each}
+    <!-- List Section (Scrollable) -->
+    <div class="list-container">
+      <PinList
+        objects={filteredObjects}
+        {template}
+        onEdit={handleEditPin}
+        onDelete={handleDeletePin}
+        onFocus={handleFocusPin}
+        showActions={true}
+      />
     </div>
   </div>
+
+  <div class="resize-handle" onmousedown={startResize} class:dragging={isDragging}></div>
 
   <div class="map-view">
     <MapComponent
       objects={validMapObjects()}
+      onMapClick={handleMapClick}
+      {selectedCoordinates}
       focusCoordinates={focusCoordinates}
-      mapConfig={mapConfig}
+      {mapConfig}
     />
   </div>
 </div>
@@ -201,17 +357,21 @@
   }
 
   .sidebar {
-    width: var(--sidebar-width);
     background: var(--color-background);
     border-right: 1px solid var(--color-border);
     display: flex;
     flex-direction: column;
+    flex-shrink: 0;
+    height: calc(100vh - var(--nav-height));
+    overflow: hidden; /* Prevent sidebar itself from scrolling */
   }
 
+  /* Filters Section - Always visible */
   .filters {
     padding: var(--space-4);
     border-bottom: 1px solid var(--color-border);
     background: var(--color-surface);
+    flex-shrink: 0; /* Don't shrink */
   }
 
   .filter-group {
@@ -249,96 +409,73 @@
     border-color: var(--color-accent);
   }
 
-  .pin-list {
-    flex: 1;
-    overflow-y: auto;
-    padding: var(--space-4);
-  }
-
-  .pin-item {
-    position: relative;
-    padding: var(--space-4);
-    margin-bottom: var(--space-3);
-    background: var(--color-background);
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-base);
-    cursor: pointer;
-    transition: all var(--transition-fast);
-  }
-
-  .pin-item:hover {
-    background: var(--color-surface);
-    transform: translateY(-1px);
-    box-shadow: var(--shadow-md);
-  }
-
-  .pin-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: flex-start;
-    margin-bottom: var(--space-2);
-  }
-
-  .pin-title {
-    font-family: var(--font-ui);
-    font-weight: var(--font-weight-semibold);
-    color: var(--color-text-primary);
-    font-size: var(--text-sm);
-  }
-
-  .incomplete-badge {
-    font-size: var(--text-xs);
-    opacity: 0.8;
-  }
-
-  .pin-details {
-    margin-bottom: var(--space-3);
-  }
-
-  .pin-field {
-    display: flex;
-    justify-content: space-between;
-    margin-bottom: var(--space-1);
-    font-size: var(--text-xs);
-  }
-
-  .field-label {
-    font-family: var(--font-mono);
-    color: var(--color-text-secondary);
-    font-weight: var(--font-weight-medium);
-  }
-
-  .field-value {
-    font-family: var(--font-mono);
-    color: var(--color-text-primary);
-  }
-
-  .pin-meta {
+  /* Pin Section Header - Always visible */
+  .pin-section-header {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    font-family: var(--font-mono);
-    font-size: var(--text-xs);
-    color: var(--color-text-secondary);
+    padding: var(--space-2) var(--space-3);
+    background: var(--color-surface);
+    border-bottom: 1px solid var(--color-border);
+    flex-shrink: 0; /* Don't shrink */
   }
 
-  .pin-year {
+  .pin-section-header h3 {
+    margin: 0;
+    font-family: var(--font-ui);
+    font-size: var(--text-base);
     font-weight: var(--font-weight-medium);
+    color: var(--color-text-primary);
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
   }
 
-  .pin-price {
-    font-weight: var(--font-weight-bold);
+  .toggle-btn {
+    background: none;
+    border: none;
+    padding: var(--space-1);
+    border-radius: var(--radius-base);
+    cursor: pointer;
+    color: var(--color-text-secondary);
+    transition: all var(--transition-fast);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .toggle-btn:hover {
+    background: var(--color-border);
     color: var(--color-text-primary);
   }
 
-  .pin-indicator {
-    position: absolute;
-    top: var(--space-4);
-    right: var(--space-4);
-    width: var(--space-3);
-    height: var(--space-3);
-    border-radius: var(--radius-full);
+  /* Pin Manager Container - Collapsible */
+  .pin-manager-container {
+    padding: var(--space-2);
+    border-bottom: 1px solid var(--color-border);
+    flex-shrink: 0; /* Don't shrink */
   }
+
+  /* List Container - Scrollable */
+  .list-container {
+    flex: 1; /* Take up remaining space */
+    overflow-y: auto; /* Only this section scrolls */
+    min-height: 0; /* Allow flex shrinking */
+  }
+
+  .resize-handle {
+    width: 4px;
+    background: var(--color-border);
+    cursor: col-resize;
+    transition: background-color 0.2s ease;
+    flex-shrink: 0;
+  }
+
+  .resize-handle:hover,
+  .resize-handle.dragging {
+    background: var(--color-accent);
+  }
+
 
   .map-view {
     flex: 1;
@@ -353,23 +490,22 @@
     }
 
     .sidebar {
-      width: 100%;
+      width: 100% !important;
       height: 40vh;
       border-right: none;
       border-bottom: 1px solid var(--color-border);
+    }
+
+    .resize-handle {
+      display: none;
     }
 
     .map-view {
       height: 60vh;
     }
 
-    .pin-list {
+    .pin-manager-container {
       padding: var(--space-2);
-    }
-
-    .pin-item {
-      padding: var(--space-3);
-      margin-bottom: var(--space-2);
     }
   }
 </style>

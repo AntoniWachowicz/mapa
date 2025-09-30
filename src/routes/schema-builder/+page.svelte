@@ -1,5 +1,6 @@
 <script lang="ts">
   import SchemaBuilder from '$lib/SchemaBuilder.svelte';
+  import SchemaPreview from '$lib/SchemaPreview.svelte';
   import type { Template } from '$lib/types.js';
 
   interface PageData {
@@ -36,12 +37,8 @@
       <SchemaBuilder template={template} onUpdate={updateTemplate} />
     </div>
 
-    <div class="placeholder-panel">
-      <div class="placeholder-content">
-        <div class="placeholder-icon">⚡</div>
-        <h3>Przyszła funkcjonalność</h3>
-        <p>Ten panel zostanie wypełniony w przyszłych aktualizacjach aplikacji.</p>
-      </div>
+    <div class="preview-panel">
+      <SchemaPreview {template} />
     </div>
   </div>
 </div>
@@ -69,61 +66,13 @@
     overflow-y: auto;
   }
 
-  .placeholder-panel {
+  .preview-panel {
     background: var(--color-surface);
     border-radius: var(--radius-lg);
     border: 1px solid var(--color-border-light);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    position: relative;
+    overflow: hidden;
   }
 
-  .placeholder-panel::before {
-    content: '';
-    position: absolute;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background: repeating-linear-gradient(
-      45deg,
-      transparent,
-      transparent 10px,
-      rgba(0, 0, 0, 0.02) 10px,
-      rgba(0, 0, 0, 0.02) 20px
-    );
-    border-radius: var(--radius-lg);
-    pointer-events: none;
-  }
-
-  .placeholder-content {
-    text-align: center;
-    color: var(--color-text-muted);
-    z-index: 1;
-    position: relative;
-  }
-
-  .placeholder-icon {
-    font-size: 3rem;
-    margin-bottom: var(--space-4);
-    opacity: 0.5;
-  }
-
-  .placeholder-content h3 {
-    font-family: var(--font-ui);
-    font-size: var(--text-xl);
-    font-weight: var(--font-weight-medium);
-    margin-bottom: var(--space-2);
-    color: var(--color-text-secondary);
-  }
-
-  .placeholder-content p {
-    font-family: var(--font-ui);
-    font-size: var(--text-sm);
-    max-width: 300px;
-    line-height: 1.6;
-  }
 
   @media (max-width: 1024px) {
     .schema-layout {

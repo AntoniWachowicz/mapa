@@ -40,6 +40,8 @@
 		"jsonwebtoken": "^9.0.2",
 		"mongodb": "^6.18.0",
 		"multer": "^2.0.2",
+		"proj4": "^2.19.10",
+		"shapefile": "^0.6.6",
 		"xlsx": "^0.18.5"
 	}
 }

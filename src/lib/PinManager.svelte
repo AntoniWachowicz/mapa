@@ -1,6 +1,7 @@
 <script lang="ts">
-  import type { Template, ProjectData, SavedObject, TagFieldData, Tag } from './types.js';
+  import type { Template, ProjectData, SavedObject, CategoryFieldData, Tag } from './types.js';
   import PinList from './PinList.svelte';
+  import Icon from './Icon.svelte';
   
   interface Props {
     template: Template;
@@ -12,9 +13,11 @@
     showForm?: boolean;
     onClearCoordinates?: () => void;
     onFocusPin?: (coordinates: {lat: number, lng: number}) => void;
+    showExcelFeatures?: boolean;
+    showPinList?: boolean;
   }
   
-  const { template, objects, selectedCoordinates = null, onSave, onDelete, onUpdate, showForm = true, onClearCoordinates, onFocusPin }: Props = $props();
+  const { template, objects, selectedCoordinates = null, onSave, onDelete, onUpdate, showForm = true, onClearCoordinates, onFocusPin, showExcelFeatures = true, showPinList = true }: Props = $props();
   
   let formData = $state<ProjectData>({});
   let editingObject = $state<SavedObject | null>(null);
@@ -34,7 +37,7 @@
         if (field.type === 'checkbox') {
           newFormData[field.key] = false;
         } else if (field.type === 'tags') {
-          newFormData[field.key] = { majorTag: null, minorTags: [] } as TagFieldData;
+          newFormData[field.key] = { majorTag: null, minorTags: [] } as CategoryFieldData;
         } else {
           newFormData[field.key] = '';
         }
@@ -99,7 +102,7 @@
             emptyRequiredFields.push(field.displayLabel || field.label);
           }
         } else if (field.type === 'tags') {
-          const tagData = value as TagFieldData;
+          const tagData = value as CategoryFieldData;
           if (!tagData || !tagData.majorTag) {
             emptyRequiredFields.push(field.displayLabel || field.label);
           }
@@ -151,7 +154,7 @@
   function getFieldValue(key: string): string | number {
     const value = formData[key];
     if (typeof value === 'boolean') return '';
-    if (typeof value === 'object') return ''; // Handle TagFieldData
+    if (typeof value === 'object') return ''; // Handle CategoryFieldData
     return value || '';
   }
   
@@ -160,12 +163,12 @@
     return typeof value === 'boolean' ? value : false;
   }
   
-  function getTagValue(key: string): TagFieldData {
-    const value = formData[key] as TagFieldData;
+  function getTagValue(key: string): CategoryFieldData {
+    const value = formData[key] as CategoryFieldData;
     return value || { majorTag: null, minorTags: [] };
   }
   
-  function handleTagChange(key: string, tagData: TagFieldData): void {
+  function handleTagChange(key: string, tagData: CategoryFieldData): void {
     formData = {
       ...formData,
       [key]: tagData
@@ -187,7 +190,7 @@
       if (field.type === 'checkbox') {
         resetData[field.key] = false;
       } else if (field.type === 'tags') {
-        resetData[field.key] = { majorTag: null, minorTags: [] } as TagFieldData;
+        resetData[field.key] = { majorTag: null, minorTags: [] } as CategoryFieldData;
       } else {
         resetData[field.key] = '';
       }
@@ -587,9 +590,8 @@
 
 {#if showForm}
   <div class="form-section">
-    <h3>{editingObject ? 'Edytuj Pinezkę' : 'Dodaj Nową Pinezkę'}</h3>
-    
     <!-- Import/Export buttons -->
+    {#if showExcelFeatures}
     <div class="import-export-controls">
       <div class="import-controls">
         <button 
@@ -598,7 +600,7 @@
           class="template-btn"
           title="Pobierz szablon Excel dostosowany do aktualnego schematu"
         >
-          📋 Pobierz szablon Excel
+<Icon name="Document" size={16} /> Pobierz szablon Excel
         </button>
         
         <input 
@@ -610,7 +612,7 @@
           disabled={isImporting}
         >
         <label for="excel-import" class="import-btn" class:disabled={isImporting}>
-          📥 {isImporting ? 'Importowanie...' : 'Importuj z Excel'}
+<Icon name="Document" size={16} /> {isImporting ? 'Importowanie...' : 'Importuj z Excel'}
         </label>
         <small class="help-text">
           {#if isImporting}
@@ -630,11 +632,12 @@
           onclick={handleExcelExport}
           class="export-btn"
         >
-          📤 Eksportuj do Excel
+<Icon name="Document" size={16} /> Eksportuj do Excel
         </button>
       {/if}
     </div>
-    
+    {/if}
+
     {#if visibleFields.length === 0}
       <p>Brak widocznych pól. Dodaj najpierw pola do schematu.</p>
     {:else}
@@ -653,14 +656,14 @@
                     placeholder="Kliknij na mapę aby wybrać lokalizację"
                     readonly
                   >
-                  <button 
+                  <button
                     type="button"
                     onclick={clearCoordinates}
                     disabled={!getFieldValue(field.key)}
                     class="clear-coords-btn"
                     title="Wyczyść współrzędne"
                   >
-                    ✕
+                    <Icon name="Close" size={16} />
                   </button>
                 </div>
               {:else}
@@ -763,7 +766,7 @@
                     id="image-upload-{field.key}"
                   >
                   <label for="image-upload-{field.key}" class="file-upload-btn">
-                    📁 Prześlij plik
+                    <Icon name="Document" size={16} /> Prześlij plik
                   </label>
                 </div>
                 {#if getFieldValue(field.key)}
@@ -802,7 +805,7 @@
                     class="geocode-btn"
                     title="Znajdź współrzędne dla adresu"
                   >
-                    {isGeocodingAddress ? '⏳' : '🔍'} 
+{#if isGeocodingAddress}<Icon name="Field" size={16} />{:else}<Icon name="Magnigier Glass" size={16} />{/if} 
                     {isGeocodingAddress ? 'Szukam...' : 'Znajdź na mapie'}
                   </button>
                 </div>
@@ -906,17 +909,24 @@
       {/each}
       
       <button onclick={saveObject}>
-        {editingObject ? 'Aktualizuj Pinezkę' : 'Zapisz Pinezkę'}
+        {#if editingObject}
+          <Icon name="Checkmark" size={16} /> Aktualizuj Pinezkę
+        {:else}
+          <Icon name="Pin" size={16} /> Zapisz Pinezkę
+        {/if}
       </button>
 
       {#if editingObject}
-        <button type="button" class="cancel-btn" onclick={cancelEdit}>Anuluj</button>
+        <button type="button" class="cancel-btn" onclick={cancelEdit}>
+          <Icon name="Close" size={16} /> Anuluj
+        </button>
       {/if}
     {/if}
   </div>
 {/if}
 
-<PinList 
+{#if showPinList}
+<PinList
   {objects}
   {template}
   onEdit={editPin}
@@ -924,6 +934,7 @@
   onFocus={onFocusPin}
   showActions={true}
 />
+{/if}
 
 <!-- Excel Import Modal -->
 {#if showImportModal}
@@ -931,7 +942,9 @@
     <div class="modal-content">
       <div class="modal-header">
         <h3>Import danych z Excel</h3>
-        <button type="button" onclick={() => showImportModal = false} class="close-btn">✕</button>
+        <button type="button" onclick={() => showImportModal = false} class="close-btn">
+          <Icon name="Close" size={20} />
+        </button>
       </div>
       
       <div class="modal-body">
@@ -939,7 +952,7 @@
         {#if importedData.filter(row => row.hasIncompleteData).length > 0}
           {@const incompleteRows = importedData.filter(row => row.hasIncompleteData).length}
           <div class="warning-box">
-            ⚠️ <strong>Uwaga:</strong> {incompleteRows} wierszy będzie miało niekompletne dane. 
+<Icon name="Cross" size={16} /> <strong>Uwaga:</strong> {incompleteRows} wierszy będzie miało niekompletne dane. 
             Pinezki z niekompletnymi danymi zostaną oznaczone na mapie.
           </div>
         {/if}
@@ -992,7 +1005,7 @@
                         }}
                       >
                       {#if row.hasIncompleteData}
-                        <span class="incomplete-indicator" title="Pinezka będzie miała niekompletne dane">⚠️</span>
+<span class="incomplete-indicator" title="Pinezka będzie miała niekompletne dane"><Icon name="Cross" size={12} /></span>
                       {/if}
                     </td>
                     <td>
@@ -1013,7 +1026,7 @@
                         {/each}
                         {#if row.hasIncompleteData}
                           <div class="data-item incomplete-notice">
-                            <em>⚠️ Wymaga uzupełnienia po imporcie</em>
+<em><Icon name="Cross" size={12} /> Wymaga uzupełnienia po imporcie</em>
                           </div>
                         {/if}
                       </div>
@@ -1040,75 +1053,76 @@
 
 <style>
   .form-section {
-    margin-bottom: 32px;
-    padding: 24px;
-    background: #ffffff;
-    border-radius: 12px;
-    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
-    border: 1px solid #e5e7eb;
+    margin-bottom: 0;
+    padding: var(--space-3);
+    background: transparent;
   }
-  
-  .form-section h3 {
-    margin: 0 0 24px 0;
-    color: #1f2937;
-    font-size: 20px;
-    font-weight: 600;
-    padding-bottom: 12px;
-    border-bottom: 2px solid #f3f4f6;
+
+  /* Compact mode for even tighter spacing */
+  .form-section.compact {
+    padding: var(--space-2);
+  }
+
+  .form-section.compact .form-field {
+    margin-bottom: var(--space-2);
+  }
+
+  .form-section.compact .form-field label {
+    margin-bottom: 2px;
   }
   
   .form-field {
-    margin-bottom: 20px;
+    margin-bottom: var(--space-3);
   }
-  
+
   .form-field label {
     display: block;
-    margin-bottom: 8px;
-    font-weight: 500;
-    color: #374151;
-    font-size: 14px;
+    margin-bottom: var(--space-1);
+    font-family: var(--font-ui);
+    font-weight: var(--font-weight-medium);
+    color: var(--color-text-primary);
+    font-size: var(--text-sm);
   }
   
   .form-field input, .form-field select {
     width: 100%;
-    padding: 12px 16px;
-    border: 1px solid #d1d5db;
-    border-radius: 8px;
-    font-size: 14px;
-    background: #ffffff;
-    transition: all 0.2s ease;
+    padding: var(--space-1) var(--space-2);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-base);
+    font-family: var(--font-ui);
+    font-size: var(--text-sm);
+    background: var(--color-background);
+    transition: border-color var(--transition-fast);
     box-sizing: border-box;
   }
 
   .form-field input:focus, .form-field select:focus {
     outline: none;
-    border-color: #6b7280;
-    box-shadow: 0 0 0 3px rgba(107, 114, 128, 0.1);
+    border-color: var(--color-accent);
   }
 
   .form-field input[readonly] {
-    background: #f9fafb;
-    color: #6b7280;
+    background: var(--color-surface);
+    color: var(--color-text-secondary);
   }
 
   .form-field textarea {
     width: 100%;
-    padding: 12px 16px;
-    border: 1px solid #d1d5db;
-    border-radius: 8px;
-    font-size: 14px;
-    background: #ffffff;
-    transition: all 0.2s ease;
+    padding: var(--space-1) var(--space-2);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-base);
+    font-family: var(--font-ui);
+    font-size: var(--text-sm);
+    background: var(--color-background);
+    transition: border-color var(--transition-fast);
     box-sizing: border-box;
     resize: vertical;
-    min-height: 100px;
-    font-family: inherit;
+    min-height: 60px;
   }
 
   .form-field textarea:focus {
     outline: none;
-    border-color: #6b7280;
-    box-shadow: 0 0 0 3px rgba(107, 114, 128, 0.1);
+    border-color: var(--color-accent);
   }
 
   .currency-field, .percentage-field {
@@ -1171,101 +1185,98 @@
   }
 
   .clear-coords-btn {
-    padding: 8px 12px;
-    background: #ef4444;
+    padding: var(--space-2) var(--space-3);
+    background: var(--color-danger);
     color: white;
     border: none;
-    border-radius: 4px;
+    border-radius: var(--radius-base);
     cursor: pointer;
-    font-size: 14px;
-    font-weight: 600;
-    transition: all 0.2s ease;
+    font-family: var(--font-ui);
+    font-size: var(--text-sm);
+    font-weight: var(--font-weight-medium);
+    transition: all var(--transition-fast);
   }
 
   .clear-coords-btn:hover:not(:disabled) {
-    background: #dc2626;
-    transform: translateY(-1px);
+    opacity: 0.9;
   }
 
   .clear-coords-btn:disabled {
-    background: #d1d5db;
-    color: #9ca3af;
+    background: var(--color-border);
+    color: var(--color-text-disabled);
     cursor: not-allowed;
-    transform: none;
   }
   
   
   button:not(.clear-coords-btn):not(.cancel-btn) {
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    background: var(--color-accent);
     color: white;
     border: none;
-    padding: 12px 24px;
-    border-radius: 8px;
+    padding: var(--space-2) var(--space-3);
+    border-radius: var(--radius-base);
     cursor: pointer;
-    font-weight: 600;
-    font-size: 14px;
-    transition: all 0.2s ease;
-    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+    font-family: var(--font-ui);
+    font-weight: var(--font-weight-medium);
+    font-size: var(--text-sm);
+    transition: all var(--transition-fast);
   }
 
   button:not(.clear-coords-btn):not(.cancel-btn):hover {
-    transform: translateY(-2px);
-    box-shadow: 0 8px 15px -3px rgba(0, 0, 0, 0.2);
+    opacity: 0.9;
   }
 
   .cancel-btn {
-    background: #6b7280;
-    color: white;
+    background: var(--color-border);
+    color: var(--color-text-primary);
     border: none;
-    padding: 12px 24px;
-    border-radius: 8px;
+    padding: var(--space-2) var(--space-3);
+    border-radius: var(--radius-base);
     cursor: pointer;
-    font-weight: 600;
-    font-size: 14px;
-    transition: all 0.2s ease;
-    margin-left: 12px;
+    font-family: var(--font-ui);
+    font-weight: var(--font-weight-medium);
+    font-size: var(--text-sm);
+    transition: all var(--transition-fast);
+    margin-left: var(--space-2);
   }
 
   .cancel-btn:hover {
-    background: #4b5563;
-    transform: translateY(-1px);
+    opacity: 0.8;
   }
   
   /* Tag field styles */
   .tag-field {
-    margin-top: 8px;
-    padding: 16px;
-    background: #f9fafb;
-    border: 1px solid #e5e7eb;
-    border-radius: 8px;
+    margin-top: var(--space-1);
+    padding: var(--space-2);
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-base);
   }
-  
+
   .major-tag-section {
-    margin-bottom: 20px;
+    margin-bottom: var(--space-3);
   }
   
   .tag-section-label {
     display: block !important;
-    font-size: 14px;
-    font-weight: 500;
-    color: #374151;
-    margin-bottom: 8px;
+    font-size: var(--text-sm);
+    font-weight: var(--font-weight-medium);
+    color: var(--color-text-primary);
+    margin-bottom: var(--space-1);
   }
   
   .tag-select {
     width: 100%;
-    padding: 8px 12px;
-    border: 1px solid #d1d5db;
-    border-radius: 6px;
-    background: white;
-    font-size: 14px;
-    margin-bottom: 8px;
+    padding: var(--space-1) var(--space-2);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-base);
+    background: var(--color-background);
+    font-size: var(--text-sm);
+    margin-bottom: var(--space-1);
   }
   
   .tag-select:focus {
     outline: none;
-    border-color: #6b7280;
-    box-shadow: 0 0 0 3px rgba(107, 114, 128, 0.1);
+    border-color: var(--color-accent);
   }
   
   .tag-preview {
@@ -1307,15 +1318,15 @@
   }
   
   .minor-tags-section {
-    border-top: 1px solid #e5e7eb;
-    padding-top: 16px;
+    border-top: 1px solid var(--color-border);
+    padding-top: var(--space-2);
   }
   
   .minor-tags-grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
-    gap: 8px;
-    margin-bottom: 12px;
+    gap: var(--space-1);
+    margin-bottom: var(--space-2);
   }
   
   .tag-checkbox {

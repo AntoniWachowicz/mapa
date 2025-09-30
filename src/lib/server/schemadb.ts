@@ -1,5 +1,5 @@
 import { connectToDatabase } from './database.js';
-import type { Template, SavedObject, ProjectData, Tag, TagFieldData } from '../types.js';
+import type { Template, SavedObject, ProjectData, Tag, CategoryFieldData } from '../types.js';
 
 const PROTECTED_FIELDS = [
   {
@@ -216,14 +216,15 @@ export async function updateObject(objectId: string, newData: ProjectData): Prom
   }
 }
 
-export async function deleteObject(objectId: string): Promise<void> {
+export async function deleteObject(objectId: string): Promise<boolean> {
   try {
     const db = await connectToDatabase();
     const collection = db.collection('objects');
-    
+
     const { ObjectId } = await import('mongodb');
-    
-    await collection.deleteOne({ _id: new ObjectId(objectId) });
+
+    const result = await collection.deleteOne({ _id: new ObjectId(objectId) });
+    return result.deletedCount > 0;
   } catch (error) {
     console.error('Error deleting object:', error);
     throw error;
@@ -284,7 +285,7 @@ export async function deleteTag(tagId: string): Promise<{ success: boolean; erro
     const affectedPins: string[] = [];
     
     for (const obj of objects) {
-      const tagData = obj.data.tags as TagFieldData;
+      const tagData = obj.data.tags as CategoryFieldData;
       if (tagData && tagData.majorTag === tagId) {
         affectedPins.push(obj.id);
       }
@@ -344,7 +345,7 @@ export async function getTagUsageStats(): Promise<{ [tagId: string]: { majorCoun
     const stats: { [tagId: string]: { majorCount: number; minorCount: number } } = {};
     
     for (const obj of objects) {
-      const tagData = obj.data.tags as TagFieldData;
+      const tagData = obj.data.tags as CategoryFieldData;
       if (tagData) {
         // Count major tag usage
         if (tagData.majorTag) {

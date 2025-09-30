@@ -1,5 +1,6 @@
 <script lang="ts">
-  import type { SavedObject, Template, TagFieldData, Tag } from './types.js';
+  import type { SavedObject, Template, CategoryFieldData, TagsFieldData, Tag } from './types.js';
+  import Icon from './Icon.svelte';
   
   interface Props {
     objects: SavedObject[];
@@ -44,8 +45,8 @@
   function formatFieldValue(field: any, value: any): string {
     if (field.type === 'checkbox') {
       return value ? 'Tak' : 'Nie';
-    } else if (field.type === 'tags') {
-      return ''; // Tags are handled separately
+    } else if (field.type === 'category' || field.type === 'tags') {
+      return ''; // Category and tags are handled separately
     } else if (field.type === 'currency') {
       return value ? `${Number(value).toLocaleString('pl-PL', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} zł` : '';
     } else if (field.type === 'percentage') {
@@ -114,27 +115,27 @@
                 onclick={() => handlePinClick(obj)}
                 title="Pokaż na mapie"
               >
-                🎯
+<Icon name="Eye" size={14} />
               </button>
             {/if}
           </div>
 
-          <!-- Display tags if tags field exists -->
-          {#each template.fields.filter(f => f.type === 'tags') as tagsField}
-            {#if obj.data[tagsField.key]}
-              {@const tagData = obj.data[tagsField.key] as TagFieldData}
+          <!-- Display category if category field exists -->
+          {#each template.fields.filter(f => f.type === 'category') as categoryField}
+            {#if obj.data[categoryField.key]}
+              {@const categoryData = obj.data[categoryField.key] as CategoryFieldData}
             <div class="pin-tags">
-              {#if tagData.majorTag}
-                {@const majorTag = availableTags.find(t => t.id === tagData.majorTag)}
+              {#if categoryData.majorTag}
+                {@const majorTag = availableTags.find(t => t.id === categoryData.majorTag)}
                 {#if majorTag}
                   <span class="pin-tag major" style="background-color: {majorTag.color}">
                     {majorTag.displayName || majorTag.name}
                   </span>
                 {/if}
               {/if}
-              
-              {#if tagData.minorTags && tagData.minorTags.length > 0}
-                {#each tagData.minorTags as minorTagId}
+
+              {#if categoryData.minorTags && categoryData.minorTags.length > 0}
+                {#each categoryData.minorTags as minorTagId}
                   {@const minorTag = availableTags.find(t => t.id === minorTagId)}
                   {#if minorTag}
                     <span class="pin-tag minor" style="background-color: {minorTag.color}; opacity: 0.8">
@@ -146,10 +147,50 @@
             </div>
             {/if}
           {/each}
+
+          <!-- Display tags if tags field exists (simple list without visual styling) -->
+          {#each template.fields.filter(f => f.type === 'tags') as tagsField}
+            {#if obj.data[tagsField.key]}
+              {@const tagsData = obj.data[tagsField.key] as TagsFieldData}
+            <div class="pin-tags simple-tags">
+              {#if tagsField.tagConfig?.allowMultiple !== false}
+                <!-- Multiple selection mode -->
+                {#if tagsData.selectedTags && tagsData.selectedTags.length > 0}
+                  {#each tagsData.selectedTags as tagId}
+                    {@const tag = availableTags.find(t => t.id === tagId)}
+                    {#if tag}
+                      <span class="pin-tag simple">
+                        {tag.displayName || tag.name}
+                      </span>
+                    {:else}
+                      <span class="pin-tag simple">
+                        {tagId}
+                      </span>
+                    {/if}
+                  {/each}
+                {/if}
+              {:else}
+                <!-- Single selection mode -->
+                {#if tagsData.selectedTag}
+                  {@const tag = availableTags.find(t => t.id === tagsData.selectedTag)}
+                  {#if tag}
+                    <span class="pin-tag simple">
+                      {tag.displayName || tag.name}
+                    </span>
+                  {:else}
+                    <span class="pin-tag simple">
+                      {tagsData.selectedTag}
+                    </span>
+                  {/if}
+                {/if}
+              {/if}
+            </div>
+            {/if}
+          {/each}
           
           <!-- Display key fields -->
           <div class="pin-details">
-            {#each template.fields.filter(f => f.visible && f.key !== 'title' && f.type !== 'tags') as field}
+            {#each template.fields.filter(f => f.visible && f.key !== 'title' && f.type !== 'category' && f.type !== 'tags') as field}
               {@const value = obj.data[field.key]}
               {#if value && value !== ''}
                 <div class="pin-field" class:media-field={field.type === 'image' || field.type === 'youtube'}>
@@ -194,7 +235,7 @@
                   onclick={(e) => { e.stopPropagation(); onEdit(obj); }}
                   title="Edytuj pinezkę"
                 >
-                  ✏️
+<Icon name="Pen" size={14} />
                 </button>
               {/if}
               {#if onDelete}
@@ -203,7 +244,7 @@
                   onclick={(e) => { e.stopPropagation(); onDelete(obj.id); }}
                   title="Usuń pinezkę"
                 >
-                  🗑️
+<Icon name="Trash" size={14} />
                 </button>
               {/if}
             </div>
@@ -447,6 +488,18 @@
   .pin-tag.minor {
     font-size: 10px;
     padding: 2px 6px;
+  }
+
+  .pin-tag.simple {
+    background: #f3f4f6;
+    color: #374151;
+    border: 1px solid #d1d5db;
+    font-size: 10px;
+    padding: 2px 6px;
+  }
+
+  .simple-tags {
+    margin-bottom: 12px;
   }
   
   .pin-actions {

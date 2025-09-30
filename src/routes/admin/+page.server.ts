@@ -18,7 +18,8 @@ export async function load() {
         neLat: 40.720,
         neLng: -74.000,
         defaultZoom: 12,
-        maxCustomZoom: 14
+        maxCustomZoom: 14,
+        boundaryType: 'rectangle' as const
       }
     };
   }

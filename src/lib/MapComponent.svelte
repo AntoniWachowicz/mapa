@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
-  import type { SavedObject, MapConfig, MapObject } from './types.js';
+  import { onMount, onDestroy } from 'svelte';
+  import type { SavedObject, MapConfig, MapObject, GeoJSON } from './types.js';
   
   interface Props {
     objects: MapObject[];
@@ -19,13 +19,118 @@
   let selectedMarker: any = null;
   let osmTileLayer: any = null;
   let customImageOverlay: any = null;
+  let boundsOverlay: any = null;
+  let boundaryPolygon: any = null;
   
   onMount(async () => {
     await loadLeaflet();
     initializeMap();
     updateMarkers();
   });
-  
+
+  onDestroy(() => {
+    if (boundsOverlay && map) {
+      map.removeLayer(boundsOverlay);
+    }
+    if (boundaryPolygon && map) {
+      map.removeLayer(boundaryPolygon);
+    }
+  });
+
+  // Check if coordinates are within the configured bounds
+  function isWithinBounds(lat: number, lng: number): boolean {
+    if (mapConfig.boundaryType === 'polygon' && mapConfig.polygonBoundary) {
+      return isPointInPolygon(lat, lng, mapConfig.polygonBoundary);
+    }
+
+    // Default rectangle boundary check
+    return lat >= mapConfig.swLat && lat <= mapConfig.neLat &&
+           lng >= mapConfig.swLng && lng <= mapConfig.neLng;
+  }
+
+  // Point-in-polygon algorithm using ray casting
+  function isPointInPolygon(lat: number, lng: number, polygon: GeoJSON.Polygon): boolean {
+    const coordinates = polygon.coordinates[0]; // Use outer ring
+    let isInside = false;
+
+    for (let i = 0, j = coordinates.length - 1; i < coordinates.length; j = i++) {
+      const xi = coordinates[i][0]; // longitude
+      const yi = coordinates[i][1]; // latitude
+      const xj = coordinates[j][0]; // longitude
+      const yj = coordinates[j][1]; // latitude
+
+      if (((yi > lat) !== (yj > lat)) && (lng < (xj - xi) * (lat - yi) / (yj - yi) + xi)) {
+        isInside = !isInside;
+      }
+    }
+
+    return isInside;
+  }
+
+  // Create overlay to darken area outside bounds
+  function createBoundsOverlay() {
+    if (!map || !L || boundsOverlay) return;
+
+    const mapBounds = map.getBounds();
+    const worldBounds = [
+      [mapBounds.getSouth() - 10, mapBounds.getWest() - 10],
+      [mapBounds.getNorth() + 10, mapBounds.getEast() + 10]
+    ];
+
+    // Create outer ring (world bounds)
+    const outerRing = [
+      [worldBounds[0][0], worldBounds[0][1]], // SW
+      [worldBounds[1][0], worldBounds[0][1]], // NW
+      [worldBounds[1][0], worldBounds[1][1]], // NE
+      [worldBounds[0][0], worldBounds[1][1]], // SE
+      [worldBounds[0][0], worldBounds[0][1]]  // back to SW
+    ];
+
+    let innerRing;
+
+    if (mapConfig.boundaryType === 'polygon' && mapConfig.polygonBoundary) {
+      // Use polygon coordinates for the inner hole
+      innerRing = mapConfig.polygonBoundary.coordinates[0].map((coord: number[]) => [coord[1], coord[0]]); // Convert [lng, lat] to [lat, lng]
+    } else {
+      // Use rectangle bounds for the inner hole
+      innerRing = [
+        [mapConfig.swLat, mapConfig.swLng], // SW
+        [mapConfig.neLat, mapConfig.swLng], // NW
+        [mapConfig.neLat, mapConfig.neLng], // NE
+        [mapConfig.swLat, mapConfig.neLng], // SE
+        [mapConfig.swLat, mapConfig.swLng]  // back to SW
+      ];
+    }
+
+    boundsOverlay = L.polygon([outerRing, innerRing], {
+      color: 'transparent',
+      weight: 0,
+      fillColor: '#000000',
+      fillOpacity: 0.3,
+      interactive: false  // Allow clicks to pass through
+    }).addTo(map);
+
+    // Add visible boundary outline for polygon boundaries
+    if (mapConfig.boundaryType === 'polygon' && mapConfig.polygonBoundary) {
+      createBoundaryPolygon();
+    }
+  }
+
+  // Create visible boundary polygon outline
+  function createBoundaryPolygon() {
+    if (!map || !L || !mapConfig.polygonBoundary || boundaryPolygon) return;
+
+    const coordinates = mapConfig.polygonBoundary.coordinates[0].map((coord: number[]) => [coord[1], coord[0]]); // Convert [lng, lat] to [lat, lng]
+
+    boundaryPolygon = L.polygon([coordinates], {
+      color: '#007bff',
+      weight: 3,
+      fillOpacity: 0,
+      interactive: false
+    }).addTo(map);
+  }
+
+
   async function loadLeaflet() {
     const link = document.createElement('link');
     link.rel = 'stylesheet';
@@ -85,12 +190,34 @@
     
     // Handle zoom changes for layer switching
     map.on('zoom', updateLayerBasedOnZoom);
-    
+
+    // Handle map view changes to update bounds overlay
+    map.on('moveend zoomend', () => {
+      if (boundsOverlay) {
+        map.removeLayer(boundsOverlay);
+        boundsOverlay = null;
+      }
+      if (boundaryPolygon) {
+        map.removeLayer(boundaryPolygon);
+        boundaryPolygon = null;
+      }
+      createBoundsOverlay();
+    });
+
+    // Create bounds overlay to show restricted areas
+    createBoundsOverlay();
+
     // Handle map clicks
     map.on('click', (e: any) => {
       const { lat, lng } = e.latlng;
+
+      // Check if click is within bounds before allowing pin placement
+      if (!isWithinBounds(lat, lng)) {
+        return;
+      }
+
       onMapClick({ lat, lng });
-      
+
       // Update selected marker
       if (selectedMarker) {
         map.removeLayer(selectedMarker);
@@ -223,4 +350,5 @@
     font-size: 20px;
     filter: hue-rotate(120deg);
   }
+
 </style>

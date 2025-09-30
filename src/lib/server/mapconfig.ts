@@ -1,37 +1,32 @@
 // src/lib/server/mapconfig.ts - NEW FILE
 import { connectToDatabase } from './database.js';
-import type { MapConfig } from '../types.js';
+import type { MapConfig, GeoJSON } from '../types.js';
+import { ZYWIECKI_RAJ_BOUNDARY } from '../boundaries.js';
 
 // Default map config - you can adjust these coordinates for your area
 const DEFAULT_MAP_CONFIG: MapConfig = {
   swLat: 40.700,      // Southwest corner latitude
   swLng: -74.020,     // Southwest corner longitude
-  neLat: 40.720,      // Northeast corner latitude  
+  neLat: 40.720,      // Northeast corner latitude
   neLng: -74.000,     // Northeast corner longitude
   defaultZoom: 12,    // Starting zoom level
   maxCustomZoom: 14,  // Above this zoom = show OSM tiles
-  customImageUrl: undefined
+  customImageUrl: undefined,
+  boundaryType: 'rectangle'
 };
 
 export async function getMapConfig(): Promise<MapConfig> {
   try {
     const db = await connectToDatabase();
-    const collection = db.collection('settings');
-    
-    const result = await collection.findOne({ type: 'mapconfig' });
-    
-    if (!result) {
-      // Create default map config
-      await collection.insertOne({ 
-        type: 'mapconfig', 
-        config: DEFAULT_MAP_CONFIG 
-      });
-      return DEFAULT_MAP_CONFIG;
+    const settings = await db.collection('settings').findOne({});
+
+    if (settings?.mapConfig) {
+      return settings.mapConfig;
     }
-    
-    return result.config;
+
+    return DEFAULT_MAP_CONFIG;
   } catch (error) {
-    console.error('Error getting map config:', error);
+    console.error('Error loading map config:', error);
     return DEFAULT_MAP_CONFIG;
   }
 }
@@ -39,15 +34,15 @@ export async function getMapConfig(): Promise<MapConfig> {
 export async function updateMapConfig(config: MapConfig): Promise<void> {
   try {
     const db = await connectToDatabase();
-    const collection = db.collection('settings');
-    
-    await collection.updateOne(
-      { type: 'mapconfig' },
-      { $set: { config } },
+    await db.collection('settings').updateOne(
+      {},
+      {
+        $set: { mapConfig: config }
+      },
       { upsert: true }
     );
   } catch (error) {
-    console.error('Error updating map config:', error);
+    console.error('Error saving map config:', error);
     throw error;
   }
 }
@@ -66,4 +61,33 @@ export function getLeafletBounds(config: MapConfig): [[number, number], [number,
     [config.swLat, config.swLng], // Southwest corner
     [config.neLat, config.neLng]  // Northeast corner
   ];
+}
+
+// Helper function to get polygon boundary for Żywiecki Raj LGD
+export function getZywieckirajBoundary(): GeoJSON.Polygon {
+  return ZYWIECKI_RAJ_BOUNDARY;
+}
+
+// Helper function to calculate bounds from polygon coordinates
+export function calculatePolygonBounds(polygon: GeoJSON.Polygon): { swLat: number, swLng: number, neLat: number, neLng: number } {
+  const coordinates = polygon.coordinates[0]; // First ring (outer boundary)
+
+  let minLat = coordinates[0][1];
+  let maxLat = coordinates[0][1];
+  let minLng = coordinates[0][0];
+  let maxLng = coordinates[0][0];
+
+  coordinates.forEach(([lng, lat]: number[]) => {
+    minLat = Math.min(minLat, lat);
+    maxLat = Math.max(maxLat, lat);
+    minLng = Math.min(minLng, lng);
+    maxLng = Math.max(maxLng, lng);
+  });
+
+  return {
+    swLat: minLat,
+    swLng: minLng,
+    neLat: maxLat,
+    neLng: maxLng
+  };
 }

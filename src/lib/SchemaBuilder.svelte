@@ -37,7 +37,8 @@
   let label = $state('');
   let type = $state<Field['type']>('text');
   let required = $state(false);
-  let maxMinorTags = $state(3); // For tags field type
+  let maxMinorTags = $state(3); // For category field type
+  let allowMultiple = $state(true); // For tags field type (single vs multiple choice)
   let selectOptions = $state(''); // For select field type (comma-separated)
   let addressSync = $state(false); // For address field type (auto-sync with coordinates)
   let editingFieldIndex = $state<number | null>(null);
@@ -45,17 +46,19 @@
   let newFieldLabel = $state('');
   let newFieldType = $state<Field['type']>('text');
   let newFieldRequired = $state(false);
+  let draggedFieldIndex = $state<number | null>(null);
+  let dragOverIndex = $state<number | null>(null);
   
-  // Check if tags field already exists
-  const hasTagsField = $derived(template?.fields?.some(f => f.type === 'tags') ?? false);
-  const canAddTagsField = $derived(!hasTagsField && type === 'tags');
+  // Check if category field already exists (only one allowed)
+  const hasCategoryField = $derived(template?.fields?.some(f => f.type === 'category') ?? false);
+  const canAddCategoryField = $derived(!hasCategoryField && type === 'category');
   
   function addField(): void {
     if (label.trim() && template?.fields) {
       const key = label.toLowerCase().replace(/[^a-z0-9]/g, '_');
-      // Check if trying to add second tags field
-      if (type === 'tags' && template.fields.some(f => f.type === 'tags')) {
-        return; // Prevent adding multiple tags fields
+      // Check if trying to add second category field
+      if (type === 'category' && template.fields.some(f => f.type === 'category')) {
+        return; // Prevent adding multiple category fields
       }
 
       const newField: Field = {
@@ -67,7 +70,8 @@
         visible: true,
         protected: false,
         adminVisible: true,
-        ...(type === 'tags' && { tagConfig: { maxMinorTags } }),
+        ...(type === 'category' && { tagConfig: { maxMinorTags } }),
+        ...(type === 'tags' && { tagConfig: { maxMinorTags: 0, allowMultiple } }),
         ...(type === 'select' && {
           selectConfig: {
             options: selectOptions.split(',').map(opt => opt.trim()).filter(opt => opt.length > 0)
@@ -85,6 +89,7 @@
       type = 'text';
       required = false;
       maxMinorTags = 3;
+      allowMultiple = true;
       selectOptions = '';
       addressSync = false;
     }
@@ -100,9 +105,9 @@
   function saveNewField(): void {
     if (newFieldLabel.trim() && template?.fields) {
       const key = newFieldLabel.toLowerCase().replace(/[^a-z0-9]/g, '_');
-      // Check if trying to add second tags field
-      if (newFieldType === 'tags' && template.fields.some(f => f.type === 'tags')) {
-        return; // Prevent adding multiple tags fields
+      // Check if trying to add second category field
+      if (newFieldType === 'category' && template.fields.some(f => f.type === 'category')) {
+        return; // Prevent adding multiple category fields
       }
 
       const newField: Field = {
@@ -113,7 +118,9 @@
         required: newFieldRequired,
         visible: true,
         protected: false,
-        adminVisible: true
+        adminVisible: true,
+        ...(newFieldType === 'category' && { tagConfig: { maxMinorTags: 3 } }),
+        ...(newFieldType === 'tags' && { tagConfig: { maxMinorTags: 0, allowMultiple } })
       };
       const updatedTemplate: Template = {
         ...template,
@@ -186,16 +193,24 @@
   }
   
   function moveFieldUp(index: number): void {
-    if (index > 0) {
+    const currentField = template.fields[index];
+    const targetField = template.fields[index - 1];
+
+    if (index > 0 && canMoveField(currentField) &&
+        !(targetField.key === 'title' || targetField.key === 'name')) {
       const newFields = [...template.fields];
       [newFields[index - 1], newFields[index]] = [newFields[index], newFields[index - 1]];
       const updatedTemplate: Template = { ...template, fields: newFields };
       onUpdate(updatedTemplate);
     }
   }
-  
+
   function moveFieldDown(index: number): void {
-    if (index < template.fields.length - 1) {
+    const currentField = template.fields[index];
+    const targetField = template.fields[index + 1];
+
+    if (index < template.fields.length - 1 && canMoveField(currentField) &&
+        !(targetField.key === 'title' || targetField.key === 'name')) {
       const newFields = [...template.fields];
       [newFields[index], newFields[index + 1]] = [newFields[index + 1], newFields[index]];
       const updatedTemplate: Template = { ...template, fields: newFields };
@@ -245,6 +260,64 @@
     editingFieldIndex = null;
   }
 
+  // Drag and drop functions
+  function handleDragStart(event: DragEvent, index: number): void {
+    draggedFieldIndex = index;
+    if (event.dataTransfer) {
+      event.dataTransfer.effectAllowed = 'move';
+      event.dataTransfer.setData('text/html', '');
+    }
+  }
+
+  function handleDragOver(event: DragEvent, index: number): void {
+    event.preventDefault();
+    dragOverIndex = index;
+    if (event.dataTransfer) {
+      event.dataTransfer.dropEffect = 'move';
+    }
+  }
+
+  function handleDragLeave(): void {
+    dragOverIndex = null;
+  }
+
+  function handleDrop(event: DragEvent, dropIndex: number): void {
+    event.preventDefault();
+
+    if (draggedFieldIndex === null || draggedFieldIndex === dropIndex) {
+      draggedFieldIndex = null;
+      dragOverIndex = null;
+      return;
+    }
+
+    const draggedField = template.fields[draggedFieldIndex];
+    const targetField = template.fields[dropIndex];
+
+    // Don't allow moving the title/name field or moving over the title/name field
+    if ((targetField.key === 'title' || targetField.key === 'name') ||
+        (draggedField.key === 'title' || draggedField.key === 'name')) {
+      draggedFieldIndex = null;
+      dragOverIndex = null;
+      return;
+    }
+
+    // Create new array with moved field
+    const newFields = [...template.fields];
+    const [movedField] = newFields.splice(draggedFieldIndex, 1);
+    newFields.splice(dropIndex, 0, movedField);
+
+    const updatedTemplate: Template = { ...template, fields: newFields };
+    onUpdate(updatedTemplate);
+
+    draggedFieldIndex = null;
+    dragOverIndex = null;
+  }
+
+  function canMoveField(field: Field): boolean {
+    // Allow coordinates to be moved, but protect title/name field from being moved
+    return field.key !== 'title' && field.key !== 'name';
+  }
+
   function getFieldTypeDisplayName(fieldType: Field['type']): string {
     const typeNames: Record<Field['type'], string> = {
       'text': 'tekst',
@@ -260,6 +333,7 @@
       'youtube': 'youtube',
       'address': 'adres',
       'checkbox': 'tak/nie',
+      'category': 'kategoria',
       'tags': 'tagi'
     };
     return typeNames[fieldType] || fieldType;
@@ -272,7 +346,17 @@
       <div class="fields-list">
         {#each template.fields.filter(f => f.adminVisible) as field, i}
           {@const originalIndex = template.fields.findIndex(f => f.key === field.key)}
-          <div class="field-row">
+          <div
+            class="field-row"
+            class:draggable={canMoveField(field)}
+            class:dragging={draggedFieldIndex === originalIndex}
+            class:drag-over={dragOverIndex === originalIndex}
+            draggable={canMoveField(field)}
+            ondragstart={(e) => handleDragStart(e, originalIndex)}
+            ondragover={(e) => handleDragOver(e, originalIndex)}
+            ondragleave={handleDragLeave}
+            ondrop={(e) => handleDrop(e, originalIndex)}
+          >
             <div class="field-name">
               {#if editingFieldIndex === originalIndex}
                 <input
@@ -335,7 +419,7 @@
 
               <button
                 onclick={() => moveFieldUp(originalIndex)}
-                disabled={originalIndex === 0 || field.protected}
+                disabled={originalIndex === 0 || !canMoveField(field) || (originalIndex > 0 && (template.fields[originalIndex - 1].key === 'title' || template.fields[originalIndex - 1].key === 'name'))}
                 class="icon-button move-button"
                 title="Przenieś w górę"
               >
@@ -344,7 +428,7 @@
 
               <button
                 onclick={() => moveFieldDown(originalIndex)}
-                disabled={originalIndex === template.fields.length - 1 || field.protected}
+                disabled={originalIndex === template.fields.length - 1 || !canMoveField(field) || (originalIndex < template.fields.length - 1 && (template.fields[originalIndex + 1].key === 'title' || template.fields[originalIndex + 1].key === 'name'))}
                 class="icon-button move-button"
                 title="Przenieś w dół"
               >
@@ -389,9 +473,24 @@
                 <option value="youtube">youtube</option>
                 <option value="address">adres</option>
                 <option value="checkbox">tak/nie</option>
-                <option value="tags" disabled={hasTagsField}>tagi {hasTagsField ? '(już istnieje)' : ''}</option>
+                <option value="category" disabled={hasCategoryField}>kategoria {hasCategoryField ? '(już istnieje)' : ''}</option>
+                <option value="tags">tagi</option>
               </select>
             </div>
+
+            <!-- Field configuration options -->
+            {#if newFieldType === 'tags'}
+              <div class="field-config">
+                <label class="config-label">
+                  <input
+                    type="checkbox"
+                    bind:checked={allowMultiple}
+                    class="config-checkbox"
+                  >
+                  Wielokrotny wybór
+                </label>
+              </div>
+            {/if}
 
             <div class="field-actions new-field-actions">
               <!-- Empty spacers to match the alignment -->
@@ -434,8 +533,8 @@
   </div>
 
 
-  <!-- Tag Manager - only show if there's a tags field -->
-  {#if template?.fields?.some(f => f.type === 'tags')}
+  <!-- Tag Manager - show if there's a category or tags field -->
+  {#if template?.fields?.some(f => f.type === 'category' || f.type === 'tags')}
     <div class="tag-manager-section">
       <TagManager template={template} onUpdate={onUpdate} />
     </div>
@@ -477,6 +576,24 @@
 
   .new-field-row {
     background-color: rgba(0, 0, 0, 0.02);
+  }
+
+  .field-row.draggable {
+    cursor: grab;
+  }
+
+  .field-row.draggable:active {
+    cursor: grabbing;
+  }
+
+  .field-row.dragging {
+    opacity: 0.5;
+    background-color: rgba(0, 122, 204, 0.1);
+  }
+
+  .field-row.drag-over {
+    background-color: rgba(0, 122, 204, 0.1);
+    border-top: 2px solid #007acc;
   }
 
   .field-name {
@@ -663,6 +780,26 @@
     cursor: not-allowed;
   }
 
+  .field-config {
+    grid-column: 1 / -1;
+    padding: 8px 12px;
+    background: rgba(0, 0, 0, 0.02);
+    border-radius: 4px;
+    margin: 4px 0;
+  }
+
+  .config-label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 14px;
+    color: #666;
+    cursor: pointer;
+  }
+
+  .config-checkbox {
+    margin: 0;
+  }
 
   .tag-manager-section {
     border-top: 1px solid #e0e0e0;

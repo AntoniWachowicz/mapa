@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import type { SavedObject, Template } from '$lib/types.js';
+  import type { SavedObject, Template, CategoryFieldData } from '$lib/types.js';
 
   interface Props {
     data: {
@@ -23,6 +23,11 @@
   let resizeLeftColumn = $state('');
   let resizeRightColumn = $state('');
   let expandedCells = $state<Set<string>>(new Set());
+  let tableBodyElement = $state<HTMLElement | null>(null);
+  let placeholderRowCount = $state(0);
+  let editingCell = $state<{objectId: string, fieldKey: string} | null>(null);
+  let editingValue = $state<any>(null);
+  let originalValue = $state<any>(null);
 
   // Initialize data
   $effect(() => {
@@ -40,6 +45,9 @@
   });
 
   function handleSort(fieldKey: string) {
+    // Don't sort if we're currently resizing
+    if (isResizing) return;
+
     if (sortField === fieldKey) {
       sortDirection = sortDirection === 'asc' ? 'desc' : 'asc';
     } else {
@@ -183,44 +191,103 @@
     expandedCells = new Set(expandedCells);
   }
 
-  // Excel export handler
-  async function handleExcelExport(): Promise<void> {
-    if (!data.template || !data.objects || data.objects.length === 0) {
-      alert('Brak danych do eksportu');
-      return;
-    }
+  function startEditingCell(objectId: string, fieldKey: string, currentValue: any) {
+    editingCell = { objectId, fieldKey };
+    editingValue = currentValue;
+    originalValue = currentValue;
+  }
+
+  function cancelEdit() {
+    editingCell = null;
+    editingValue = null;
+    originalValue = null;
+  }
+
+  async function saveEdit() {
+    if (!editingCell) return;
 
     try {
-      const response = await fetch('/api/export-excel', {
-        method: 'POST',
+      const response = await fetch(`/api/objects/${editingCell.objectId}`, {
+        method: 'PATCH',
         headers: {
-          'Content-Type': 'application/json'
+          'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          objects: data.objects,
-          template: data.template
+          fieldKey: editingCell.fieldKey,
+          value: editingValue
         })
       });
 
       if (response.ok) {
-        const blob = await response.blob();
-        const url = window.URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.style.display = 'none';
-        a.href = url;
-        a.download = `pinezki-export-${new Date().toISOString().split('T')[0]}.xlsx`;
-        document.body.appendChild(a);
-        a.click();
-        window.URL.revokeObjectURL(url);
-        document.body.removeChild(a);
+        // Update local state
+        const objIndex = filteredObjects.findIndex(obj => obj.id === editingCell.objectId);
+        if (objIndex !== -1) {
+          filteredObjects[objIndex].data[editingCell.fieldKey] = editingValue;
+          filteredObjects = [...filteredObjects];
+        }
+        cancelEdit();
       } else {
-        alert('Błąd podczas eksportu do Excel');
+        alert('Błąd podczas zapisywania zmian');
       }
     } catch (error) {
-      console.error('Export error:', error);
-      alert('Błąd podczas eksportu do Excel');
+      console.error('Save error:', error);
+      alert('Błąd podczas zapisywania zmian');
     }
   }
+
+  function handleKeydown(event: KeyboardEvent) {
+    if (event.ctrlKey && event.key === 'Enter') {
+      event.preventDefault();
+      saveEdit();
+    }
+  }
+
+  // Focus action for inputs
+  function focus(element: HTMLElement) {
+    element.focus();
+    if (element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement) {
+      element.select();
+    }
+  }
+
+  // Calculate placeholder rows to fill the screen
+  function calculatePlaceholderRows(): void {
+    if (!tableBodyElement) return;
+
+    const containerHeight = tableBodyElement.clientHeight;
+    const rowHeight = 40;
+    const existingRowsCount = filteredObjects.length;
+    const maxVisibleRows = Math.floor(containerHeight / rowHeight);
+    const neededPlaceholders = Math.max(0, maxVisibleRows - existingRowsCount);
+
+    placeholderRowCount = neededPlaceholders;
+  }
+
+  // Recalculate on window resize and data changes
+  $effect(() => {
+    if (tableBodyElement && data.template) {
+      calculatePlaceholderRows();
+    }
+  });
+
+  $effect(() => {
+    if (filteredObjects) {
+      calculatePlaceholderRows();
+    }
+  });
+
+  onMount(() => {
+    const handleResizeWindow = () => {
+      calculatePlaceholderRows();
+    };
+
+    window.addEventListener('resize', handleResizeWindow);
+
+    return () => {
+      window.removeEventListener('resize', handleResizeWindow);
+    };
+  });
+
 </script>
 
 <svelte:head>
@@ -238,14 +305,20 @@
 {:else}
   <div class="list-container">
     <div class="list-actions">
-      <button class="btn btn-primary">
+      <button class="btn btn-primary" onclick={handleTemplateDownload}>
         {@html DownloadIcon()}
         <span>Export szablonu</span>
       </button>
-      <button class="btn btn-primary">
+      <label class="btn btn-primary">
         {@html UploadIcon()}
         <span>Importuj excel</span>
-      </button>
+        <input
+          type="file"
+          accept=".xlsx,.xls"
+          onchange={handleExcelImport}
+          style="display: none;"
+        >
+      </label>
       <button class="btn btn-primary" onclick={handleExcelExport}>
         {@html DownloadIcon()}
         <span>Export tabeli</span>
@@ -290,7 +363,7 @@
       </div>
 
       <!-- Scrollable Body -->
-      <div class="table-body">
+      <div class="table-body" bind:this={tableBodyElement}>
         <table class="body-table">
           <tbody>
             {#if filteredObjects.length === 0}
@@ -303,30 +376,107 @@
               {#each filteredObjects as obj}
                 <tr class:incomplete={obj.hasIncompleteData}>
                   {#each data.template.fields.filter(f => f.visible) as field}
-                    {@const cellId = `${obj._id}-${field.key}`}
+                    {@const cellId = `${obj.id}-${field.key}`}
                     {@const isExpanded = expandedCells.has(cellId)}
-                    <td style="width: {columnWidths[field.key] || 200}px;">
-                      <div class="cell-content" class:expanded={isExpanded} onclick={() => toggleCellExpansion(obj._id, field.key)}>
-                        {#if obj.hasIncompleteData && !obj.data[field.key]}
-                          <span class="missing-data">—</span>
-                        {:else if field.type === 'tags'}
-                          {#if obj.data[field.key]?.majorTag}
-                            {@const tagData = obj.data[field.key]}
-                            {@const majorTag = data.template.tags?.find(t => t.id === tagData.majorTag)}
-                            {#if majorTag}
-                              <span class="tag-display" style="background-color: {majorTag.color}">
-                                {majorTag.displayName || majorTag.name}
-                              </span>
+                    <td style="width: {columnWidths[field.key] || 200}px;" class:sorted-column={sortField === field.key}>
+                      {#if editingCell && editingCell.objectId === obj.id && editingCell.fieldKey === field.key}
+                        <div class="edit-field-container">
+                          {#if field.type === 'text' || field.type === 'email' || field.type === 'url'}
+                            <input
+                              type="text"
+                              bind:value={editingValue}
+                              class="edit-field-input"
+                              onkeydown={handleKeydown}
+                              use:focus
+                            />
+                          {:else if field.type === 'number' || field.type === 'currency' || field.type === 'percentage'}
+                            <input
+                              type="number"
+                              bind:value={editingValue}
+                              class="edit-field-input"
+                              onkeydown={handleKeydown}
+                              use:focus
+                            />
+                          {:else if field.type === 'textarea'}
+                            <textarea
+                              bind:value={editingValue}
+                              class="edit-field-textarea"
+                              onkeydown={handleKeydown}
+                              use:focus
+                            ></textarea>
+                          {:else if field.type === 'checkbox'}
+                            <input
+                              type="checkbox"
+                              bind:checked={editingValue}
+                              class="edit-field-checkbox"
+                              onkeydown={handleKeydown}
+                              use:focus
+                            />
+                          {:else if field.type === 'date'}
+                            <input
+                              type="date"
+                              bind:value={editingValue}
+                              class="edit-field-input"
+                              onkeydown={handleKeydown}
+                              use:focus
+                            />
+                          {:else}
+                            <input
+                              type="text"
+                              bind:value={editingValue}
+                              class="edit-field-input"
+                              onkeydown={handleKeydown}
+                              use:focus
+                            />
+                          {/if}
+                          <div class="edit-buttons">
+                            <button class="edit-save-btn" onclick={saveEdit} title="Zapisz (Ctrl+Enter)">
+                              ✓
+                            </button>
+                            <button class="edit-cancel-btn" onclick={cancelEdit} title="Anuluj">
+                              ✕
+                            </button>
+                          </div>
+                        </div>
+                      {:else}
+                        <div
+                          class="cell-content"
+                          class:expanded={isExpanded}
+                          onclick={() => toggleCellExpansion(obj.id, field.key)}
+                          ondblclick={() => startEditingCell(obj.id, field.key, obj.data[field.key])}
+                        >
+                          {#if obj.hasIncompleteData && !obj.data[field.key]}
+                            <span class="missing-data">—</span>
+                          {:else if field.type === 'tags'}
+                            {#if obj.data[field.key] && typeof obj.data[field.key] === 'object' && obj.data[field.key] !== null && 'majorTag' in (obj.data[field.key] as object)}
+                              {@const tagData = obj.data[field.key] as CategoryFieldData}
+                              {@const majorTag = data.template.tags?.find(t => t.id === tagData.majorTag)}
+                              {#if majorTag}
+                                <span class="tag-display" style="background-color: {majorTag.color}">
+                                  {majorTag.displayName || majorTag.name}
+                                </span>
+                              {/if}
+                            {:else}
+                              <span class="missing-data">—</span>
                             {/if}
                           {:else}
-                            <span class="missing-data">—</span>
+                            <span class="field-value">
+                              {formatFieldValue(field, obj.data[field.key])}
+                            </span>
                           {/if}
-                        {:else}
-                          <span class="field-value">
-                            {formatFieldValue(field, obj.data[field.key])}
-                          </span>
-                        {/if}
-                      </div>
+                        </div>
+                      {/if}
+                    </td>
+                  {/each}
+                </tr>
+              {/each}
+
+              <!-- Placeholder rows to fill screen -->
+              {#each Array(placeholderRowCount).fill(null) as _, index}
+                <tr class="placeholder-row" class:even={index % 2 === 0}>
+                  {#each data.template.fields.filter(f => f.visible) as field}
+                    <td style="width: {columnWidths[field.key] || 200}px;" class:sorted-column={sortField === field.key}>
+                      <div class="cell-content placeholder-cell"></div>
                     </td>
                   {/each}
                 </tr>
@@ -367,41 +517,40 @@
 
   .list-actions {
     display: flex;
-    gap: 12px;
-    margin-bottom: 24px;
+    gap: var(--space-2);
+    margin-bottom: var(--space-4);
+    padding: var(--space-3);
   }
 
   .btn {
-    display: flex;
+    display: inline-flex;
     align-items: center;
-    gap: 8px;
-    padding: 12px 16px;
-    font-family: "Space Mono", monospace;
-    font-size: 16px;
-    font-weight: 400;
+    gap: var(--space-2);
+    padding: var(--space-2) var(--space-3);
+    background: #333333;
+    color: white;
     border: none;
-    border-radius: 8px;
+    border-radius: var(--radius-base);
+    font-family: var(--font-ui);
+    font-size: var(--text-sm);
+    font-weight: var(--font-weight-medium);
     cursor: pointer;
-    transition: all 0.2s ease;
-    background: white;
-    color: #333;
-    border: 1px solid #ddd;
+    transition: all var(--transition-fast);
+    text-decoration: none;
+    height: 32px;
   }
 
   .btn:hover {
-    background: #f8f9fa;
-    border-color: #bbb;
+    background: #444444;
+    transform: translateY(-1px);
   }
 
-  .btn-primary {
-    background: #007bff;
-    color: white;
-    border-color: #007bff;
+  .btn:active {
+    transform: translateY(0);
   }
 
-  .btn-primary:hover {
-    background: #0056b3;
-    border-color: #0056b3;
+  .btn span {
+    white-space: nowrap;
   }
 
   .table-container {
@@ -585,4 +734,167 @@
     width: 2px;
     left: 1.5px;
   }
+
+  /* Modern table design improvements */
+  .header-table th {
+    background: var(--color-surface);
+    padding: var(--space-4) var(--space-4) var(--space-6) var(--space-4);
+    text-align: left;
+    font-family: var(--font-ui);
+    font-weight: var(--font-weight-bold);
+    font-size: var(--text-sm);
+    color: var(--color-text-primary);
+    cursor: pointer;
+    user-select: none;
+    transition: background-color var(--transition-fast);
+    position: relative;
+    border-bottom: 2px solid var(--color-border);
+  }
+
+  .header-table th.sorted-asc,
+  .header-table th.sorted-desc {
+    background: #d0d0d0;
+    color: var(--color-text-primary);
+  }
+
+  .field-name {
+    font-weight: var(--font-weight-bold);
+    color: var(--color-text-primary);
+  }
+
+  .body-table td {
+    padding: var(--space-2) var(--space-4);
+    font-family: var(--font-ui);
+    font-size: var(--text-sm);
+    vertical-align: top;
+  }
+
+  .body-table tbody tr:nth-child(even) {
+    background: #e8e8e8;
+  }
+
+  .body-table tbody tr:nth-child(odd) {
+    background: #f5f5f5;
+  }
+
+  .body-table tbody tr:hover {
+    background: #d0d0d0 !important;
+  }
+
+  .body-table td.sorted-column {
+    background: rgba(0, 0, 0, 0.05);
+  }
+
+  .body-table tbody tr:nth-child(even) td.sorted-column {
+    background: #d8d8d8;
+  }
+
+  .body-table tbody tr:nth-child(odd) td.sorted-column {
+    background: #e8e8e8;
+  }
+
+  .cell-content {
+    min-height: 1.2rem;
+    display: flex;
+    align-items: flex-start;
+    padding: var(--space-1) 0;
+    cursor: pointer;
+    overflow: hidden;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    line-height: 1.3;
+    vertical-align: top;
+  }
+
+  /* Placeholder rows */
+  .placeholder-row {
+    pointer-events: none;
+  }
+
+  .placeholder-row.even {
+    background: #e8e8e8;
+  }
+
+  .placeholder-row:not(.even) {
+    background: #f5f5f5;
+  }
+
+  .placeholder-cell {
+    height: 100%;
+    background: transparent;
+  }
+
+  .placeholder-row:hover {
+    background: inherit !important;
+  }
+
+  /* Field editing styles - minimal */
+  .edit-field-container {
+    position: relative;
+  }
+
+  .edit-field-input,
+  .edit-field-textarea {
+    width: 100%;
+    border: 1px solid #007bff;
+    border-radius: var(--radius-base);
+    padding: var(--space-2);
+    font-family: var(--font-ui);
+    font-size: var(--text-sm);
+    background: white;
+    resize: none;
+    min-height: 80px; /* Make it appear expanded like normal cells */
+    line-height: 1.3;
+  }
+
+  .edit-field-input:focus,
+  .edit-field-textarea:focus {
+    outline: none;
+    border-color: #007bff;
+  }
+
+  .edit-field-textarea {
+    min-height: 100px; /* Even taller for actual textareas */
+  }
+
+  .edit-field-checkbox {
+    transform: scale(1.1);
+  }
+
+  .edit-buttons {
+    display: flex;
+    gap: var(--space-1);
+    margin-top: var(--space-1);
+    justify-content: flex-end;
+  }
+
+  .edit-save-btn,
+  .edit-cancel-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: var(--space-1);
+    background: #333333;
+    color: white;
+    border: none;
+    border-radius: var(--radius-base);
+    font-size: 14px;
+    cursor: pointer;
+    transition: all var(--transition-fast);
+    width: 28px;
+    height: 24px;
+  }
+
+  .edit-save-btn:hover,
+  .edit-cancel-btn:hover {
+    background: #444444;
+    transform: translateY(-1px);
+  }
+
+  .edit-save-btn:active,
+  .edit-cancel-btn:active {
+    transform: translateY(0);
+  }
+
 </style>

@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import type { MapConfig } from '$lib/types.js';
+  import type { MapConfig, GeoJSON } from '$lib/types.js';
+  import { ZYWIECKI_RAJ_BOUNDARY, calculatePolygonBounds } from '$lib/boundaries.js';
   
   interface PageData {
     mapConfig: MapConfig;
@@ -382,7 +383,8 @@
       neLng: -74.000,
       defaultZoom: 12,
       maxCustomZoom: 14,
-      customImageUrl: undefined
+      customImageUrl: undefined,
+      boundaryType: 'rectangle'
     };
     updateMapVisualization();
   }
@@ -396,6 +398,29 @@
       const leafletBounds = L.latLngBounds(bounds);
       map.fitBounds(leafletBounds, { padding: [20, 20] });
     }
+  }
+
+  function switchBoundaryType(type: 'rectangle' | 'polygon'): void {
+    config.boundaryType = type;
+
+    if (type === 'polygon') {
+      // Switch to Żywiecki Raj LGD boundary (ultra-high precision 1000+ points)
+      const zywieckirajBoundary = ZYWIECKI_RAJ_BOUNDARY;
+
+      config.polygonBoundary = zywieckirajBoundary;
+
+      // Calculate and update rectangle bounds from polygon
+      const bounds = calculatePolygonBounds(zywieckirajBoundary);
+      config.swLat = bounds.swLat;
+      config.swLng = bounds.swLng;
+      config.neLat = bounds.neLat;
+      config.neLng = bounds.neLng;
+    } else {
+      // Clear polygon boundary when switching back to rectangle
+      config.polygonBoundary = undefined;
+    }
+
+    updateMapVisualization();
   }
 
   // Helper function to get zoom level description
@@ -536,6 +561,28 @@
     </div>
 
     <div class="map-controls">
+      <div class="boundary-controls">
+        <label>Boundary Type:</label>
+        <div class="boundary-toggles">
+          <button
+            onclick={() => switchBoundaryType('rectangle')}
+            class="btn boundary-btn"
+            class:active={config.boundaryType === 'rectangle'}
+            disabled={saving}
+          >
+            Rectangle
+          </button>
+          <button
+            onclick={() => switchBoundaryType('polygon')}
+            class="btn boundary-btn"
+            class:active={config.boundaryType === 'polygon'}
+            disabled={saving}
+          >
+            Precise Boundary (Żywiecki Raj - 53pts)
+          </button>
+        </div>
+      </div>
+
       <button onclick={fitToCurrentBounds} class="btn" disabled={saving}>
         Fit to Bounds
       </button>
@@ -653,6 +700,38 @@
     background: var(--color-surface);
     border-radius: var(--radius-lg);
     border: 1px solid var(--color-border);
+    align-items: center;
+    flex-wrap: wrap;
+  }
+
+  .boundary-controls {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+  }
+
+  .boundary-controls label {
+    font-size: var(--text-sm);
+    font-weight: 600;
+    color: var(--color-text-secondary);
+  }
+
+  .boundary-toggles {
+    display: flex;
+    gap: var(--space-1);
+  }
+
+  .boundary-btn {
+    padding: var(--space-2) var(--space-3);
+    font-size: var(--text-sm);
+    border-radius: var(--radius-base);
+    border: 1px solid var(--color-border);
+    background: var(--color-surface);
+    transition: all 0.2s ease;
+  }
+
+  .boundary-btn:hover {
+    background: var(--color-surface-hover);
   }
 
   .btn.active {
