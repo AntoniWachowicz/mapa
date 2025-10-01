@@ -538,10 +538,16 @@
 
   // Custom map upload function
   async function handleCustomMapUpload(event: Event) {
+    console.log('[Client] Upload handler triggered');
     const input = event.target as HTMLInputElement;
     const file = input.files?.[0];
 
-    if (!file) return;
+    if (!file) {
+      console.log('[Client] No file selected');
+      return;
+    }
+
+    console.log(`[Client] File selected: ${file.name}, size: ${file.size}, type: ${file.type}`);
 
     uploadingMap = true;
     uploadMessage = '';
@@ -550,18 +556,25 @@
       const formData = new FormData();
       formData.append('customMap', file);
 
+      console.log('[Client] Sending request to /api/upload-custom-map');
       const response = await fetch('/api/upload-custom-map', {
         method: 'POST',
         body: formData
       });
 
+      console.log(`[Client] Response status: ${response.status}`);
+      console.log(`[Client] Response headers:`, response.headers);
+
       // Check if response is JSON
       const contentType = response.headers.get('content-type');
+      console.log(`[Client] Content-Type: ${contentType}`);
+
       if (!contentType || !contentType.includes('application/json')) {
         throw new Error('Server returned non-JSON response. Check server logs.');
       }
 
       const result = await response.json();
+      console.log('[Client] Response JSON:', result);
 
       if (!response.ok) {
         throw new Error(result.error || 'Failed to upload custom map');
