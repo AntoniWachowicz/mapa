@@ -78,6 +78,7 @@ async function stitchTiles(
 
 export const POST: RequestHandler = async () => {
 	try {
+		// Note: Template export works on Vercel because it only downloads/processes in memory
 		// Get current map configuration
 		const config = await getMapConfig();
 

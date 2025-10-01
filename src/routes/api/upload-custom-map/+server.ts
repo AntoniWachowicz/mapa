@@ -19,6 +19,13 @@ export const POST: RequestHandler = async ({ request }) => {
 			return json({ error: 'File must be an image' }, { status: 400 });
 		}
 
+		// Check if running on Vercel (read-only filesystem)
+		if (process.env.VERCEL) {
+			return json({
+				error: 'Custom map uploads are not supported on Vercel due to read-only filesystem. Please use a server with persistent storage or configure external storage (S3, etc).'
+			}, { status: 501 });
+		}
+
 		// Get current map configuration
 		const config = await getMapConfig();
 		const breakpointZoom = getBreakpointZoom(config);
