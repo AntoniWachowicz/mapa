@@ -565,12 +565,22 @@
       console.log(`[Client] Response status: ${response.status}`);
       console.log(`[Client] Response headers:`, response.headers);
 
+      // Check for Vercel payload size limit error
+      if (response.status === 413) {
+        const vercelError = response.headers.get('x-vercel-error');
+        if (vercelError === 'FUNCTION_PAYLOAD_TOO_LARGE') {
+          throw new Error(`File too large for Vercel (${(file.size / 1024 / 1024).toFixed(1)}MB). Vercel limit is 4.5MB. Please:\n1. Use a smaller image, or\n2. Deploy to a server with persistent storage (not Vercel), or\n3. Configure external storage (S3, Cloudinary, etc.)`);
+        }
+        throw new Error('File too large. Server rejected the upload (413).');
+      }
+
       // Check if response is JSON
       const contentType = response.headers.get('content-type');
       console.log(`[Client] Content-Type: ${contentType}`);
 
       if (!contentType || !contentType.includes('application/json')) {
-        throw new Error('Server returned non-JSON response. Check server logs.');
+        const errorText = await response.text();
+        throw new Error(`Server error: ${errorText || 'Non-JSON response received'}`);
       }
 
       const result = await response.json();
