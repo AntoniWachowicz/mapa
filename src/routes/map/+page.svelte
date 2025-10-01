@@ -20,6 +20,9 @@
   let template = $state<Template>(data.template || { fields: [] });
   let objects = $state<SavedObject[]>(data.objects || []);
   let mapConfig = $state<MapConfig>(data.mapConfig);
+
+  console.log('[MAP PAGE CLIENT] Received objects:', objects.length);
+  console.log('[MAP PAGE CLIENT] Objects data:', objects);
   let focusCoordinates = $state<{lat: number, lng: number} | null>(null);
   let selectedCoordinates = $state<{lat: number, lng: number} | null>(null);
   let sidebarWidth = $state(400); // Default sidebar width in pixels

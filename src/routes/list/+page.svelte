@@ -14,9 +14,12 @@
 
   const { data }: Props = $props();
 
+  console.log('[LIST PAGE CLIENT] Received objects:', data.objects?.length);
+  console.log('[LIST PAGE CLIENT] Objects data:', data.objects);
+
   let sortField = $state<string>('');
   let sortDirection = $state<'asc' | 'desc'>('asc');
-  let filteredObjects = $state<SavedObject[]>([]);
+  let filteredObjects = $state<SavedObject[]>(data.objects || []);
   let columnWidths = $state<Record<string, number>>({});
   let isResizing = $state(false);
   let resizeStartX = $state(0);
@@ -43,6 +46,105 @@
       columnWidths = initialWidths;
     }
   });
+
+  // Excel/Template handler functions
+  async function handleTemplateDownload() {
+    if (!data.template) return;
+
+    try {
+      const response = await fetch('/api/excel-template', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ template: data.template })
+      });
+
+      if (response.ok) {
+        const blob = await response.blob();
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'szablon_excel.xlsx';
+        document.body.appendChild(a);
+        a.click();
+        window.URL.revokeObjectURL(url);
+        document.body.removeChild(a);
+      } else {
+        alert('Błąd podczas pobierania szablonu');
+      }
+    } catch (error) {
+      console.error('Template download error:', error);
+      alert('Błąd podczas pobierania szablonu');
+    }
+  }
+
+  async function handleExcelImport(event: Event) {
+    const input = event.target as HTMLInputElement;
+    const file = input.files?.[0];
+    if (!file) return;
+
+    const formData = new FormData();
+    formData.append('file', file);
+
+    try {
+      const response = await fetch('/api/import-excel', {
+        method: 'POST',
+        body: formData
+      });
+
+      if (response.ok) {
+        const result = await response.json();
+        if (result.success) {
+          // Refresh the page to show new data
+          window.location.reload();
+        } else {
+          alert(`Błąd importu: ${result.error || 'Nieznany błąd'}`);
+        }
+      } else {
+        alert('Błąd podczas importu pliku Excel');
+      }
+    } catch (error) {
+      console.error('Excel import error:', error);
+      alert('Błąd podczas importu pliku Excel');
+    }
+
+    // Reset input
+    input.value = '';
+  }
+
+  async function handleExcelExport() {
+    if (!data.template || !filteredObjects.length) {
+      alert('Brak danych do eksportu');
+      return;
+    }
+
+    try {
+      const response = await fetch('/api/export-excel', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          template: data.template,
+          objects: filteredObjects
+        })
+      });
+
+      if (response.ok) {
+        const blob = await response.blob();
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `export_${new Date().toISOString().split('T')[0]}.xlsx`;
+        document.body.appendChild(a);
+        a.click();
+        window.URL.revokeObjectURL(url);
+        document.body.removeChild(a);
+      } else {
+        alert('Błąd podczas eksportu do Excel');
+      }
+    } catch (error) {
+      console.error('Excel export error:', error);
+      alert('Błąd podczas eksportu do Excel');
+    }
+  }
 
   function handleSort(fieldKey: string) {
     // Don't sort if we're currently resizing

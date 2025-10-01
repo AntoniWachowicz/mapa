@@ -141,21 +141,26 @@ export async function getObjects(): Promise<SavedObject[]> {
   try {
     const db = await connectToDatabase();
     const collection = db.collection('objects');
-    
+
     const results = await collection.find({}).toArray();
-    
-    return results.map(doc => {
+
+    console.log('[getObjects] Found documents:', results.length);
+
+    const mapped = results.map(doc => {
       const obj: SavedObject = {
         id: doc._id.toString(),
         data: doc.data
       };
-      
+
       if (doc.hasIncompleteData) {
         obj.hasIncompleteData = doc.hasIncompleteData;
       }
-      
+
       return obj;
     });
+
+    console.log('[getObjects] Returning objects:', mapped.length);
+    return mapped;
   } catch (error) {
     console.error('Error getting objects:', error);
     return [];

@@ -9,7 +9,10 @@ export async function load() {
       getObjects(),
       getMapConfig()  // NEW: Load map configuration
     ]);
-    
+
+    console.log('[MAP PAGE LOAD] Objects count:', objects.length);
+    console.log('[MAP PAGE LOAD] Template fields:', template.fields.length);
+
     return {
       template,
       objects,
