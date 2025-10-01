@@ -32,6 +32,7 @@
   let filteredObjects = $state<SavedObject[]>([]);
 
   // Initialize filtered objects
+  filteredObjects = objects;
   $effect(() => {
     filteredObjects = [...objects];
   });
