@@ -61,7 +61,6 @@ export const sampleData: ProjectData = {
   coordinates: '51.1079,17.0385',
 
   // Selection/dropdown
-  category: 'mieszkanie',
   type: 'wynajem',
   condition: 'bardzo_dobry',
   district: 'srodmiescie',
