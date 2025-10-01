@@ -8,8 +8,16 @@ import path from 'path';
 export const POST: RequestHandler = async ({ request }) => {
 	try {
 		console.log('[Upload] Starting custom map upload process...');
+		console.log('[Upload] Request headers:', Object.fromEntries(request.headers.entries()));
 
-		const formData = await request.formData();
+		let formData;
+		try {
+			formData = await request.formData();
+		} catch (formError) {
+			console.error('[Upload] Failed to parse form data:', formError);
+			throw new Error(`Failed to parse multipart form data: ${formError instanceof Error ? formError.message : 'Unknown error'}`);
+		}
+
 		const file = formData.get('customMap') as File;
 
 		if (!file) {
