@@ -91,3 +91,35 @@ export function calculatePolygonBounds(polygon: GeoJSON.Polygon): { swLat: numbe
     neLng: maxLng
   };
 }
+
+// Calculate approximate area of a boundary in square kilometers
+export function calculateBoundaryArea(config: MapConfig): number {
+  // Using simple lat/lng to km conversion
+  // 1 degree latitude ≈ 111 km
+  // 1 degree longitude ≈ 111 km * cos(latitude)
+
+  const latDiff = config.neLat - config.swLat;
+  const lngDiff = config.neLng - config.swLng;
+  const avgLat = (config.neLat + config.swLat) / 2;
+
+  const heightKm = latDiff * 111;
+  const widthKm = lngDiff * 111 * Math.cos(avgLat * Math.PI / 180);
+
+  return heightKm * widthKm;
+}
+
+// Calculate appropriate breakpoint zoom level based on area
+export function calculateBreakpointZoom(areaKm2: number): number {
+  // Maximum zoom levels for best detail - area fills screen
+  if (areaKm2 > 100) return 14;
+  if (areaKm2 > 50) return 15;
+  if (areaKm2 > 20) return 16;
+  if (areaKm2 > 10) return 17;
+  return 18; // Maximum detail for small areas
+}
+
+// Get breakpoint zoom for current map configuration
+export function getBreakpointZoom(config: MapConfig): number {
+  const area = calculateBoundaryArea(config);
+  return calculateBreakpointZoom(area);
+}

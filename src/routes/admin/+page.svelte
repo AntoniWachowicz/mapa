@@ -33,6 +33,15 @@
   let isDragging = $state(false);
   let dragCorner = $state<'sw' | 'ne' | 'nw' | 'se' | null>(null);
 
+  // Template export state
+  let exportingTemplate = $state(false);
+  let exportMessage = $state('');
+
+  // Custom map upload state
+  let uploadingMap = $state(false);
+  let uploadMessage = $state('');
+  let uploadFileInput: HTMLInputElement;
+
   // Coordinate indicator positions
   let coordinateIndicators = $state({
     sw: { x: 0, y: 0 },
@@ -106,29 +115,37 @@
   
   
   function updateMapVisualization() {
-    if (!map || !L) return;
+    console.log('=== updateMapVisualization called ===');
+    console.log('Map exists:', !!map);
+    console.log('L exists:', !!L);
+    console.log('config.boundaryType:', config.boundaryType);
+
+    if (!map || !L) {
+      console.log('Exiting: map or L not available');
+      return;
+    }
 
     // Clear existing visualizations
-    if (boundsRectangle) map.removeLayer(boundsRectangle);
-    if (boundsOverlay) map.removeLayer(boundsOverlay);
+    if (boundsRectangle) {
+      console.log('Removing existing boundsRectangle');
+      map.removeLayer(boundsRectangle);
+      boundsRectangle = null;
+    }
+    if (boundsOverlay) {
+      console.log('Removing existing boundsOverlay');
+      map.removeLayer(boundsOverlay);
+      boundsOverlay = null;
+    }
     if (centerMarker) map.removeLayer(centerMarker);
     if (swMarker) map.removeLayer(swMarker);
     if (neMarker) map.removeLayer(neMarker);
     if (nwMarker) map.removeLayer(nwMarker);
     if (seMarker) map.removeLayer(seMarker);
 
-    // Create bounds rectangle with black border
     const bounds = [
       [config.swLat, config.swLng],
       [config.neLat, config.neLng]
     ];
-
-    boundsRectangle = L.rectangle(bounds, {
-      color: '#000000',
-      weight: 2,
-      fillOpacity: 0,
-      fillColor: 'transparent'
-    }).addTo(map);
 
     // Create overlay to darken area outside bounds
     const mapBounds = map.getBounds();
@@ -137,7 +154,6 @@
       [mapBounds.getNorth() + 10, mapBounds.getEast() + 10]
     ];
 
-    // Create a polygon with a hole for the bounds area
     const outerRing = [
       [worldBounds[0][0], worldBounds[0][1]], // SW
       [worldBounds[1][0], worldBounds[0][1]], // NW
@@ -146,26 +162,71 @@
       [worldBounds[0][0], worldBounds[0][1]]  // back to SW
     ];
 
-    const innerRing = [
-      [config.swLat, config.swLng], // SW
-      [config.neLat, config.swLng], // NW
-      [config.neLat, config.neLng], // NE
-      [config.swLat, config.neLng], // SE
-      [config.swLat, config.swLng]  // back to SW
-    ];
+    // Draw boundary based on type
+    console.log('Checking boundary type:', config.boundaryType);
+    if (config.boundaryType === 'polygon') {
+      console.log('POLYGON MODE ACTIVATED');
+      console.log('ZYWIECKI_RAJ_BOUNDARY:', ZYWIECKI_RAJ_BOUNDARY);
 
-    boundsOverlay = L.polygon([outerRing, innerRing], {
-      color: 'transparent',
-      weight: 0,
-      fillColor: '#000000',
-      fillOpacity: 0.2
-    }).addTo(map);
+      // Use precise polygon boundary - convert [lng, lat] to [lat, lng]
+      // Note: ZYWIECKI_RAJ_BOUNDARY is a Polygon, not a Feature, so access coordinates directly
+      const polygonCoordinates = ZYWIECKI_RAJ_BOUNDARY.coordinates[0].map(
+        (coord: [number, number]) => [coord[1], coord[0]]
+      );
 
-    // Add draggable corner markers
-    swMarker = createDraggableMarker([config.swLat, config.swLng], 'sw');
-    neMarker = createDraggableMarker([config.neLat, config.neLng], 'ne');
-    nwMarker = createDraggableMarker([config.neLat, config.swLng], 'nw');
-    seMarker = createDraggableMarker([config.swLat, config.neLng], 'se');
+      console.log('Drawing polygon with', polygonCoordinates.length, 'coordinates');
+      console.log('First coordinate:', polygonCoordinates[0]);
+      console.log('Last coordinate:', polygonCoordinates[polygonCoordinates.length - 1]);
+
+      // Draw the precise polygon boundary - note the array wrapping!
+      boundsRectangle = L.polygon([polygonCoordinates], {
+        color: '#007bff',
+        weight: 3,
+        fillOpacity: 0,
+        interactive: false
+      }).addTo(map);
+
+      console.log('Polygon layer created and added to map');
+
+      // Create overlay with polygon hole
+      boundsOverlay = L.polygon([outerRing, polygonCoordinates], {
+        color: 'transparent',
+        weight: 0,
+        fillColor: '#000000',
+        fillOpacity: 0.2,
+        interactive: false
+      }).addTo(map);
+    } else {
+      // Use rectangle boundary
+      boundsRectangle = L.rectangle(bounds, {
+        color: '#000000',
+        weight: 2,
+        fillOpacity: 0,
+        fillColor: 'transparent'
+      }).addTo(map);
+
+      // Create rectangular hole for overlay
+      const innerRing = [
+        [config.swLat, config.swLng], // SW
+        [config.neLat, config.swLng], // NW
+        [config.neLat, config.neLng], // NE
+        [config.swLat, config.neLng], // SE
+        [config.swLat, config.swLng]  // back to SW
+      ];
+
+      boundsOverlay = L.polygon([outerRing, innerRing], {
+        color: 'transparent',
+        weight: 0,
+        fillColor: '#000000',
+        fillOpacity: 0.2
+      }).addTo(map);
+
+      // Add draggable corner markers only in rectangle mode
+      swMarker = createDraggableMarker([config.swLat, config.swLng], 'sw');
+      neMarker = createDraggableMarker([config.neLat, config.neLng], 'ne');
+      nwMarker = createDraggableMarker([config.neLat, config.swLng], 'nw');
+      seMarker = createDraggableMarker([config.swLat, config.neLng], 'se');
+    }
 
     // Add center marker
     centerMarker = L.marker([center.lat, center.lng], {
@@ -441,6 +502,85 @@
       showingCustomImage = currentZoom <= config.maxCustomZoom && !!config.customImageUrl;
     }
   });
+
+  // Template export function
+  async function exportMapTemplate() {
+    exportingTemplate = true;
+    exportMessage = '';
+
+    try {
+      const response = await fetch('/api/export-map-template', {
+        method: 'POST'
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to export template');
+      }
+
+      // Download the image
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `map-template-${new Date().toISOString().split('T')[0]}.png`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      window.URL.revokeObjectURL(url);
+
+      exportMessage = 'Template exported successfully!';
+    } catch (error) {
+      exportMessage = `Error: ${error instanceof Error ? error.message : 'Unknown error'}`;
+    } finally {
+      exportingTemplate = false;
+    }
+  }
+
+  // Custom map upload function
+  async function handleCustomMapUpload(event: Event) {
+    const input = event.target as HTMLInputElement;
+    const file = input.files?.[0];
+
+    if (!file) return;
+
+    uploadingMap = true;
+    uploadMessage = '';
+
+    try {
+      const formData = new FormData();
+      formData.append('customMap', file);
+
+      const response = await fetch('/api/upload-custom-map', {
+        method: 'POST',
+        body: formData
+      });
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(result.error || 'Failed to upload custom map');
+      }
+
+      uploadMessage = `Custom map uploaded successfully! Generated tiles for zoom levels 8-${result.breakpointZoom}. Reloading page...`;
+
+      // Reload page after 2 seconds to refresh config
+      setTimeout(() => {
+        window.location.reload();
+      }, 2000);
+    } catch (error) {
+      uploadMessage = `Error: ${error instanceof Error ? error.message : 'Unknown error'}`;
+    } finally {
+      uploadingMap = false;
+      // Reset file input
+      if (uploadFileInput) {
+        uploadFileInput.value = '';
+      }
+    }
+  }
+
+  function triggerFileUpload() {
+    uploadFileInput?.click();
+  }
 </script>
 
 <svelte:head>
@@ -450,114 +590,116 @@
 <div class="config-container">
   <div class="map-view">
     <div class="map-container" bind:this={mapContainer}>
-      <!-- Dynamic coordinate displays that follow corners -->
-      <div
-        class="coordinate-overlay"
-        style="left: {coordinateIndicators.sw.x}px; top: {coordinateIndicators.sw.y}px; transform: translate(-100%, 0);"
-      >
-        <div class="coord-display">
-          <div class="coord-label">SW</div>
-          <div class="coord-value">
-            <input
-              type="number"
-              step="0.000001"
-              bind:value={config.swLat}
-              class="coord-input"
-              disabled={saving}
-            >
-          </div>
-          <div class="coord-value">
-            <input
-              type="number"
-              step="0.000001"
-              bind:value={config.swLng}
-              class="coord-input"
-              disabled={saving}
-            >
+      <!-- Dynamic coordinate displays that follow corners - only in rectangle mode -->
+      {#if config.boundaryType !== 'polygon'}
+        <div
+          class="coordinate-overlay"
+          style="left: {coordinateIndicators.sw.x}px; top: {coordinateIndicators.sw.y}px; transform: translate(-100%, 0);"
+        >
+          <div class="coord-display">
+            <div class="coord-label">SW</div>
+            <div class="coord-value">
+              <input
+                type="number"
+                step="0.000001"
+                bind:value={config.swLat}
+                class="coord-input"
+                disabled={saving}
+              >
+            </div>
+            <div class="coord-value">
+              <input
+                type="number"
+                step="0.000001"
+                bind:value={config.swLng}
+                class="coord-input"
+                disabled={saving}
+              >
+            </div>
           </div>
         </div>
-      </div>
 
-      <div
-        class="coordinate-overlay"
-        style="left: {coordinateIndicators.ne.x}px; top: {coordinateIndicators.ne.y}px; transform: translate(0, -100%);"
-      >
-        <div class="coord-display">
-          <div class="coord-label">NE</div>
-          <div class="coord-value">
-            <input
-              type="number"
-              step="0.000001"
-              bind:value={config.neLat}
-              class="coord-input"
-              disabled={saving}
-            >
-          </div>
-          <div class="coord-value">
-            <input
-              type="number"
-              step="0.000001"
-              bind:value={config.neLng}
-              class="coord-input"
-              disabled={saving}
-            >
+        <div
+          class="coordinate-overlay"
+          style="left: {coordinateIndicators.ne.x}px; top: {coordinateIndicators.ne.y}px; transform: translate(0, -100%);"
+        >
+          <div class="coord-display">
+            <div class="coord-label">NE</div>
+            <div class="coord-value">
+              <input
+                type="number"
+                step="0.000001"
+                bind:value={config.neLat}
+                class="coord-input"
+                disabled={saving}
+              >
+            </div>
+            <div class="coord-value">
+              <input
+                type="number"
+                step="0.000001"
+                bind:value={config.neLng}
+                class="coord-input"
+                disabled={saving}
+              >
+            </div>
           </div>
         </div>
-      </div>
 
-      <div
-        class="coordinate-overlay"
-        style="left: {coordinateIndicators.nw.x}px; top: {coordinateIndicators.nw.y}px; transform: translate(-100%, -100%);"
-      >
-        <div class="coord-display">
-          <div class="coord-label">NW</div>
-          <div class="coord-value">
-            <input
-              type="number"
-              step="0.000001"
-              bind:value={config.neLat}
-              class="coord-input"
-              disabled={saving}
-            >
-          </div>
-          <div class="coord-value">
-            <input
-              type="number"
-              step="0.000001"
-              bind:value={config.swLng}
-              class="coord-input"
-              disabled={saving}
-            >
+        <div
+          class="coordinate-overlay"
+          style="left: {coordinateIndicators.nw.x}px; top: {coordinateIndicators.nw.y}px; transform: translate(-100%, -100%);"
+        >
+          <div class="coord-display">
+            <div class="coord-label">NW</div>
+            <div class="coord-value">
+              <input
+                type="number"
+                step="0.000001"
+                bind:value={config.neLat}
+                class="coord-input"
+                disabled={saving}
+              >
+            </div>
+            <div class="coord-value">
+              <input
+                type="number"
+                step="0.000001"
+                bind:value={config.swLng}
+                class="coord-input"
+                disabled={saving}
+              >
+            </div>
           </div>
         </div>
-      </div>
 
-      <div
-        class="coordinate-overlay"
-        style="left: {coordinateIndicators.se.x}px; top: {coordinateIndicators.se.y}px; transform: translate(0, 0);"
-      >
-        <div class="coord-display">
-          <div class="coord-label">SE</div>
-          <div class="coord-value">
-            <input
-              type="number"
-              step="0.000001"
-              bind:value={config.swLat}
-              class="coord-input"
-              disabled={saving}
-            >
-          </div>
-          <div class="coord-value">
-            <input
-              type="number"
-              step="0.000001"
-              bind:value={config.neLng}
-              class="coord-input"
-              disabled={saving}
-            >
+        <div
+          class="coordinate-overlay"
+          style="left: {coordinateIndicators.se.x}px; top: {coordinateIndicators.se.y}px; transform: translate(0, 0);"
+        >
+          <div class="coord-display">
+            <div class="coord-label">SE</div>
+            <div class="coord-value">
+              <input
+                type="number"
+                step="0.000001"
+                bind:value={config.swLat}
+                class="coord-input"
+                disabled={saving}
+              >
+            </div>
+            <div class="coord-value">
+              <input
+                type="number"
+                step="0.000001"
+                bind:value={config.neLng}
+                class="coord-input"
+                disabled={saving}
+              >
+            </div>
           </div>
         </div>
-      </div>
+      {/if}
     </div>
 
     <div class="map-controls">
@@ -587,6 +729,32 @@
         Fit to Bounds
       </button>
 
+      <div class="custom-map-section">
+        <div class="custom-map-status">
+          {#if config.customImageUrl}
+            <span class="status-indicator active">✓ Custom map active</span>
+          {:else}
+            <span class="status-indicator inactive">○ Using default OSM tiles</span>
+          {/if}
+        </div>
+
+        <button onclick={exportMapTemplate} class="btn btn-secondary" disabled={exportingTemplate || saving}>
+          {exportingTemplate ? 'Exporting...' : 'Export Map Template'}
+        </button>
+
+        <button onclick={triggerFileUpload} class="btn btn-secondary" disabled={uploadingMap || saving}>
+          {uploadingMap ? 'Uploading...' : 'Upload Custom Map'}
+        </button>
+      </div>
+
+      <input
+        type="file"
+        bind:this={uploadFileInput}
+        onchange={handleCustomMapUpload}
+        accept="image/png,image/jpeg,image/jpg"
+        style="display: none;"
+      />
+
       <button onclick={saveConfig} class="btn btn-primary" disabled={saving}>
         {saving ? 'Saving...' : 'Save Configuration'}
       </button>
@@ -597,6 +765,18 @@
         {message}
       </div>
     {/if}
+
+    {#if exportMessage}
+      <div class="message" class:error={exportMessage.includes('Error')}>
+        {exportMessage}
+      </div>
+    {/if}
+
+    {#if uploadMessage}
+      <div class="message" class:error={uploadMessage.includes('Error')}>
+        {uploadMessage}
+      </div>
+    {/if}
   </div>
 </div>
 
@@ -604,8 +784,8 @@
   .config-container {
     padding: var(--space-6);
     height: calc(100vh - var(--nav-height));
-    max-width: var(--content-max-width);
-    margin: 0 auto;
+    width: 100%;
+    margin: 0;
   }
 
   .map-view {
@@ -749,6 +929,38 @@
 
   .message.error {
     background: var(--color-error);
+  }
+
+  .custom-map-section {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    padding: var(--space-3);
+    background: var(--color-surface-alt);
+    border-radius: var(--radius-base);
+    border: 1px solid var(--color-border);
+  }
+
+  .custom-map-status {
+    font-size: var(--text-sm);
+    margin-bottom: var(--space-2);
+  }
+
+  .status-indicator {
+    padding: var(--space-1) var(--space-2);
+    border-radius: var(--radius-sm);
+    font-weight: 600;
+    font-size: var(--text-xs);
+  }
+
+  .status-indicator.active {
+    background: var(--color-success);
+    color: white;
+  }
+
+  .status-indicator.inactive {
+    background: var(--color-border);
+    color: var(--color-text-secondary);
   }
 
   /* Custom marker styles */

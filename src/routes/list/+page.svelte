@@ -613,8 +613,8 @@
 
   .list-container {
     padding: var(--space-6);
-    max-width: var(--content-max-width);
-    margin: 0 auto;
+    width: 100%;
+    margin: 0;
   }
 
   .list-actions {

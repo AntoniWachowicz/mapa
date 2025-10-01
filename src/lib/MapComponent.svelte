@@ -19,6 +19,7 @@
   let selectedMarker: any = null;
   let osmTileLayer: any = null;
   let customImageOverlay: any = null;
+  let customTileLayer: any = null;
   let boundsOverlay: any = null;
   let boundaryPolygon: any = null;
   
@@ -154,32 +155,65 @@
       (mapConfig.swLat + mapConfig.neLat) / 2,
       (mapConfig.swLng + mapConfig.neLng) / 2
     ];
-    
-    // Initialize map with config settings
-    map = L.map(mapContainer).setView(center, mapConfig.defaultZoom);
-    
-    // Set bounds - users cannot pan outside this area
+
+    // Use breakpoint - 3 as default zoom (close but can see the custom map)
+    const calculatedDefaultZoom = Math.max(
+      mapConfig.defaultZoom,
+      Math.min(mapConfig.maxCustomZoom - 3, 14) // 3 zoom levels below breakpoint for good view
+    );
+
+    // Initialize map with calculated zoom
+    map = L.map(mapContainer).setView(center, calculatedDefaultZoom);
+
+    // Expand bounds by 5% margin to match the custom tiles
+    const latRange = mapConfig.neLat - mapConfig.swLat;
+    const lngRange = mapConfig.neLng - mapConfig.swLng;
+    const marginLat = latRange * 0.05;
+    const marginLng = lngRange * 0.05;
+
     const bounds = [
-      [mapConfig.swLat, mapConfig.swLng], // Southwest corner
-      [mapConfig.neLat, mapConfig.neLng]  // Northeast corner
+      [mapConfig.swLat - marginLat, mapConfig.swLng - marginLng], // SW with margin
+      [mapConfig.neLat + marginLat, mapConfig.neLng + marginLng]  // NE with margin
     ];
     map.setMaxBounds(bounds);
-    
-    // Set zoom range based on configuration
-    map.setMinZoom(mapConfig.defaultZoom);  // Default zoom is the furthest users can zoom out
+
+    // Set zoom range - allow zooming out to see custom tiles but not too far
+    map.setMinZoom(Math.max(10, mapConfig.maxCustomZoom - 6));  // Can zoom out to see custom map
     map.setMaxZoom(18); // Allow maximum detail zoom
 
     // Create OpenStreetMap tile layer (but don't add it yet)
     osmTileLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
       attribution: '© OpenStreetMap contributors'
     });
-    
-    // Create custom image overlay if image URL provided
+
+    // Create custom layer if URL provided
     if (mapConfig.customImageUrl) {
       try {
-        customImageOverlay = L.imageOverlay(mapConfig.customImageUrl, bounds);
+        // Check if it's a tile URL pattern (contains {z}, {x}, {y})
+        if (mapConfig.customImageUrl.includes('{z}') && mapConfig.customImageUrl.includes('{x}') && mapConfig.customImageUrl.includes('{y}')) {
+          // Use tile layer for tile-based custom maps
+          customTileLayer = L.tileLayer(mapConfig.customImageUrl, {
+            maxZoom: mapConfig.maxCustomZoom,
+            maxNativeZoom: mapConfig.maxCustomZoom, // Don't upscale beyond this
+            minZoom: 8,
+            tileSize: 256,
+            zoomOffset: 0,
+            attribution: 'Custom Map',
+            // Aggressive performance optimizations
+            updateWhenIdle: false,
+            updateWhenZooming: false, // Don't load during zoom animation
+            updateInterval: 50, // Faster update interval
+            keepBuffer: 8, // Keep even more tiles in memory (2 screen widths)
+            bounds: [[mapConfig.swLat - 0.1, mapConfig.swLng - 0.1], [mapConfig.neLat + 0.1, mapConfig.neLng + 0.1]], // Limit tile requests
+            errorTileUrl: '', // Don't show error tiles
+            crossOrigin: false
+          });
+        } else {
+          // Use image overlay for single static images
+          customImageOverlay = L.imageOverlay(mapConfig.customImageUrl, bounds);
+        }
       } catch (error) {
-        console.error('Error loading custom image overlay:', error);
+        console.error('Error loading custom map layer:', error);
         // Fallback to OSM tiles
         osmTileLayer.addTo(map);
       }
@@ -235,24 +269,52 @@
   
   function updateLayerBasedOnZoom() {
     if (!map || !L) return;
-    
+
     const currentZoom = map.getZoom();
-    
-    if (currentZoom <= mapConfig.maxCustomZoom && customImageOverlay) {
-      // Show custom image overlay
-      if (map.hasLayer(osmTileLayer)) {
-        map.removeLayer(osmTileLayer);
+    const threshold = mapConfig.maxCustomZoom - 1; // Fade at zoom 16 (if breakpoint is 17)
+
+    // Always show OSM tiles as base layer (for transparency to work)
+    if (!map.hasLayer(osmTileLayer)) {
+      map.addLayer(osmTileLayer);
+      osmTileLayer.setZIndex(100); // OSM tiles on bottom
+    }
+
+    // Determine opacity based on zoom threshold
+    // < 16: opacity 1 (fully visible)
+    // >= 16: opacity 0 (transparent/hidden)
+    const showCustom = (customImageOverlay || customTileLayer);
+
+    if (customTileLayer && !map.hasLayer(customTileLayer)) {
+      map.addLayer(customTileLayer);
+      customTileLayer.setZIndex(200); // Custom tiles on top
+    } else if (customImageOverlay && !map.hasLayer(customImageOverlay)) {
+      map.addLayer(customImageOverlay);
+    }
+
+    // Apply CSS transition and set opacity based on zoom
+    if (customTileLayer) {
+      const container = customTileLayer.getContainer();
+      if (container) {
+        // Set transition for smooth fade
+        container.style.transition = 'opacity 0.8s ease-in-out';
+
+        // Set opacity: 1 if below threshold, 0 if at or above
+        if (currentZoom < threshold) {
+          container.style.opacity = '1';
+        } else {
+          container.style.opacity = '0';
+        }
       }
-      if (!map.hasLayer(customImageOverlay)) {
-        map.addLayer(customImageOverlay);
-      }
-    } else {
-      // Show OpenStreetMap tiles
-      if (customImageOverlay && map.hasLayer(customImageOverlay)) {
-        map.removeLayer(customImageOverlay);
-      }
-      if (!map.hasLayer(osmTileLayer)) {
-        map.addLayer(osmTileLayer);
+    } else if (customImageOverlay) {
+      const container = customImageOverlay.getElement();
+      if (container) {
+        container.style.transition = 'opacity 0.8s ease-in-out';
+
+        if (currentZoom < threshold) {
+          container.style.opacity = '1';
+        } else {
+          container.style.opacity = '0';
+        }
       }
     }
   }

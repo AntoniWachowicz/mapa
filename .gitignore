@@ -25,3 +25,6 @@ vite.config.ts.timestamp-*
 # Development logs
 CONVERSATION_LOG.md
 PRODUCT_ROADMAP.txt
+
+# Project notes and documentation (not for version control)
+project-notes/
