@@ -188,9 +188,13 @@
 
     // Create custom layer if URL provided
     if (mapConfig.customImageUrl) {
+      console.log('[Map] Custom image URL:', mapConfig.customImageUrl);
+      console.log('[Map] Max custom zoom:', mapConfig.maxCustomZoom);
+
       try {
         // Check if it's a tile URL pattern (contains {z}, {x}, {y})
         if (mapConfig.customImageUrl.includes('{z}') && mapConfig.customImageUrl.includes('{x}') && mapConfig.customImageUrl.includes('{y}')) {
+          console.log('[Map] Using tile layer for custom map');
           // Use tile layer for tile-based custom maps
           customTileLayer = L.tileLayer(mapConfig.customImageUrl, {
             maxZoom: mapConfig.maxCustomZoom,
@@ -199,14 +203,29 @@
             tileSize: 256,
             zoomOffset: 0,
             attribution: 'Custom Map',
-            // Aggressive performance optimizations
-            updateWhenIdle: false,
-            updateWhenZooming: false, // Don't load during zoom animation
-            updateInterval: 50, // Faster update interval
-            keepBuffer: 8, // Keep even more tiles in memory (2 screen widths)
+            // Performance optimizations
+            updateWhenIdle: true, // Wait until map is idle
+            updateWhenZooming: true, // Update during zoom for smoother experience
+            updateInterval: 200, // Standard update interval
+            keepBuffer: 4, // Keep 1 screen width of tiles (reduced from 8)
             bounds: [[mapConfig.swLat - 0.1, mapConfig.swLng - 0.1], [mapConfig.neLat + 0.1, mapConfig.neLng + 0.1]], // Limit tile requests
             errorTileUrl: '', // Don't show error tiles
-            crossOrigin: false
+            crossOrigin: false,
+            // Add caching headers
+            className: 'custom-tile-layer' // For CSS targeting
+          });
+
+          // Add event listeners for debugging
+          customTileLayer.on('tileloadstart', (e: any) => {
+            console.log('[Map] Tile load start:', e.url);
+          });
+
+          customTileLayer.on('tileload', (e: any) => {
+            console.log('[Map] Tile loaded successfully:', e.url);
+          });
+
+          customTileLayer.on('tileerror', (e: any) => {
+            console.error('[Map] Tile load error:', e.tile.src, e.error);
           });
         } else {
           // Use image overlay for single static images
@@ -279,11 +298,7 @@
       osmTileLayer.setZIndex(100); // OSM tiles on bottom
     }
 
-    // Determine opacity based on zoom threshold
-    // < 16: opacity 1 (fully visible)
-    // >= 16: opacity 0 (transparent/hidden)
-    const showCustom = (customImageOverlay || customTileLayer);
-
+    // Add custom layer if it exists and isn't already added
     if (customTileLayer && !map.hasLayer(customTileLayer)) {
       map.addLayer(customTileLayer);
       customTileLayer.setZIndex(200); // Custom tiles on top
@@ -292,16 +307,21 @@
     }
 
     // Apply CSS transition and set opacity based on zoom
+    // Show custom tiles from zoom 8 up to threshold, then fade out
     if (customTileLayer) {
       const container = customTileLayer.getContainer();
       if (container) {
         // Set transition for smooth fade
         container.style.transition = 'opacity 0.8s ease-in-out';
 
-        // Set opacity: 1 if below threshold, 0 if at or above
-        if (currentZoom < threshold) {
+        // Show at all zoom levels where tiles exist (8 to threshold)
+        // Hide only when zoomed past threshold
+        if (currentZoom >= 8 && currentZoom < threshold) {
           container.style.opacity = '1';
+        } else if (currentZoom >= threshold) {
+          container.style.opacity = '0';
         } else {
+          // Below zoom 8, fade out gradually
           container.style.opacity = '0';
         }
       }
@@ -310,7 +330,7 @@
       if (container) {
         container.style.transition = 'opacity 0.8s ease-in-out';
 
-        if (currentZoom < threshold) {
+        if (currentZoom >= 8 && currentZoom < threshold) {
           container.style.opacity = '1';
         } else {
           container.style.opacity = '0';
