@@ -29,4 +29,6 @@ PRODUCT_ROADMAP.txt
 # Project notes and documentation (not for version control)
 project-notes/
 
+# Allow demo tiles for Vercel deployment (static/uploads/tiles/demo/)
+# Other uploads are generated locally and should not be committed
 
