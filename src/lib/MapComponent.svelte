@@ -24,11 +24,6 @@
   let boundaryPolygon: any = null;
   
   onMount(async () => {
-    console.log('[Map] MapComponent mounted');
-    console.log('[Map] Full mapConfig:', mapConfig);
-    console.log('[Map] customImageUrl:', mapConfig.customImageUrl);
-    console.log('[Map] customImageUrl exists?', !!mapConfig.customImageUrl);
-    console.log('[Map] maxCustomZoom:', mapConfig.maxCustomZoom);
     await loadLeaflet();
     initializeMap();
     updateMarkers();
@@ -193,44 +188,20 @@
 
     // Create custom layer if URL provided
     if (mapConfig.customImageUrl) {
-      console.log('[Map] Custom image URL:', mapConfig.customImageUrl);
-      console.log('[Map] Max custom zoom:', mapConfig.maxCustomZoom);
-
       try {
         // Check if it's a tile URL pattern (contains {z}, {x}, {y})
         if (mapConfig.customImageUrl.includes('{z}') && mapConfig.customImageUrl.includes('{x}') && mapConfig.customImageUrl.includes('{y}')) {
-          console.log('[Map] Using tile layer for custom map');
           // Use tile layer for tile-based custom maps
           customTileLayer = L.tileLayer(mapConfig.customImageUrl, {
             maxZoom: mapConfig.maxCustomZoom,
-            maxNativeZoom: mapConfig.maxCustomZoom, // Don't upscale beyond this
+            maxNativeZoom: mapConfig.maxCustomZoom,
             minZoom: 8,
             tileSize: 256,
             zoomOffset: 0,
             attribution: 'Custom Map',
-            // Performance optimizations
-            updateWhenIdle: true, // Wait until map is idle
-            updateWhenZooming: true, // Update during zoom for smoother experience
-            updateInterval: 200, // Standard update interval
-            keepBuffer: 4, // Keep 1 screen width of tiles (reduced from 8)
-            bounds: [[mapConfig.swLat - 0.1, mapConfig.swLng - 0.1], [mapConfig.neLat + 0.1, mapConfig.neLng + 0.1]], // Limit tile requests
-            errorTileUrl: '', // Don't show error tiles
+            errorTileUrl: '',
             crossOrigin: false,
-            // Add caching headers
-            className: 'custom-tile-layer' // For CSS targeting
-          });
-
-          // Add event listeners for debugging
-          customTileLayer.on('tileloadstart', (e: any) => {
-            console.log('[Map] Tile load start:', e.url);
-          });
-
-          customTileLayer.on('tileload', (e: any) => {
-            console.log('[Map] Tile loaded successfully:', e.url);
-          });
-
-          customTileLayer.on('tileerror', (e: any) => {
-            console.error('[Map] Tile load error:', e.tile.src, e.error);
+            opacity: 1
           });
         } else {
           // Use image overlay for single static images
@@ -295,7 +266,7 @@
     if (!map || !L) return;
 
     const currentZoom = map.getZoom();
-    const threshold = mapConfig.maxCustomZoom - 1; // Fade at zoom 16 (if breakpoint is 17)
+    const fadeStart = mapConfig.maxCustomZoom - 1; // Start fading at breakpoint - 1
 
     // Always show OSM tiles as base layer (for transparency to work)
     if (!map.hasLayer(osmTileLayer)) {
@@ -311,31 +282,26 @@
       map.addLayer(customImageOverlay);
     }
 
-    // Apply CSS transition and set opacity based on zoom
-    // Show custom tiles from zoom 8 up to threshold, then fade out
+    // Simple opacity control - show or hide based on zoom
     if (customTileLayer) {
       const container = customTileLayer.getContainer();
       if (container) {
-        // Set transition for smooth fade
-        container.style.transition = 'opacity 0.8s ease-in-out';
+        // Set transition once
+        container.style.transition = 'opacity 0.3s ease';
 
-        // Show at all zoom levels where tiles exist (8 to threshold)
-        // Hide only when zoomed past threshold
-        if (currentZoom >= 8 && currentZoom < threshold) {
+        // Simple logic: show below fadeStart, hide at/above fadeStart
+        if (currentZoom < fadeStart) {
           container.style.opacity = '1';
-        } else if (currentZoom >= threshold) {
-          container.style.opacity = '0';
         } else {
-          // Below zoom 8, fade out gradually
           container.style.opacity = '0';
         }
       }
     } else if (customImageOverlay) {
       const container = customImageOverlay.getElement();
       if (container) {
-        container.style.transition = 'opacity 0.8s ease-in-out';
+        container.style.transition = 'opacity 0.3s ease';
 
-        if (currentZoom >= 8 && currentZoom < threshold) {
+        if (currentZoom < fadeStart) {
           container.style.opacity = '1';
         } else {
           container.style.opacity = '0';

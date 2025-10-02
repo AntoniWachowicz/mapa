@@ -13,10 +13,7 @@
   
   const { data }: Props = $props();
 
-  let config = $state<MapConfig>({
-    ...data.mapConfig,
-    customImageUrl: data.mapConfig.customImageUrl || ''
-  });
+  let config = $state<MapConfig>({...data.mapConfig});
   let saving = $state(false);
   let message = $state('');
   
@@ -44,6 +41,15 @@
   let uploadingMap = $state(false);
   let uploadMessage = $state('');
   let uploadFileInput: HTMLInputElement;
+
+  // Cleanup state
+  let cleaningUp = $state(false);
+  let cleanupMessage = $state('');
+
+  // Custom overlay toggle
+  let showCustomOverlay = $state(true);
+  let customTileLayer: any = null;
+  let osmTileLayer: any = null;
 
   // Coordinate indicator positions
   let coordinateIndicators = $state({
@@ -91,19 +97,34 @@
   function initializeMap() {
     // Initialize map centered on current bounds
     map = L.map(mapContainer).setView([center.lat, center.lng], config.defaultZoom);
-    
+
     // Add OpenStreetMap tiles
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    osmTileLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
       attribution: '© OpenStreetMap contributors'
     }).addTo(map);
-    
+
+    // Add custom tile layer if configured
+    if (config.customImageUrl && config.customImageUrl.includes('{z}')) {
+      customTileLayer = L.tileLayer(config.customImageUrl, {
+        maxZoom: config.maxCustomZoom,
+        maxNativeZoom: config.maxCustomZoom,
+        minZoom: 8,
+        errorTileUrl: '',
+        opacity: 1
+      });
+      if (showCustomOverlay) {
+        customTileLayer.addTo(map);
+      }
+    }
+
     // Disable map clicks for corner setting
     // map.on('click', handleMapClick);
-    
+
     // Track zoom changes for real-time feedback
     map.on('zoom', () => {
       currentZoom = map.getZoom();
-      showingCustomImage = currentZoom <= config.maxCustomZoom && !!config.customImageUrl;
+      const hasCustomUrl = !!config.customImageUrl;
+      showingCustomImage = currentZoom <= config.maxCustomZoom && hasCustomUrl;
       updateCoordinateIndicators();
     });
 
@@ -502,7 +523,8 @@
   $effect(() => {
     if (map) {
       currentZoom = map.getZoom();
-      showingCustomImage = currentZoom <= config.maxCustomZoom && !!config.customImageUrl;
+      const hasCustomUrl = !!config.customImageUrl;
+      showingCustomImage = currentZoom <= config.maxCustomZoom && hasCustomUrl;
     }
   });
 
@@ -541,16 +563,10 @@
 
   // Custom map upload function
   async function handleCustomMapUpload(event: Event) {
-    console.log('[Client] Upload handler triggered');
     const input = event.target as HTMLInputElement;
     const file = input.files?.[0];
 
-    if (!file) {
-      console.log('[Client] No file selected');
-      return;
-    }
-
-    console.log(`[Client] File selected: ${file.name}, size: ${file.size}, type: ${file.type}`);
+    if (!file) return;
 
     uploadingMap = true;
     uploadMessage = '';
@@ -559,35 +575,12 @@
       const formData = new FormData();
       formData.append('customMap', file);
 
-      console.log('[Client] Sending request to /api/upload-custom-map');
       const response = await fetch('/api/upload-custom-map', {
         method: 'POST',
         body: formData
       });
 
-      console.log(`[Client] Response status: ${response.status}`);
-      console.log(`[Client] Response headers:`, response.headers);
-
-      // Check for Vercel payload size limit error
-      if (response.status === 413) {
-        const vercelError = response.headers.get('x-vercel-error');
-        if (vercelError === 'FUNCTION_PAYLOAD_TOO_LARGE') {
-          throw new Error(`File too large for Vercel (${(file.size / 1024 / 1024).toFixed(1)}MB). Vercel limit is 4.5MB. Please:\n1. Use a smaller image, or\n2. Deploy to a server with persistent storage (not Vercel), or\n3. Configure external storage (S3, Cloudinary, etc.)`);
-        }
-        throw new Error('File too large. Server rejected the upload (413).');
-      }
-
-      // Check if response is JSON
-      const contentType = response.headers.get('content-type');
-      console.log(`[Client] Content-Type: ${contentType}`);
-
-      if (!contentType || !contentType.includes('application/json')) {
-        const errorText = await response.text();
-        throw new Error(`Server error: ${errorText || 'Non-JSON response received'}`);
-      }
-
       const result = await response.json();
-      console.log('[Client] Response JSON:', result);
 
       if (!response.ok) {
         throw new Error(result.error || 'Failed to upload custom map');
@@ -614,6 +607,48 @@
   function triggerFileUpload() {
     uploadFileInput?.click();
   }
+
+  // Toggle custom overlay
+  function toggleCustomOverlay() {
+    showCustomOverlay = !showCustomOverlay;
+
+    if (map && customTileLayer) {
+      if (showCustomOverlay) {
+        customTileLayer.addTo(map);
+      } else {
+        map.removeLayer(customTileLayer);
+      }
+    }
+  }
+
+  // Cleanup unused tiles
+  async function cleanupUnusedTiles() {
+    if (!confirm('This will delete all unused map files and tiles. Current map will be preserved. Continue?')) {
+      return;
+    }
+
+    cleaningUp = true;
+    cleanupMessage = '';
+
+    try {
+      const response = await fetch('/api/cleanup-tiles', {
+        method: 'POST'
+      });
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(result.error || 'Failed to cleanup tiles');
+      }
+
+      cleanupMessage = result.message;
+    } catch (error) {
+      console.error('Cleanup error:', error);
+      cleanupMessage = `Error: ${error instanceof Error ? error.message : 'Unknown error'}`;
+    } finally {
+      cleaningUp = false;
+    }
+  }
 </script>
 
 <svelte:head>
@@ -623,6 +658,22 @@
 <div class="config-container">
   <div class="map-view">
     <div class="map-container" bind:this={mapContainer}>
+      <!-- Zoom level counter -->
+      <div class="zoom-counter">
+        Zoom: {currentZoom} / {config.maxCustomZoom}
+      </div>
+
+      <!-- Custom overlay toggle -->
+      {#if config.customImageUrl}
+        <div class="overlay-toggle">
+          <label class="toggle-switch">
+            <input type="checkbox" bind:checked={showCustomOverlay} onchange={toggleCustomOverlay} />
+            <span class="toggle-slider"></span>
+          </label>
+          <span class="toggle-label">Custom Overlay</span>
+        </div>
+      {/if}
+
       <!-- Dynamic coordinate displays that follow corners - only in rectangle mode -->
       {#if config.boundaryType !== 'polygon'}
         <div
@@ -771,24 +822,16 @@
           {/if}
         </div>
 
-        <div class="form-group">
-          <label for="customImageUrl">Custom Image URL (for static deployment)</label>
-          <input
-            id="customImageUrl"
-            type="text"
-            bind:value={config.customImageUrl}
-            placeholder="/uploads/tiles/custom-123456789/{z}/{x}/{y}.png"
-            disabled={saving}
-          />
-          <small>Leave empty to use OSM tiles only. For Vercel: use uploaded tiles path.</small>
-        </div>
-
         <button onclick={exportMapTemplate} class="btn btn-secondary" disabled={exportingTemplate || saving}>
           {exportingTemplate ? 'Exporting...' : 'Export Map Template'}
         </button>
 
         <button onclick={triggerFileUpload} class="btn btn-secondary" disabled={uploadingMap || saving}>
           {uploadingMap ? 'Uploading...' : 'Upload Custom Map'}
+        </button>
+
+        <button onclick={cleanupUnusedTiles} class="btn btn-warning" disabled={cleaningUp || saving}>
+          {cleaningUp ? 'Cleaning...' : 'Cleanup Unused Tiles'}
         </button>
       </div>
 
@@ -822,6 +865,12 @@
         {uploadMessage}
       </div>
     {/if}
+
+    {#if cleanupMessage}
+      <div class="message" class:error={cleanupMessage.includes('Error')}>
+        {cleanupMessage}
+      </div>
+    {/if}
   </div>
 </div>
 
@@ -847,6 +896,88 @@
     overflow: hidden;
     border: 1px solid var(--color-border);
     min-height: 0;
+  }
+
+  .zoom-counter {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    z-index: 1000;
+    background: rgba(255, 255, 255, 0.95);
+    padding: 8px 12px;
+    border-radius: var(--radius-md);
+    font-family: 'Space Mono', monospace;
+    font-weight: 600;
+    font-size: 14px;
+    border: 1px solid var(--color-border);
+    box-shadow: var(--shadow-md);
+    pointer-events: none;
+  }
+
+  .overlay-toggle {
+    position: absolute;
+    top: 50px;
+    right: 10px;
+    z-index: 1000;
+    background: rgba(255, 255, 255, 0.95);
+    padding: 8px 12px;
+    border-radius: var(--radius-md);
+    border: 1px solid var(--color-border);
+    box-shadow: var(--shadow-md);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .toggle-label {
+    font-size: 12px;
+    font-weight: 500;
+    user-select: none;
+  }
+
+  .toggle-switch {
+    position: relative;
+    display: inline-block;
+    width: 40px;
+    height: 20px;
+  }
+
+  .toggle-switch input {
+    opacity: 0;
+    width: 0;
+    height: 0;
+  }
+
+  .toggle-slider {
+    position: absolute;
+    cursor: pointer;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: #ccc;
+    transition: 0.3s;
+    border-radius: 20px;
+  }
+
+  .toggle-slider:before {
+    position: absolute;
+    content: "";
+    height: 14px;
+    width: 14px;
+    left: 3px;
+    bottom: 3px;
+    background-color: white;
+    transition: 0.3s;
+    border-radius: 50%;
+  }
+
+  .toggle-switch input:checked + .toggle-slider {
+    background-color: var(--color-primary);
+  }
+
+  .toggle-switch input:checked + .toggle-slider:before {
+    transform: translateX(20px);
   }
 
   .coordinate-overlay {
