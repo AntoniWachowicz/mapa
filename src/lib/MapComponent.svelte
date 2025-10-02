@@ -26,6 +26,9 @@
   onMount(async () => {
     console.log('[Map] MapComponent mounted');
     console.log('[Map] Full mapConfig:', mapConfig);
+    console.log('[Map] customImageUrl:', mapConfig.customImageUrl);
+    console.log('[Map] customImageUrl exists?', !!mapConfig.customImageUrl);
+    console.log('[Map] maxCustomZoom:', mapConfig.maxCustomZoom);
     await loadLeaflet();
     initializeMap();
     updateMarkers();
