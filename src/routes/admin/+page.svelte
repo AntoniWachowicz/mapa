@@ -768,6 +768,18 @@
           {/if}
         </div>
 
+        <div class="form-group">
+          <label for="customImageUrl">Custom Image URL (for static deployment)</label>
+          <input
+            id="customImageUrl"
+            type="text"
+            bind:value={config.customImageUrl}
+            placeholder="/uploads/tiles/custom-123456789/{z}/{x}/{y}.png"
+            disabled={saving}
+          />
+          <small>Leave empty to use OSM tiles only. For Vercel: use uploaded tiles path.</small>
+        </div>
+
         <button onclick={exportMapTemplate} class="btn btn-secondary" disabled={exportingTemplate || saving}>
           {exportingTemplate ? 'Exporting...' : 'Export Map Template'}
         </button>
