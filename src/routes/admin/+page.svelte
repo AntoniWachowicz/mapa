@@ -12,8 +12,11 @@
   }
   
   const { data }: Props = $props();
-  
-  let config = $state<MapConfig>({...data.mapConfig});
+
+  let config = $state<MapConfig>({
+    ...data.mapConfig,
+    customImageUrl: data.mapConfig.customImageUrl || ''
+  });
   let saving = $state(false);
   let message = $state('');
   
