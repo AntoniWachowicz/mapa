@@ -24,6 +24,8 @@
   let boundaryPolygon: any = null;
   
   onMount(async () => {
+    console.log('[Map] MapComponent mounted');
+    console.log('[Map] Full mapConfig:', mapConfig);
     await loadLeaflet();
     initializeMap();
     updateMarkers();
