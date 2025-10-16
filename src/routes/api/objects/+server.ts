@@ -4,13 +4,13 @@ import { createObject } from '$lib/server/schemadb.js';
 
 export const POST: RequestHandler = async ({ request }) => {
 	try {
-		const { data, hasIncompleteData } = await request.json();
+		const { location, data, hasIncompleteData } = await request.json();
 
-		if (!data) {
-			return json({ success: false, error: 'No data provided' }, { status: 400 });
+		if (!location || !data) {
+			return json({ success: false, error: 'Location and data are required' }, { status: 400 });
 		}
 
-		const savedObject = await createObject(data, hasIncompleteData);
+		const savedObject = await createObject(location, data, hasIncompleteData);
 
 		return json({
 			success: true,

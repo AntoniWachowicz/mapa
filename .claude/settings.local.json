@@ -28,7 +28,13 @@
       "WebFetch(domain:geodata.ucdavis.edu)",
       "WebFetch(domain:mapy.geoportal.gov.pl)",
       "WebFetch(domain:gis-support.pl)",
-      "Bash(curl:*)"
+      "Bash(curl:*)",
+      "mcp__ide__getDiagnostics",
+      "Bash(find:*)",
+      "Bash(ls:*)",
+      "WebFetch(domain:lgd.zywieckiraj.pl)",
+      "WebFetch(domain:wykaz.rky.pl)",
+      "Bash(npm run check:types:*)"
     ],
     "deny": [],
     "ask": []

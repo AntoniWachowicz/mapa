@@ -8,9 +8,13 @@
     selectedCoordinates: {lat: number, lng: number} | null;
     focusCoordinates?: {lat: number, lng: number} | null;
     mapConfig: MapConfig;  // NEW: Add map config prop
+    onPinClick?: (obj: MapObject) => void; // NEW: Pin click callback
+    selectedObjectId?: string | null; // NEW: Track selected pin
+    onPinPositionUpdate?: (x: number, y: number) => void; // NEW: Pin position callback
+    panToPinCallback?: (() => void) | null; // NEW: Callback to trigger pan after panel renders
   }
-  
-  const { objects, onMapClick, selectedCoordinates, focusCoordinates = null, mapConfig }: Props = $props();
+
+  let { objects, onMapClick, selectedCoordinates, focusCoordinates = null, mapConfig, onPinClick, selectedObjectId = null, onPinPositionUpdate, panToPinCallback = $bindable(null) }: Props = $props();
   
   let mapContainer: HTMLDivElement;
   let map: any;
@@ -22,6 +26,9 @@
   let customTileLayer: any = null;
   let boundsOverlay: any = null;
   let boundaryPolygon: any = null;
+  let isZooming = false;
+  let animationFrameId: number | null = null;
+  let mapInitialized = $state(false);
   
   onMount(async () => {
     await loadLeaflet();
@@ -30,6 +37,7 @@
   });
 
   onDestroy(() => {
+    stopContinuousUpdate();
     if (boundsOverlay && map) {
       map.removeLayer(boundsOverlay);
     }
@@ -50,8 +58,20 @@
   }
 
   // Point-in-polygon algorithm using ray casting
-  function isPointInPolygon(lat: number, lng: number, polygon: GeoJSON.Polygon): boolean {
-    const coordinates = polygon.coordinates[0]; // Use outer ring
+  function isPointInPolygon(lat: number, lng: number, polygon: GeoJSON.Polygon | GeoJSON.MultiPolygon): boolean {
+    if (polygon.type === 'Polygon') {
+      return checkPolygon(lat, lng, polygon.coordinates[0]);
+    } else if (polygon.type === 'MultiPolygon') {
+      // Check if point is in any of the polygons
+      return polygon.coordinates.some(polygonCoords =>
+        checkPolygon(lat, lng, polygonCoords[0])
+      );
+    }
+    return false;
+  }
+
+  // Helper function to check if point is in a single polygon
+  function checkPolygon(lat: number, lng: number, coordinates: number[][]): boolean {
     let isInside = false;
 
     for (let i = 0, j = coordinates.length - 1; i < coordinates.length; j = i++) {
@@ -87,23 +107,29 @@
       [worldBounds[0][0], worldBounds[0][1]]  // back to SW
     ];
 
-    let innerRing;
+    let holes: any[] = [];
 
     if (mapConfig.boundaryType === 'polygon' && mapConfig.polygonBoundary) {
-      // Use polygon coordinates for the inner hole
-      innerRing = mapConfig.polygonBoundary.coordinates[0].map((coord: number[]) => [coord[1], coord[0]]); // Convert [lng, lat] to [lat, lng]
+      // Use polygon coordinates for the inner hole(s)
+      if (mapConfig.polygonBoundary.type === 'Polygon') {
+        holes = [mapConfig.polygonBoundary.coordinates[0].map((coord: number[]) => [coord[1], coord[0]])];
+      } else if (mapConfig.polygonBoundary.type === 'MultiPolygon') {
+        holes = mapConfig.polygonBoundary.coordinates.map((polygonCoords: number[][][]) =>
+          polygonCoords[0].map((coord: number[]) => [coord[1], coord[0]])
+        );
+      }
     } else {
       // Use rectangle bounds for the inner hole
-      innerRing = [
+      holes = [[
         [mapConfig.swLat, mapConfig.swLng], // SW
         [mapConfig.neLat, mapConfig.swLng], // NW
         [mapConfig.neLat, mapConfig.neLng], // NE
         [mapConfig.swLat, mapConfig.neLng], // SE
         [mapConfig.swLat, mapConfig.swLng]  // back to SW
-      ];
+      ]];
     }
 
-    boundsOverlay = L.polygon([outerRing, innerRing], {
+    boundsOverlay = L.polygon([outerRing, ...holes], {
       color: 'transparent',
       weight: 0,
       fillColor: '#000000',
@@ -121,9 +147,17 @@
   function createBoundaryPolygon() {
     if (!map || !L || !mapConfig.polygonBoundary || boundaryPolygon) return;
 
-    const coordinates = mapConfig.polygonBoundary.coordinates[0].map((coord: number[]) => [coord[1], coord[0]]); // Convert [lng, lat] to [lat, lng]
+    let allCoordinates: any[] = [];
 
-    boundaryPolygon = L.polygon([coordinates], {
+    if (mapConfig.polygonBoundary.type === 'Polygon') {
+      allCoordinates = [mapConfig.polygonBoundary.coordinates[0].map((coord: number[]) => [coord[1], coord[0]])];
+    } else if (mapConfig.polygonBoundary.type === 'MultiPolygon') {
+      allCoordinates = mapConfig.polygonBoundary.coordinates.map((polygonCoords: number[][][]) =>
+        polygonCoords[0].map((coord: number[]) => [coord[1], coord[0]])
+      );
+    }
+
+    boundaryPolygon = L.polygon(allCoordinates, {
       color: '#007bff',
       weight: 3,
       fillOpacity: 0,
@@ -186,8 +220,8 @@
       attribution: '© OpenStreetMap contributors'
     });
 
-    // Create custom layer if URL provided
-    if (mapConfig.customImageUrl) {
+    // Create custom layer if URL provided and overlay is enabled
+    if (mapConfig.customImageUrl && mapConfig.overlayEnabled !== false) {
       try {
         // Check if it's a tile URL pattern (contains {z}, {x}, {y})
         if (mapConfig.customImageUrl.includes('{z}') && mapConfig.customImageUrl.includes('{x}') && mapConfig.customImageUrl.includes('{y}')) {
@@ -220,8 +254,33 @@
     // Handle zoom changes for layer switching
     map.on('zoom', updateLayerBasedOnZoom);
 
-    // Handle map view changes to update bounds overlay
-    map.on('moveend zoomend', () => {
+    // Handle zoom animation start
+    map.on('zoomstart', () => {
+      isZooming = true;
+      startContinuousUpdate();
+    });
+
+    // Handle zoom animation end
+    map.on('zoomend', () => {
+      stopContinuousUpdate();
+      updateSelectedPinPosition();
+
+      if (boundsOverlay) {
+        map.removeLayer(boundsOverlay);
+        boundsOverlay = null;
+      }
+      if (boundaryPolygon) {
+        map.removeLayer(boundaryPolygon);
+        boundaryPolygon = null;
+      }
+      createBoundsOverlay();
+    });
+
+    // Handle panning
+    map.on('move', updateSelectedPinPosition);
+
+    // Handle other map view changes
+    map.on('moveend', () => {
       if (boundsOverlay) {
         map.removeLayer(boundsOverlay);
         boundsOverlay = null;
@@ -247,21 +306,55 @@
 
       onMapClick({ lat, lng });
 
-      // Update selected marker
-      if (selectedMarker) {
-        map.removeLayer(selectedMarker);
-      }
-      selectedMarker = L.marker([lat, lng], {
-        icon: L.divIcon({
-          className: 'selected-marker',
-          html: '📍',
-          iconSize: [25, 25],
-          iconAnchor: [12, 25]
-        })
-      }).addTo(map);
+      // Note: Selected marker is now updated by $effect watching selectedCoordinates
+      // This ensures the marker updates properly when coordinates change
     });
+
+    // Mark map as initialized
+    mapInitialized = true;
   }
   
+  function updateSelectedPinPosition() {
+    if (!map || !L || !selectedObjectId || !onPinPositionUpdate) return;
+
+    // Find the selected object
+    const selectedObj = objects.find(obj => obj.id === selectedObjectId);
+    if (!selectedObj || !selectedObj.location) return;
+
+    // Extract lat/lng from GeoJSON Point: coordinates are [lng, lat]
+    const [lng, lat] = selectedObj.location.coordinates;
+
+    // Convert lat/lng to pixel coordinates
+    const point = map.latLngToContainerPoint([lat, lng]);
+
+    // Call the callback with pixel position (bottom-middle of pin icon)
+    // Adjust 4px up to align with the actual visible bottom of the icon
+    onPinPositionUpdate(point.x, point.y - 4);
+  }
+
+  function startContinuousUpdate() {
+    if (animationFrameId !== null) return; // Already running
+
+    const animate = () => {
+      if (isZooming) {
+        updateSelectedPinPosition();
+        animationFrameId = requestAnimationFrame(animate);
+      } else {
+        animationFrameId = null;
+      }
+    };
+
+    animationFrameId = requestAnimationFrame(animate);
+  }
+
+  function stopContinuousUpdate() {
+    isZooming = false;
+    if (animationFrameId !== null) {
+      cancelAnimationFrame(animationFrameId);
+      animationFrameId = null;
+    }
+  }
+
   function updateLayerBasedOnZoom() {
     if (!map || !L) return;
 
@@ -312,58 +405,103 @@
   
   function updateMarkers() {
     if (!map || !L) return;
-    
+
     // Clear existing markers
     markers.forEach(marker => map.removeLayer(marker));
     markers = [];
-    
-    // Add markers for objects with coordinates
+
+    // Add markers for objects with valid location
     objects.forEach(obj => {
-      if (obj.coordinates) {
-        const { lat, lng } = obj.coordinates;
-        
+      if (obj.location && obj.location.coordinates && obj.location.coordinates.length === 2) {
+        // Extract lat/lng from GeoJSON Point: coordinates are [lng, lat]
+        const [lng, lat] = obj.location.coordinates;
+
         const titleField = obj.data.title || obj.data.name || Object.values(obj.data)[0];
-        
+
+        // Check if this pin is selected
+        const isSelected = selectedObjectId === obj.id;
+
         const marker = L.marker([lat, lng], {
           icon: L.divIcon({
-            className: 'object-marker',
-            html: '📌',
+            className: isSelected ? 'object-marker selected-pin' : 'object-marker',
+            html: `<img src="/icons/Pin.svg" style="width: 25px; height: 25px; ${isSelected ? 'filter: hue-rotate(120deg);' : ''}">`,
             iconSize: [25, 25],
             iconAnchor: [12, 25]
           })
         })
-        .bindPopup(`<strong>${titleField}</strong><br>Lat: ${lat.toFixed(6)}<br>Lng: ${lng.toFixed(6)}`)
         .addTo(map);
-        
+
+        // Add click handler to emit pin selection and pan to center
+        marker.on('click', (e: any) => {
+          if (onPinClick) {
+            // Prevent default popup behavior
+            L.DomEvent.stopPropagation(e);
+
+            // Store the current selected ID before changing it
+            const previousSelectedId = selectedObjectId;
+
+            // Create pan function that will be called after panel renders
+            const doPan = () => {
+              // Calculate offset to account for detail panel (340px width + 20px margin + 20px extra)
+              const detailPanelWidth = 340 + 40; // panel width + margins
+              const offsetX = detailPanelWidth / 2; // Offset to shift center to the right
+
+              // Get the target point and offset it
+              const targetPoint = map.project([lat, lng], map.getZoom());
+              targetPoint.x += offsetX;
+              const targetLatLng = map.unproject(targetPoint, map.getZoom());
+
+              // Pan to the offset position (no zoom, just pan)
+              map.panTo(targetLatLng, { animate: true, duration: 0.3 });
+            };
+
+            // Set the callback so parent can trigger it after panel renders
+            panToPinCallback = doPan;
+
+            // Open detail panel (parent will call doPan after panel is in DOM)
+            onPinClick(obj);
+          }
+        });
+
         markers.push(marker);
       }
     });
-    
-    // Fit map to show all markers if any exist (but respect bounds)
-    if (markers.length > 0) {
-      const group = new L.featureGroup(markers);
-      const markerBounds = group.getBounds();
-      
-      // Only fit to markers if they're within our configured bounds
-      const configBounds = L.latLngBounds([
-        [mapConfig.swLat, mapConfig.swLng],
-        [mapConfig.neLat, mapConfig.neLng]
-      ]);
-      
-      if (configBounds.contains(markerBounds)) {
-        map.fitBounds(markerBounds.pad(0.1));
-      }
-    }
+
+    // Don't auto-fit bounds when updating markers - this causes unwanted zoom/pan
   }
   
-  // Update markers when objects change
+  // Update markers when objects or selection changes
   $effect(() => {
-    updateMarkers();
+    // Track dependencies
+    objects;
+    selectedObjectId;
+    if (map && L) {
+      updateMarkers();
+      updateSelectedPinPosition();
+    }
   });
   
-  // Clear selected marker when selectedCoordinates is null
+  // Update selected marker when selectedCoordinates changes
   $effect(() => {
-    if (!selectedCoordinates && selectedMarker && map) {
+    if (!mapInitialized || !map || !L) return;
+
+    if (selectedCoordinates) {
+      // Remove old marker if exists
+      if (selectedMarker) {
+        map.removeLayer(selectedMarker);
+      }
+
+      // Create new marker at selected coordinates
+      selectedMarker = L.marker([selectedCoordinates.lat, selectedCoordinates.lng], {
+        icon: L.divIcon({
+          className: 'selected-marker',
+          html: '<img src="/icons/Pin.svg" style="width: 25px; height: 25px; filter: hue-rotate(120deg);">',
+          iconSize: [25, 25],
+          iconAnchor: [12, 25]
+        })
+      }).addTo(map);
+    } else if (selectedMarker) {
+      // Clear marker if no coordinates selected
       map.removeLayer(selectedMarker);
       selectedMarker = null;
     }
@@ -402,6 +540,19 @@
     border: none;
     font-size: 20px;
     filter: hue-rotate(120deg);
+  }
+
+  :global(.selected-pin) {
+    animation: pin-pulse 1s ease-in-out infinite;
+  }
+
+  @keyframes :global(pin-pulse) {
+    0%, 100% {
+      transform: translateY(0) scale(1);
+    }
+    50% {
+      transform: translateY(-5px) scale(1.1);
+    }
   }
 
 </style>

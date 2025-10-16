@@ -193,8 +193,12 @@
                 >
               </div>
               <div class="edit-actions">
-                <button onclick={saveEdit} class="save-button small">✓</button>
-                <button onclick={cancelEdit} class="cancel-button small">✕</button>
+                <button onclick={saveEdit} class="save-button small">
+                  <img src="/icons/Checkmark.svg" alt="Save" style="width: 14px; height: 14px;" />
+                </button>
+                <button onclick={cancelEdit} class="cancel-button small">
+                  <img src="/icons/Close.svg" alt="Cancel" style="width: 14px; height: 14px;" />
+                </button>
               </div>
             </div>
           {:else}

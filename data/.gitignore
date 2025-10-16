@@ -1,0 +1,11 @@
+# Large shapefile data - should not be committed to git
+# Download from source if needed: gis-support.pl or geoportal.gov.pl
+
+*.shp
+*.dbf
+*.shx
+*.prj
+*.cpg
+
+# Allow README
+!README.md

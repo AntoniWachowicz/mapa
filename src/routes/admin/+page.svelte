@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import type { MapConfig, GeoJSON } from '$lib/types.js';
-  import { ZYWIECKI_RAJ_BOUNDARY, calculatePolygonBounds } from '$lib/boundaries.js';
+  import { ZYWIECKI_RAJ_BOUNDARY, calculatePolygonBounds, BOUNDARY_REGISTRY, getBoundaryById } from '$lib/boundaries.js';
   
   interface PageData {
     mapConfig: MapConfig;
@@ -13,9 +13,17 @@
   
   const { data }: Props = $props();
 
-  let config = $state<MapConfig>({...data.mapConfig});
+  let config = $state<MapConfig>({
+    ...data.mapConfig,
+    overlayEnabled: data.mapConfig.overlayEnabled ?? true // Ensure default value
+  });
   let saving = $state(false);
   let message = $state('');
+
+  // Selected boundary ID (derived from current config)
+  let selectedBoundaryId = $state<string | null>(
+    config.boundaryType === 'polygon' ? 'zywiecki-raj' : null
+  );
   
   // Map setup
   let mapContainer: HTMLDivElement;
@@ -45,6 +53,11 @@
   // Cleanup state
   let cleaningUp = $state(false);
   let cleanupMessage = $state('');
+
+  // Database reset state
+  let resetting = $state(false);
+  let resetMessage = $state('');
+  let showResetConfirm = $state(false);
 
   // Custom overlay toggle
   let showCustomOverlay = $state(true);
@@ -188,38 +201,69 @@
 
     // Draw boundary based on type
     console.log('Checking boundary type:', config.boundaryType);
-    if (config.boundaryType === 'polygon') {
+    if (config.boundaryType === 'polygon' && config.polygonBoundary) {
       console.log('POLYGON MODE ACTIVATED');
-      console.log('ZYWIECKI_RAJ_BOUNDARY:', ZYWIECKI_RAJ_BOUNDARY);
+      console.log('Selected boundary:', selectedBoundaryId);
+      console.log('Boundary type:', config.polygonBoundary.type);
 
-      // Use precise polygon boundary - convert [lng, lat] to [lat, lng]
-      // Note: ZYWIECKI_RAJ_BOUNDARY is a Polygon, not a Feature, so access coordinates directly
-      const polygonCoordinates = ZYWIECKI_RAJ_BOUNDARY.coordinates[0].map(
-        (coord: [number, number]) => [coord[1], coord[0]]
-      );
+      if (config.polygonBoundary.type === 'Polygon') {
+        // Single polygon
+        const polygonCoordinates = config.polygonBoundary.coordinates[0].map(
+          (coord: [number, number]) => [coord[1], coord[0]]
+        );
 
-      console.log('Drawing polygon with', polygonCoordinates.length, 'coordinates');
-      console.log('First coordinate:', polygonCoordinates[0]);
-      console.log('Last coordinate:', polygonCoordinates[polygonCoordinates.length - 1]);
+        console.log('Drawing single polygon with', polygonCoordinates.length, 'coordinates');
 
-      // Draw the precise polygon boundary - note the array wrapping!
-      boundsRectangle = L.polygon([polygonCoordinates], {
-        color: '#007bff',
-        weight: 3,
-        fillOpacity: 0,
-        interactive: false
-      }).addTo(map);
+        // Draw the precise polygon boundary
+        boundsRectangle = L.polygon([polygonCoordinates], {
+          color: '#007bff',
+          weight: 3,
+          fillOpacity: 0,
+          interactive: false
+        }).addTo(map);
+
+        // Create overlay with polygon hole
+        boundsOverlay = L.polygon([outerRing, polygonCoordinates], {
+          color: 'transparent',
+          weight: 0,
+          fillColor: '#000000',
+          fillOpacity: 0.2,
+          interactive: false
+        }).addTo(map);
+      } else if (config.polygonBoundary.type === 'MultiPolygon') {
+        // Multiple polygons
+        const allPolygonCoords: any[] = [];
+        const overlayHoles: any[] = [];
+
+        config.polygonBoundary.coordinates.forEach((polygonCoords: number[][][]) => {
+          const converted = polygonCoords[0].map(
+            (coord: [number, number]) => [coord[1], coord[0]]
+          );
+          allPolygonCoords.push(converted);
+          overlayHoles.push(converted);
+        });
+
+        console.log('Drawing multipolygon with', allPolygonCoords.length, 'polygons');
+
+        // Draw all polygons
+        boundsRectangle = L.polygon(allPolygonCoords, {
+          color: '#007bff',
+          weight: 3,
+          fillOpacity: 0,
+          interactive: false
+        }).addTo(map);
+
+        // Create overlay with multiple holes
+        boundsOverlay = L.polygon([outerRing, ...overlayHoles], {
+          color: 'transparent',
+          weight: 0,
+          fillColor: '#000000',
+          fillOpacity: 0.2,
+          interactive: false
+        }).addTo(map);
+      }
 
       console.log('Polygon layer created and added to map');
-
-      // Create overlay with polygon hole
-      boundsOverlay = L.polygon([outerRing, polygonCoordinates], {
-        color: 'transparent',
-        weight: 0,
-        fillColor: '#000000',
-        fillOpacity: 0.2,
-        interactive: false
-      }).addTo(map);
     } else {
       // Use rectangle boundary
       boundsRectangle = L.rectangle(bounds, {
@@ -485,24 +529,28 @@
     }
   }
 
-  function switchBoundaryType(type: 'rectangle' | 'polygon'): void {
-    config.boundaryType = type;
+  function selectBoundary(boundaryId: string | null): void {
+    selectedBoundaryId = boundaryId;
 
-    if (type === 'polygon') {
-      // Switch to Żywiecki Raj LGD boundary (ultra-high precision 1000+ points)
-      const zywieckirajBoundary = ZYWIECKI_RAJ_BOUNDARY;
-
-      config.polygonBoundary = zywieckirajBoundary;
-
-      // Calculate and update rectangle bounds from polygon
-      const bounds = calculatePolygonBounds(zywieckirajBoundary);
-      config.swLat = bounds.swLat;
-      config.swLng = bounds.swLng;
-      config.neLat = bounds.neLat;
-      config.neLng = bounds.neLng;
-    } else {
-      // Clear polygon boundary when switching back to rectangle
+    if (boundaryId === null) {
+      // Switch to rectangle mode
+      config.boundaryType = 'rectangle';
       config.polygonBoundary = undefined;
+    } else {
+      // Switch to polygon mode with selected boundary
+      config.boundaryType = 'polygon';
+      const boundary = getBoundaryById(boundaryId);
+
+      if (boundary) {
+        config.polygonBoundary = boundary.polygon;
+
+        // Calculate and update rectangle bounds from polygon
+        const bounds = calculatePolygonBounds(boundary.polygon);
+        config.swLat = bounds.swLat;
+        config.swLng = bounds.swLng;
+        config.neLat = bounds.neLat;
+        config.neLng = bounds.neLng;
+      }
     }
 
     updateMapVisualization();
@@ -649,6 +697,45 @@
       cleaningUp = false;
     }
   }
+
+  // Database reset function
+  function initiateReset() {
+    showResetConfirm = true;
+  }
+
+  function cancelReset() {
+    showResetConfirm = false;
+  }
+
+  async function confirmReset() {
+    showResetConfirm = false;
+    resetting = true;
+    resetMessage = '';
+
+    try {
+      const response = await fetch('/api/reset-database', {
+        method: 'POST'
+      });
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(result.error || 'Failed to reset database');
+      }
+
+      resetMessage = result.message || 'Baza danych została zresetowana pomyślnie!';
+
+      // Reload page after successful reset to show fresh state
+      setTimeout(() => {
+        window.location.reload();
+      }, 2000);
+    } catch (error) {
+      console.error('Reset error:', error);
+      resetMessage = `Błąd: ${error instanceof Error ? error.message : 'Nieznany błąd'}`;
+    } finally {
+      resetting = false;
+    }
+  }
 </script>
 
 <svelte:head>
@@ -788,25 +875,28 @@
 
     <div class="map-controls">
       <div class="boundary-controls">
-        <label>Boundary Type:</label>
-        <div class="boundary-toggles">
-          <button
-            onclick={() => switchBoundaryType('rectangle')}
-            class="btn boundary-btn"
-            class:active={config.boundaryType === 'rectangle'}
-            disabled={saving}
-          >
-            Rectangle
-          </button>
-          <button
-            onclick={() => switchBoundaryType('polygon')}
-            class="btn boundary-btn"
-            class:active={config.boundaryType === 'polygon'}
-            disabled={saving}
-          >
-            Precise Boundary (Żywiecki Raj - 53pts)
-          </button>
-        </div>
+        <label for="boundary-select">Select Boundary:</label>
+        <select
+          id="boundary-select"
+          bind:value={selectedBoundaryId}
+          onchange={() => selectBoundary(selectedBoundaryId)}
+          class="boundary-select"
+          disabled={saving}
+        >
+          <option value={null}>Rectangle (Manual)</option>
+
+          <optgroup label="LGD (Local Action Groups)">
+            {#each BOUNDARY_REGISTRY.filter(b => b.category === 'lgd') as boundary}
+              <option value={boundary.id}>{boundary.name}</option>
+            {/each}
+          </optgroup>
+
+          <optgroup label="Gminas">
+            {#each BOUNDARY_REGISTRY.filter(b => b.category === 'gmina') as boundary}
+              <option value={boundary.id}>{boundary.name}</option>
+            {/each}
+          </optgroup>
+        </select>
       </div>
 
       <button onclick={fitToCurrentBounds} class="btn" disabled={saving}>
@@ -816,11 +906,30 @@
       <div class="custom-map-section">
         <div class="custom-map-status">
           {#if config.customImageUrl}
-            <span class="status-indicator active">✓ Custom map active</span>
+            <span class="status-indicator active">
+              <img src="/icons/Checkmark.svg" alt="" style="width: 14px; height: 14px; margin-right: 4px;" />
+              Custom map active
+            </span>
           {:else}
-            <span class="status-indicator inactive">○ Using default OSM tiles</span>
+            <span class="status-indicator inactive">
+              <img src="/icons/Circle.svg" alt="" style="width: 14px; height: 14px; margin-right: 4px;" />
+              Using default OSM tiles
+            </span>
           {/if}
         </div>
+
+        {#if config.customImageUrl}
+          <div class="overlay-toggle">
+            <label>
+              <input
+                type="checkbox"
+                bind:checked={config.overlayEnabled}
+                disabled={saving}
+              />
+              Show overlay on map
+            </label>
+          </div>
+        {/if}
 
         <button onclick={exportMapTemplate} class="btn btn-secondary" disabled={exportingTemplate || saving}>
           {exportingTemplate ? 'Exporting...' : 'Export Map Template'}
@@ -832,6 +941,10 @@
 
         <button onclick={cleanupUnusedTiles} class="btn btn-warning" disabled={cleaningUp || saving}>
           {cleaningUp ? 'Cleaning...' : 'Cleanup Unused Tiles'}
+        </button>
+
+        <button onclick={initiateReset} class="btn btn-danger" disabled={resetting || saving}>
+          {resetting ? 'Resetting...' : 'Reset Database'}
         </button>
       </div>
 
@@ -871,8 +984,37 @@
         {cleanupMessage}
       </div>
     {/if}
+
+    {#if resetMessage}
+      <div class="message" class:error={resetMessage.includes('Błąd')}>
+        {resetMessage}
+      </div>
+    {/if}
   </div>
 </div>
+
+<!-- Reset Confirmation Modal -->
+{#if showResetConfirm}
+  <div class="modal-overlay" onclick={cancelReset}>
+    <div class="modal-content" onclick={(e) => e.stopPropagation()}>
+      <h2>Potwierdzenie Resetowania Bazy Danych</h2>
+      <p class="warning-text">
+        ⚠️ <strong>UWAGA:</strong> Ta operacja usunie wszystkie pinezki i zresetuje schemat do domyślnych ustawień.
+      </p>
+      <p>
+        Ta operacja jest nieodwracalna. Czy na pewno chcesz kontynuować?
+      </p>
+      <div class="modal-buttons">
+        <button onclick={cancelReset} class="btn btn-secondary">
+          Anuluj
+        </button>
+        <button onclick={confirmReset} class="btn btn-danger">
+          Tak, Resetuj Bazę Danych
+        </button>
+      </div>
+    </div>
+  </div>
+{/if}
 
 <style>
   .config-container {
@@ -1072,6 +1214,33 @@
     color: var(--color-text-secondary);
   }
 
+  .boundary-select {
+    padding: var(--space-2) var(--space-3);
+    font-size: var(--text-sm);
+    border-radius: var(--radius-base);
+    border: 1px solid var(--color-border);
+    background: var(--color-surface);
+    color: var(--color-text-primary);
+    cursor: pointer;
+    transition: all 0.2s ease;
+    min-width: 250px;
+  }
+
+  .boundary-select:hover:not(:disabled) {
+    border-color: var(--color-accent);
+  }
+
+  .boundary-select:focus {
+    outline: none;
+    border-color: var(--color-accent);
+    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+  }
+
+  .boundary-select:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
   .boundary-toggles {
     display: flex;
     gap: var(--space-1);
@@ -1120,6 +1289,23 @@
   .custom-map-status {
     font-size: var(--text-sm);
     margin-bottom: var(--space-2);
+  }
+
+  .overlay-toggle {
+    margin-bottom: var(--space-2);
+  }
+
+  .overlay-toggle label {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    font-size: var(--text-sm);
+    color: var(--color-text-primary);
+    cursor: pointer;
+  }
+
+  .overlay-toggle input[type="checkbox"] {
+    cursor: pointer;
   }
 
   .status-indicator {
@@ -1184,5 +1370,65 @@
     .coordinate-overlay {
       transform: scale(0.9);
     }
+  }
+
+  /* Danger button */
+  .btn-danger {
+    background: #dc2626;
+    color: white;
+  }
+
+  .btn-danger:hover:not(:disabled) {
+    background: #b91c1c;
+  }
+
+  /* Modal styles */
+  .modal-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.5);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 10000;
+  }
+
+  .modal-content {
+    background: white;
+    padding: var(--space-6);
+    border-radius: var(--radius-lg);
+    max-width: 500px;
+    box-shadow: var(--shadow-lg);
+  }
+
+  .modal-content h2 {
+    margin: 0 0 var(--space-4) 0;
+    font-size: var(--text-xl);
+    color: var(--color-text-primary);
+  }
+
+  .modal-content p {
+    margin: 0 0 var(--space-3) 0;
+    color: var(--color-text-secondary);
+    line-height: 1.6;
+  }
+
+  .warning-text {
+    color: #dc2626;
+    font-weight: 600;
+    background: #fef2f2;
+    padding: var(--space-3);
+    border-radius: var(--radius-base);
+    border-left: 4px solid #dc2626;
+  }
+
+  .modal-buttons {
+    display: flex;
+    gap: var(--space-3);
+    justify-content: flex-end;
+    margin-top: var(--space-4);
   }
 </style>

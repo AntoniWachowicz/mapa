@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import type { SavedObject, Template, CategoryFieldData } from '$lib/types.js';
+  import type { SavedObject, Template, CategoryFieldData, PriceData } from '$lib/types.js';
 
   interface Props {
     data: {
@@ -25,6 +25,8 @@
   let resizeStartX = $state(0);
   let resizeLeftColumn = $state('');
   let resizeRightColumn = $state('');
+  let resizeInitialLeftWidth = $state(0);
+  let resizeInitialRightWidth = $state(0);
   let expandedCells = $state<Set<string>>(new Set());
   let tableBodyElement = $state<HTMLElement | null>(null);
   let placeholderRowCount = $state(0);
@@ -151,7 +153,16 @@
     if (isResizing) return;
 
     if (sortField === fieldKey) {
-      sortDirection = sortDirection === 'asc' ? 'desc' : 'asc';
+      // 3-state cycle: asc → desc → reset
+      if (sortDirection === 'asc') {
+        sortDirection = 'desc';
+      } else if (sortDirection === 'desc') {
+        // Reset sorting
+        sortField = '';
+        sortDirection = 'asc';
+        filteredObjects = data.objects ? [...data.objects] : [];
+        return;
+      }
     } else {
       sortField = fieldKey;
       sortDirection = 'asc';
@@ -172,8 +183,28 @@
     });
   }
 
+  // Price formatting function
+  const formatPrice = (amount: number) => {
+    const num = typeof amount === 'number' ? amount : parseFloat(amount);
+    const fixed = num.toFixed(2);
+    const [integer, decimal] = fixed.split('.');
+    const withSpaces = integer.replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
+    return `${withSpaces},${decimal}`;
+  };
+
   function formatFieldValue(field: any, value: any): string {
-    if (!value && value !== 0) return '';
+    // Check for empty values
+    if (!value && value !== 0 && value !== false) return '—';
+
+    // Check for empty arrays
+    if (Array.isArray(value) && value.length === 0) return '—';
+
+    // Check for empty gallery objects
+    if (typeof value === 'object' && value !== null && 'items' in value) {
+      if (!value.items || (Array.isArray(value.items) && value.items.length === 0)) {
+        return '—';
+      }
+    }
 
     if (field.type === 'checkbox') {
       return value ? 'Tak' : 'Nie';
@@ -212,7 +243,11 @@
       'tags': 'tagi',
       'image': 'obraz',
       'youtube': 'youtube',
-      'address': 'adres'
+      'address': 'adres',
+      'price': 'cena',
+      'multidate': 'wielodata',
+      'links': 'linki',
+      'richtext': 'tekst sformatowany'
     };
     return typeMap[field.type] || field.type;
   }
@@ -245,42 +280,74 @@
   }
 
   // Column resizing functions
+  let resizeRAF = $state<number | null>(null);
+  let pendingMouseX = $state<number | null>(null);
+
   function startResize(e: MouseEvent, leftFieldKey: string, rightFieldKey: string) {
     e.preventDefault();
+    e.stopPropagation();
     isResizing = true;
-    resizeStartX = e.clientX;
+    resizeStartX = e.pageX;
     resizeLeftColumn = leftFieldKey;
     resizeRightColumn = rightFieldKey;
+    resizeInitialLeftWidth = columnWidths[leftFieldKey] || 200;
+    resizeInitialRightWidth = columnWidths[rightFieldKey] || 200;
     document.addEventListener('mousemove', handleResize);
     document.addEventListener('mouseup', stopResize);
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
   }
 
   function handleResize(e: MouseEvent) {
     if (!isResizing || !resizeLeftColumn || !resizeRightColumn) return;
 
-    const deltaX = e.clientX - resizeStartX;
-    const leftCurrentWidth = columnWidths[resizeLeftColumn] || 200;
-    const rightCurrentWidth = columnWidths[resizeRightColumn] || 200;
+    e.preventDefault();
+    pendingMouseX = e.pageX;
 
-    // Calculate potential new widths
-    const potentialLeftWidth = leftCurrentWidth + deltaX;
-    const potentialRightWidth = rightCurrentWidth - deltaX;
+    if (resizeRAF !== null) return;
 
-    // Only proceed if both columns would remain above minimum width
-    if (potentialLeftWidth >= 100 && potentialRightWidth >= 100) {
-      columnWidths[resizeLeftColumn] = potentialLeftWidth;
-      columnWidths[resizeRightColumn] = potentialRightWidth;
-      resizeStartX = e.clientX;
-    }
-    // If either column would go below minimum, do nothing (stop resizing)
+    resizeRAF = requestAnimationFrame(() => {
+      if (pendingMouseX === null) {
+        resizeRAF = null;
+        return;
+      }
+
+      const deltaX = pendingMouseX - resizeStartX;
+
+      // Calculate new widths based on initial widths and total delta
+      const newLeftWidth = Math.round(resizeInitialLeftWidth + deltaX);
+      const newRightWidth = Math.round(resizeInitialRightWidth - deltaX);
+
+      // Only proceed if both columns would remain above minimum width
+      if (newLeftWidth >= 100 && newRightWidth >= 100) {
+        columnWidths = {
+          ...columnWidths,
+          [resizeLeftColumn]: newLeftWidth,
+          [resizeRightColumn]: newRightWidth
+        };
+      }
+
+      resizeRAF = null;
+      pendingMouseX = null;
+    });
   }
 
-  function stopResize() {
+  function stopResize(e: MouseEvent) {
+    e.preventDefault();
     isResizing = false;
     resizeLeftColumn = '';
     resizeRightColumn = '';
+    resizeInitialLeftWidth = 0;
+    resizeInitialRightWidth = 0;
+    pendingMouseX = null;
+    if (resizeRAF !== null) {
+      cancelAnimationFrame(resizeRAF);
+      resizeRAF = null;
+    }
     document.removeEventListener('mousemove', handleResize);
     document.removeEventListener('mouseup', stopResize);
+    document.body.style.cursor = '';
+    document.body.style.userSelect = '';
   }
 
   function toggleCellExpansion(objId: string, fieldKey: string) {
@@ -295,8 +362,14 @@
 
   function startEditingCell(objectId: string, fieldKey: string, currentValue: any) {
     editingCell = { objectId, fieldKey };
-    editingValue = currentValue;
-    originalValue = currentValue;
+    // Deep copy for objects and arrays to avoid mutating original data
+    if (typeof currentValue === 'object' && currentValue !== null) {
+      editingValue = JSON.parse(JSON.stringify(currentValue));
+      originalValue = JSON.parse(JSON.stringify(currentValue));
+    } else {
+      editingValue = currentValue;
+      originalValue = currentValue;
+    }
   }
 
   function cancelEdit() {
@@ -480,10 +553,108 @@
                   {#each data.template.fields.filter(f => f.visible) as field}
                     {@const cellId = `${obj.id}-${field.key}`}
                     {@const isExpanded = expandedCells.has(cellId)}
+                    {@const fieldValue = obj.data[field.key]}
                     <td style="width: {columnWidths[field.key] || 200}px;" class:sorted-column={sortField === field.key}>
                       {#if editingCell && editingCell.objectId === obj.id && editingCell.fieldKey === field.key}
                         <div class="edit-field-container">
-                          {#if field.type === 'text' || field.type === 'email' || field.type === 'url'}
+                          {#if field.type === 'price' && typeof fieldValue === 'object' && fieldValue !== null}
+                            <div class="edit-price-container">
+                              {#if editingValue.funding && Array.isArray(editingValue.funding)}
+                                {#each editingValue.funding as fundingItem, idx}
+                                  <div class="edit-price-row">
+                                    <span class="edit-label">{fundingItem.source}:</span>
+                                    <input
+                                      type="number"
+                                      bind:value={editingValue.funding[idx].amount}
+                                      class="edit-field-input-small"
+                                      onkeydown={handleKeydown}
+                                    />
+                                  </div>
+                                {/each}
+                              {/if}
+                            </div>
+                          {:else if field.type === 'multidate' && typeof fieldValue === 'object' && fieldValue !== null}
+                            <div class="edit-multidate-container">
+                              {#each Object.entries(fieldValue) as [label, date]}
+                                <div class="edit-date-row">
+                                  <span class="edit-label">{label}:</span>
+                                  <input
+                                    type="date"
+                                    bind:value={editingValue[label]}
+                                    class="edit-field-input-small"
+                                    onkeydown={handleKeydown}
+                                  />
+                                </div>
+                              {/each}
+                            </div>
+                          {:else if field.type === 'address' && typeof fieldValue === 'object' && fieldValue !== null}
+                            <div class="edit-address-container">
+                              <div class="edit-date-row">
+                                <span class="edit-label">Ulica:</span>
+                                <input
+                                  type="text"
+                                  bind:value={editingValue.street}
+                                  class="edit-field-input-small"
+                                  onkeydown={handleKeydown}
+                                />
+                              </div>
+                              <div class="edit-date-row">
+                                <span class="edit-label">Miasto:</span>
+                                <input
+                                  type="text"
+                                  bind:value={editingValue.city}
+                                  class="edit-field-input-small"
+                                  onkeydown={handleKeydown}
+                                />
+                              </div>
+                              <div class="edit-date-row">
+                                <span class="edit-label">Kod:</span>
+                                <input
+                                  type="text"
+                                  bind:value={editingValue.postal}
+                                  class="edit-field-input-small"
+                                  onkeydown={handleKeydown}
+                                />
+                              </div>
+                              <div class="edit-date-row">
+                                <span class="edit-label">Gmina:</span>
+                                <input
+                                  type="text"
+                                  bind:value={editingValue.gmina}
+                                  class="edit-field-input-small"
+                                  onkeydown={handleKeydown}
+                                />
+                              </div>
+                            </div>
+                          {:else if field.type === 'links' && Array.isArray(fieldValue)}
+                            <div class="edit-links-container">
+                              {#each fieldValue as link, idx}
+                                <div class="edit-link-row">
+                                  <input
+                                    type="text"
+                                    bind:value={editingValue[idx].text}
+                                    placeholder="Tekst"
+                                    class="edit-field-input-small"
+                                    onkeydown={handleKeydown}
+                                  />
+                                  <input
+                                    type="text"
+                                    bind:value={editingValue[idx].url}
+                                    placeholder="URL"
+                                    class="edit-field-input-small"
+                                    onkeydown={handleKeydown}
+                                  />
+                                </div>
+                              {/each}
+                            </div>
+                          {:else if field.type === 'richtext'}
+                            <textarea
+                              bind:value={editingValue}
+                              class="edit-field-textarea"
+                              onkeydown={handleKeydown}
+                              use:focus
+                            ></textarea>
+                          {:else if field.type === 'text' || field.type === 'email' || field.type === 'url'}
                             <input
                               type="text"
                               bind:value={editingValue}
@@ -547,11 +718,84 @@
                           onclick={() => toggleCellExpansion(obj.id, field.key)}
                           ondblclick={() => startEditingCell(obj.id, field.key, obj.data[field.key])}
                         >
-                          {#if obj.hasIncompleteData && !obj.data[field.key]}
+                          {#if obj.hasIncompleteData && !fieldValue}
                             <span class="missing-data">—</span>
+                          {:else if field.type === 'price' && typeof fieldValue === 'object' && fieldValue !== null}
+                            {@const priceData = fieldValue as PriceData}
+                            {@const calculatedTotal = priceData.funding?.reduce((sum, f) => sum + (f.amount || 0), 0) || 0}
+                            {@const totalStr = formatPrice(calculatedTotal)}
+                            {@const maxLength = totalStr.length}
+                            <div class="price-container">
+                              <div class="sub-fields">
+                                {#if priceData.funding && Array.isArray(priceData.funding)}
+                                  {#each priceData.funding as fundingItem}
+                                    {@const amountStr = formatPrice(fundingItem.amount)}
+                                    {@const padding = maxLength - amountStr.length}
+                                    <div class="sub-field-row">
+                                      <span class="sub-label">{fundingItem.source}:</span>
+                                      <span class="sub-value" style="padding-left: {padding}ch;">{amountStr} zł</span>
+                                    </div>
+                                  {/each}
+                                  {#if priceData.showTotal !== false && calculatedTotal > 0}
+                                    <div class="sub-field-row total-row">
+                                      <span class="sub-label">Suma:</span>
+                                      <span class="sub-value">{totalStr} zł</span>
+                                    </div>
+                                  {/if}
+                                {/if}
+                              </div>
+                            </div>
+                          {:else if field.type === 'multidate' && typeof fieldValue === 'object' && fieldValue !== null}
+                            {@const dateData = fieldValue}
+                            <div class="sub-fields">
+                              {#each Object.entries(dateData) as [label, date]}
+                                <div class="sub-field-row">
+                                  <span class="sub-label">{label}:</span>
+                                  <span class="sub-value">{new Date(date).toLocaleDateString('pl-PL')}</span>
+                                </div>
+                              {/each}
+                            </div>
+                          {:else if field.type === 'address' && typeof fieldValue === 'object' && fieldValue !== null}
+                            {@const addressData = fieldValue}
+                            <div class="sub-fields">
+                              {#if addressData.street}
+                                <div class="sub-field-row">
+                                  <span class="sub-label">Ulica:</span>
+                                  <span class="sub-value">{addressData.street}</span>
+                                </div>
+                              {/if}
+                              {#if addressData.city}
+                                <div class="sub-field-row">
+                                  <span class="sub-label">Miasto:</span>
+                                  <span class="sub-value">{addressData.city}</span>
+                                </div>
+                              {/if}
+                              {#if addressData.postal}
+                                <div class="sub-field-row">
+                                  <span class="sub-label">Kod:</span>
+                                  <span class="sub-value">{addressData.postal}</span>
+                                </div>
+                              {/if}
+                              {#if addressData.gmina}
+                                <div class="sub-field-row">
+                                  <span class="sub-label">Gmina:</span>
+                                  <span class="sub-value">{addressData.gmina}</span>
+                                </div>
+                              {/if}
+                            </div>
+                          {:else if field.type === 'links' && Array.isArray(fieldValue) && fieldValue.length > 0}
+                            <div class="sub-fields">
+                              {#each fieldValue as link}
+                                <div class="sub-field-row">
+                                  <a href={link.url} target="_blank" rel="noopener noreferrer" class="sub-value">
+                                    {link.text || link.url}
+                                  </a>
+                                </div>
+                              {/each}
+                            </div>
                           {:else if field.type === 'tags'}
-                            {#if obj.data[field.key] && typeof obj.data[field.key] === 'object' && obj.data[field.key] !== null && 'majorTag' in (obj.data[field.key] as object)}
-                              {@const tagData = obj.data[field.key] as CategoryFieldData}
+                            {#if fieldValue && typeof fieldValue === 'object' && fieldValue !== null && 'majorTag' in fieldValue}
+                              {@const tagData = fieldValue as CategoryFieldData}
                               {@const majorTag = data.template.tags?.find(t => t.id === tagData.majorTag)}
                               {#if majorTag}
                                 <span class="tag-display" style="background-color: {majorTag.color}">
@@ -563,7 +807,7 @@
                             {/if}
                           {:else}
                             <span class="field-value">
-                              {formatFieldValue(field, obj.data[field.key])}
+                              {formatFieldValue(field, fieldValue)}
                             </span>
                           {/if}
                         </div>
@@ -697,6 +941,7 @@
     user-select: none;
     transition: background-color var(--transition-fast);
     position: relative;
+    box-sizing: border-box;
   }
 
   .header-table th:hover {
@@ -733,7 +978,7 @@
   }
 
   .body-table td {
-    padding: var(--space-4);
+    padding: var(--space-2);
     font-family: "Space Mono", monospace;
     font-size: 16px;
   }
@@ -814,18 +1059,20 @@
   .column-resizer {
     position: absolute;
     top: 0;
-    right: -2px; /* Center the hitbox around the visual separator */
-    width: 5px; /* 5px hitbox */
+    right: 0;
+    width: 5px;
     height: calc(100vh - 200px);
     cursor: col-resize;
     z-index: 30;
+    transform: translateX(50%);
   }
 
   .column-resizer::before {
     content: '';
     position: absolute;
     top: 0;
-    left: 2px; /* Center the 1px line within the 5px hitbox */
+    left: 50%;
+    transform: translateX(-50%);
     width: 1px;
     height: 100%;
     background: rgba(0, 0, 0, 0.2);
@@ -834,13 +1081,12 @@
   .column-resizer:hover::before {
     background: rgba(0, 0, 0, 0.4);
     width: 2px;
-    left: 1.5px;
   }
 
   /* Modern table design improvements */
   .header-table th {
     background: var(--color-surface);
-    padding: var(--space-4) var(--space-4) var(--space-6) var(--space-4);
+    padding: 12px 12px 16px 12px;
     text-align: left;
     font-family: var(--font-ui);
     font-weight: var(--font-weight-bold);
@@ -851,6 +1097,7 @@
     transition: background-color var(--transition-fast);
     position: relative;
     border-bottom: 2px solid var(--color-border);
+    box-sizing: border-box;
   }
 
   .header-table th.sorted-asc,
@@ -865,10 +1112,11 @@
   }
 
   .body-table td {
-    padding: var(--space-2) var(--space-4);
+    padding: 8px 12px;
     font-family: var(--font-ui);
     font-size: var(--text-sm);
     vertical-align: top;
+    box-sizing: border-box;
   }
 
   .body-table tbody tr:nth-child(even) {
@@ -897,16 +1145,21 @@
 
   .cell-content {
     min-height: 1.2rem;
-    display: flex;
-    align-items: flex-start;
-    padding: var(--space-1) 0;
+    padding: 0;
     cursor: pointer;
-    overflow: hidden;
+    line-height: 1.3;
+    vertical-align: top;
+  }
+
+  .cell-content > span {
     display: -webkit-box;
     -webkit-line-clamp: 2;
     -webkit-box-orient: vertical;
-    line-height: 1.3;
-    vertical-align: top;
+    overflow: hidden;
+  }
+
+  .cell-content > .sub-fields {
+    display: block;
   }
 
   /* Placeholder rows */
@@ -997,6 +1250,132 @@
   .edit-save-btn:active,
   .edit-cancel-btn:active {
     transform: translateY(0);
+  }
+
+  /* Sub-field display styles for complex fields */
+  .sub-fields {
+    display: block;
+    width: 100%;
+    margin: 0;
+    padding: 0;
+  }
+
+  /* Default flex layout for most complex fields */
+  .sub-field-row {
+    display: flex;
+    gap: 6px;
+    font-size: var(--text-sm);
+    line-height: 1.4;
+    margin-bottom: 1px;
+  }
+
+  .sub-label {
+    color: var(--color-text-muted);
+    font-weight: var(--font-weight-medium);
+    white-space: nowrap;
+    flex-shrink: 0;
+    text-align: right;
+    min-width: fit-content;
+  }
+
+  .sub-value {
+    color: var(--color-text);
+    text-align: left;
+    font-family: 'Space Mono', monospace;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+    flex-grow: 1;
+  }
+
+  /* Price field container - keeps it at left edge */
+  .price-container {
+    display: inline-block;
+    margin: 0;
+    padding: 0;
+  }
+
+  /* Price fields use table layout for decimal alignment */
+  .price-container .sub-fields {
+    display: table;
+    border-collapse: collapse;
+    border-spacing: 0;
+    margin: 0;
+    padding: 0;
+    width: auto;
+  }
+
+  .price-container .sub-field-row {
+    display: table-row;
+  }
+
+  .price-container .sub-label {
+    display: table-cell;
+    padding-right: 6px;
+    padding-bottom: 1px;
+  }
+
+  .price-container .sub-value {
+    display: table-cell;
+    padding-bottom: 1px;
+  }
+
+  .sub-value a {
+    color: #007bff;
+    text-decoration: none;
+  }
+
+  .sub-value a:hover {
+    text-decoration: underline;
+  }
+
+  .total-row {
+    margin-top: 2px;
+    font-weight: var(--font-weight-semibold);
+  }
+
+  /* Edit field styles for complex fields */
+  .edit-field-input-small {
+    width: 100%;
+    border: 1px solid #ccc;
+    border-radius: var(--radius-base);
+    padding: 4px 8px;
+    font-family: var(--font-ui);
+    font-size: var(--text-sm);
+    background: white;
+    margin-bottom: 4px;
+  }
+
+  .edit-field-input-small:focus {
+    outline: none;
+    border-color: #007bff;
+  }
+
+  .edit-price-container,
+  .edit-multidate-container,
+  .edit-address-container,
+  .edit-links-container {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    max-height: 300px;
+    overflow-y: auto;
+  }
+
+  .edit-price-row,
+  .edit-date-row,
+  .edit-link-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .edit-label {
+    font-size: var(--text-sm);
+    color: var(--color-text-muted);
+    font-weight: var(--font-weight-medium);
+    min-width: 80px;
+    text-align: right;
+    flex-shrink: 0;
   }
 
 </style>

@@ -25,9 +25,13 @@
   console.log('[MAP PAGE CLIENT] Objects data:', objects);
   let focusCoordinates = $state<{lat: number, lng: number} | null>(null);
   let selectedCoordinates = $state<{lat: number, lng: number} | null>(null);
+  let selectedObject = $state<SavedObject | null>(null); // Currently selected pin for detail view
   let sidebarWidth = $state(400); // Default sidebar width in pixels
   let isDragging = $state(false);
   let isPinSectionCollapsed = $state(false); // New state for pin section collapse
+  let detailPanelEl: HTMLDivElement | null = null; // Reference to detail panel
+  let mapViewEl: HTMLDivElement | null = null; // Reference to map view
+  let connectionLine = $state({ x1: 0, y1: 0, x2: 0, y2: 0 }); // Connection line coordinates
 
   // Filter and sort state
   let filterText = $state('');
@@ -71,15 +75,12 @@
   }
 
   function focusOnPin(obj: SavedObject): void {
-    const coordField = template.fields.find(f => f.key === 'coordinates');
-    if (coordField && obj.data[coordField.key]) {
-      const coordinates = parseCoordinates(obj.data[coordField.key]);
-      if (coordinates) {
-        focusCoordinates = coordinates;
-        setTimeout(() => {
-          focusCoordinates = null;
-        }, 100);
-      }
+    if (obj.location && obj.location.coordinates && obj.location.coordinates.length === 2) {
+      const [lng, lat] = obj.location.coordinates;
+      focusCoordinates = { lat, lng };
+      setTimeout(() => {
+        focusCoordinates = null;
+      }, 100);
     }
   }
 
@@ -111,15 +112,89 @@
     }, 100);
   }
 
+  function handlePinClick(obj: MapObject): void {
+    selectedObject = obj;
+    // Update connection line after a short delay to allow DOM to update
+    setTimeout(updateConnectionLine, 50);
+  }
+
+  function handlePinClickWithPan(obj: MapObject): void {
+    const wasAlreadySelected = selectedObject?.id === obj.id;
+
+    // First, open the detail panel
+    selectedObject = obj;
+
+    // Wait minimal time for detail panel to render, then request the pan
+    setTimeout(() => {
+      if (panToPinCallback) {
+        panToPinCallback();
+      }
+      // Update connection line after pan starts
+      setTimeout(updateConnectionLine, 100);
+    }, 10);
+  }
+
+  let panToPinCallback: (() => void) | null = null;
+
+  function closeDetailPanel(): void {
+    selectedObject = null;
+    // Clear the pan callback to prevent any panning when closing
+    panToPinCallback = null;
+  }
+
+  function handlePinPositionUpdate(x: number, y: number): void {
+    if (!detailPanelEl || !mapViewEl) return;
+
+    // Get detail panel position (bottom-right corner)
+    const panelRect = detailPanelEl.getBoundingClientRect();
+    const mapViewRect = mapViewEl.getBoundingClientRect();
+
+    // Panel bottom-right corner (relative to map view)
+    const x1 = panelRect.right - mapViewRect.left;
+    const y1 = panelRect.bottom - mapViewRect.top;
+
+    // Pin position (already in map view coordinates)
+    const x2 = x;
+    const y2 = y;
+
+    connectionLine = { x1, y1, x2, y2 };
+  }
+
+  function updateConnectionLine(): void {
+    // This will be triggered by the MapComponent's onPinPositionUpdate callback
+    // We just need to update the detail panel position here
+    if (!selectedObject || !detailPanelEl || !mapViewEl) return;
+
+    const panelRect = detailPanelEl.getBoundingClientRect();
+    const mapViewRect = mapViewEl.getBoundingClientRect();
+
+    const x1 = panelRect.right - mapViewRect.left;
+    const y1 = panelRect.bottom - mapViewRect.top;
+
+    // Keep x2, y2 from current state (will be updated by pin position callback)
+    connectionLine = { x1, y1, x2: connectionLine.x2, y2: connectionLine.y2 };
+  }
+
   // Pin management functions
   async function handleSavePin(data: ProjectData, hasIncompleteData?: boolean): Promise<void> {
     try {
+      // Create GeoJSON location from selectedCoordinates
+      if (!selectedCoordinates) {
+        alert('Brak wybranych współrzędnych. Kliknij mapę, aby wybrać lokalizację.');
+        return;
+      }
+
+      const location: GeoJSON.Point = {
+        type: 'Point',
+        coordinates: [selectedCoordinates.lng, selectedCoordinates.lat] // GeoJSON uses [lng, lat]
+      };
+
       const response = await fetch('/api/objects', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ data, hasIncompleteData })
+        body: JSON.stringify({ location, data, hasIncompleteData })
       });
 
       if (response.ok) {
@@ -211,26 +286,16 @@
     }
   }
 
-  // Parse coordinates for map
-  function parseCoordinates(coordString: string | number | boolean | CategoryFieldData): {lat: number, lng: number} | null {
-    if (typeof coordString !== 'string') return null;
-    const parts = coordString.split(',').map(s => s.trim());
-    if (parts.length !== 2) return null;
-    const lat = parseFloat(parts[0]);
-    const lng = parseFloat(parts[1]);
-    if (isNaN(lat) || isNaN(lng)) return null;
-    return { lat, lng };
-  }
-
+  // Filter objects that have valid GeoJSON location
   const validMapObjects = $derived(() => {
-    const coordField = template?.fields?.find(f => f.key === 'coordinates');
-    if (!coordField || !template?.fields) return [];
+    if (!template?.fields) return [];
 
     const result: MapObject[] = [];
     for (const obj of filteredObjects) {
-      const coordinates = parseCoordinates(obj.data[coordField.key]);
-      if (coordinates !== null) {
-        result.push({ ...obj, coordinates });
+      // Check if object has valid GeoJSON Point location
+      if (obj.location && obj.location.type === 'Point' &&
+          obj.location.coordinates && obj.location.coordinates.length === 2) {
+        result.push(obj as MapObject);
       }
     }
     return result;
@@ -342,14 +407,63 @@
 
   <div class="resize-handle" onmousedown={startResize} class:dragging={isDragging}></div>
 
-  <div class="map-view">
+  <div class="map-view" bind:this={mapViewEl}>
     <MapComponent
       objects={validMapObjects()}
       onMapClick={handleMapClick}
       {selectedCoordinates}
       focusCoordinates={focusCoordinates}
       {mapConfig}
+      onPinClick={handlePinClickWithPan}
+      selectedObjectId={selectedObject?.id || null}
+      onPinPositionUpdate={handlePinPositionUpdate}
+      bind:panToPinCallback
     />
+
+    <!-- Detail Panel -->
+    {#if selectedObject}
+      <div class="detail-panel" bind:this={detailPanelEl}>
+        <div class="detail-header">
+          <h3>Szczegóły pinezki</h3>
+          <button class="close-btn" onclick={closeDetailPanel}>
+            <Icon name="Close" size={16} />
+          </button>
+        </div>
+        <div class="detail-content">
+          <!-- Show fields including location -->
+          {#each template.fields.filter(f => f.visible) as field}
+            <div class="detail-field">
+              <label>{field.displayLabel || field.label}:</label>
+              <div class="detail-value" class:location-value={field.key === 'location'}>
+                {#if field.key === 'location'}
+                  <!-- Special display for location field -->
+                  {#if selectedObject.location && selectedObject.location.coordinates}
+                    {selectedObject.location.coordinates[1].toFixed(6)}, {selectedObject.location.coordinates[0].toFixed(6)}
+                  {:else}
+                    <span class="no-location">Brak lokalizacji</span>
+                  {/if}
+                {:else}
+                  {formatFieldValue(field, selectedObject.data[field.key])}
+                {/if}
+              </div>
+            </div>
+          {/each}
+        </div>
+      </div>
+
+      <!-- Connection Line SVG -->
+      <svg class="connection-line">
+        <line
+          x1={connectionLine.x1}
+          y1={connectionLine.y1}
+          x2={connectionLine.x2}
+          y2={connectionLine.y2}
+          stroke="var(--color-accent)"
+          stroke-width="2"
+          opacity="0.6"
+        />
+      </svg>
+    {/if}
   </div>
 </div>
 
@@ -485,6 +599,109 @@
     flex: 1;
     position: relative;
     overflow: hidden;
+  }
+
+  /* Detail Panel */
+  .detail-panel {
+    position: absolute;
+    left: 20px;
+    top: 20px;
+    width: 320px;
+    max-height: calc(100% - 40px);
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-base);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+    overflow-y: auto;
+    z-index: 1000;
+  }
+
+  .detail-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: var(--space-3);
+    border-bottom: 1px solid var(--color-border);
+    position: sticky;
+    top: 0;
+    background: var(--color-surface);
+  }
+
+  .detail-header h3 {
+    margin: 0;
+    font-family: var(--font-ui);
+    font-size: var(--text-base);
+    font-weight: var(--font-weight-medium);
+  }
+
+  .close-btn {
+    background: none;
+    border: none;
+    padding: var(--space-1);
+    border-radius: var(--radius-base);
+    cursor: pointer;
+    color: var(--color-text-secondary);
+    transition: all var(--transition-fast);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .close-btn:hover {
+    background: var(--color-border);
+    color: var(--color-text-primary);
+  }
+
+  .detail-content {
+    padding: var(--space-3);
+  }
+
+  .detail-field {
+    margin-bottom: var(--space-3);
+  }
+
+  .detail-field:last-child {
+    margin-bottom: 0;
+  }
+
+  .detail-field label {
+    display: block;
+    font-family: var(--font-ui);
+    font-size: var(--text-sm);
+    font-weight: var(--font-weight-medium);
+    color: var(--color-text-secondary);
+    margin-bottom: var(--space-1);
+  }
+
+  .detail-value {
+    font-family: var(--font-ui);
+    font-size: var(--text-sm);
+    color: var(--color-text-primary);
+    word-break: break-word;
+  }
+
+  .detail-value.location-value {
+    font-family: monospace;
+    background: #ecfdf5;
+    padding: 4px 8px;
+    border-radius: 4px;
+    color: #065f46;
+  }
+
+  .no-location {
+    color: #9ca3af;
+    font-style: italic;
+  }
+
+  /* Connection Line */
+  .connection-line {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    z-index: 999;
   }
 
   /* Mobile responsive */

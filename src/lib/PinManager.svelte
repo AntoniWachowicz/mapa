@@ -1,7 +1,34 @@
 <script lang="ts">
-  import type { Template, ProjectData, SavedObject, CategoryFieldData, Tag } from './types.js';
+  import type {
+    Template,
+    ProjectData,
+    SavedObject,
+    CategoryFieldData,
+    Tag,
+    FileData,
+    GalleryData,
+    MultiDateData,
+    MultiDateConfig,
+    AddressData,
+    AddressConfig,
+    LinkData,
+    LinksConfig,
+    PriceData,
+    PriceConfig,
+    FundingSource,
+    RichTextConfig,
+    FilesConfig,
+    GalleryConfig
+  } from './types.js';
   import PinList from './PinList.svelte';
   import Icon from './Icon.svelte';
+  import RichTextInput from './fields/RichTextInput.svelte';
+  import LinksInput from './fields/LinksInput.svelte';
+  import MultiDateInput from './fields/MultiDateInput.svelte';
+  import AddressInput from './fields/AddressInput.svelte';
+  import PriceInput from './fields/PriceInput.svelte';
+  import FilesInput from './fields/FilesInput.svelte';
+  import GalleryInput from './fields/GalleryInput.svelte';
   
   interface Props {
     template: Template;
@@ -34,48 +61,96 @@
     if (template?.fields) {
       const newFormData: ProjectData = {};
       template.fields.forEach((field) => {
-        if (field.type === 'checkbox') {
-          newFormData[field.key] = false;
-        } else if (field.type === 'tags') {
-          newFormData[field.key] = { majorTag: null, minorTags: [] } as CategoryFieldData;
-        } else {
-          newFormData[field.key] = '';
+        const fieldType = field.fieldType || field.type;
+        const fieldName = field.fieldName || field.key;
+
+        switch (fieldType) {
+          case 'title':
+          case 'richtext':
+            newFormData[fieldName] = '';
+            break;
+
+          case 'files':
+            newFormData[fieldName] = [];
+            break;
+
+          case 'gallery':
+            newFormData[fieldName] = { items: [] } as GalleryData;
+            break;
+
+          case 'multidate':
+            const multiDateConfig = field.config as MultiDateConfig;
+            // Pre-populate with null dates for all configured date fields
+            const initialDates: MultiDateData = {};
+            multiDateConfig?.dateFields?.forEach(dateField => {
+              initialDates[dateField.key] = null;
+            });
+            newFormData[fieldName] = initialDates;
+            break;
+
+          case 'address':
+            const addressConfig = field.config as AddressConfig;
+            // Pre-populate with empty strings for all configured address fields
+            const initialAddress: AddressData = {};
+            addressConfig?.displayFields?.forEach(fieldKey => {
+              initialAddress[fieldKey as keyof AddressData] = '';
+            });
+            newFormData[fieldName] = initialAddress;
+            break;
+
+          case 'links':
+            newFormData[fieldName] = [];
+            break;
+
+          case 'price':
+            const priceConfig = field.config as PriceConfig;
+            // Pre-populate funding sources from config
+            const initialFunding = priceConfig?.defaultFundingSources?.map(source => ({
+              source: source,
+              amount: 0
+            })) || [];
+            newFormData[fieldName] = {
+              currency: priceConfig?.currency || 'PLN',
+              funding: initialFunding,
+              showTotal: priceConfig?.showTotal ?? true,
+              showBreakdown: priceConfig?.showPercentages ?? true
+            } as PriceData;
+            break;
+
+          case 'tags':
+          case 'category':
+            newFormData[fieldName] = { selectedTags: [], majorTag: null, minorTags: [] } as any;
+            break;
+
+          // Legacy field types
+          case 'checkbox':
+            newFormData[fieldName] = false;
+            break;
+
+          default:
+            newFormData[fieldName] = '';
         }
       });
       formData = newFormData;
     }
   });
   
-  // Auto-fill coordinates when selected
+  // Auto-fill coordinates when selected - no longer needed as location is separate
+  // Coordinates are now stored as GeoJSON in SavedObject.location
   $effect(() => {
     if (selectedCoordinates && template?.fields) {
-      const coordField = template.fields.find(f => f.key === 'coordinates');
-      if (coordField) {
-        formData = {
-          ...formData,
-          [coordField.key]: `${selectedCoordinates.lat.toFixed(6)}, ${selectedCoordinates.lng.toFixed(6)}`
-        };
-        
-        // Trigger reverse geocoding if there's an address field with sync enabled
-        const addressField = template.fields.find(f => f.type === 'address' && f.addressSync);
-        if (addressField) {
-          handleCoordinatesReverseGeocode();
-        }
+      // Trigger reverse geocoding if there's an address field with sync enabled
+      const addressField = template.fields.find(f => f.type === 'address' && f.addressSync);
+      if (addressField) {
+        handleCoordinatesReverseGeocode();
       }
     }
   });
 
-  // Clear coordinates from form data
+  // Clear coordinates - location is now handled separately
   function clearCoordinates(): void {
     if (onClearCoordinates) {
       onClearCoordinates();
-    }
-    const coordField = template?.fields?.find(f => f.key === 'coordinates');
-    if (coordField) {
-      formData = {
-        ...formData,
-        [coordField.key]: ''
-      };
     }
   }
   
@@ -83,25 +158,78 @@
   
   async function saveObject(): Promise<void> {
     if (!template?.fields) return;
-    
+
     // Robust validation
     const emptyRequiredFields: string[] = [];
-    
+
     for (const field of template.fields) {
       if (field.required && field.visible) {
-        const value = formData[field.key];
-        
-        if (field.type === 'checkbox') {
+        const fieldType = field.fieldType || field.type;
+        const fieldName = field.fieldName || field.key;
+
+        // Special handling for location field
+        if (fieldType === 'location' || field.key === 'location') {
+          if (!selectedCoordinates) {
+            emptyRequiredFields.push(field.label || field.displayLabel);
+          }
+          continue;
+        }
+
+        const value = formData[fieldName];
+
+        // NEW FIELD TYPES VALIDATION
+        if (fieldType === 'title' || fieldType === 'richtext') {
+          if (!value || (typeof value === 'string' && value.trim() === '')) {
+            emptyRequiredFields.push(field.label);
+          }
+        } else if (fieldType === 'files') {
+          if (!Array.isArray(value) || value.length === 0) {
+            emptyRequiredFields.push(field.label);
+          }
+        } else if (fieldType === 'gallery') {
+          const gallery = value as GalleryData;
+          if (!gallery || !gallery.items || gallery.items.length === 0) {
+            emptyRequiredFields.push(field.label);
+          }
+        } else if (fieldType === 'multidate') {
+          const config = field.config as MultiDateConfig;
+          const dates = value as MultiDateData;
+          const hasRequiredDates = config?.dateFields
+            ?.filter(df => df.required)
+            .every(df => dates && dates[df.key]);
+          if (!hasRequiredDates) {
+            emptyRequiredFields.push(field.label);
+          }
+        } else if (fieldType === 'address' && field.config) {
+          const addrConfig = field.config as AddressConfig;
+          const addr = value as AddressData;
+          const hasRequiredAddr = addrConfig?.requiredFields
+            ?.every(rf => addr && addr[rf]);
+          if (!hasRequiredAddr) {
+            emptyRequiredFields.push(field.label);
+          }
+        } else if (fieldType === 'links') {
+          if (!Array.isArray(value) || value.length === 0) {
+            emptyRequiredFields.push(field.label);
+          }
+        } else if (fieldType === 'price') {
+          const priceData = value as PriceData;
+          if (!priceData || !priceData.funding || priceData.funding.length === 0) {
+            emptyRequiredFields.push(field.label);
+          }
+        }
+        // LEGACY FIELD TYPES VALIDATION
+        else if (field.type === 'checkbox') {
           continue; // Checkboxes don't need validation
-        } else if (['text', 'textarea', 'email', 'url', 'date', 'select', 'image', 'youtube', 'address'].includes(field.type)) {
+        } else if (['text', 'textarea', 'email', 'url', 'date', 'select', 'image', 'youtube', 'address'].includes(field.type || '')) {
           if (!value || (typeof value === 'string' && value.trim() === '')) {
             emptyRequiredFields.push(field.displayLabel || field.label);
           }
-        } else if (['number', 'currency', 'percentage'].includes(field.type)) {
+        } else if (['number', 'currency', 'percentage'].includes(field.type || '')) {
           if (value === undefined || value === null || value === '' || (typeof value === 'string' && value.trim() === '')) {
             emptyRequiredFields.push(field.displayLabel || field.label);
           }
-        } else if (field.type === 'tags') {
+        } else if (field.type === 'tags' || field.type === 'category') {
           const tagData = value as CategoryFieldData;
           if (!tagData || !tagData.majorTag) {
             emptyRequiredFields.push(field.displayLabel || field.label);
@@ -199,22 +327,14 @@
   }
 
 
+  // This function is no longer needed as PinList handles focus directly from GeoJSON location
+  // Keeping for backwards compatibility but it won't be called
   function handlePinClick(obj: SavedObject): void {
-  if (onFocusPin) {
-    const coordField = template.fields.find(f => f.key === 'coordinates');
-    if (coordField && obj.data[coordField.key]) {
-      const coordString = obj.data[coordField.key] as string;
-      const parts = coordString.split(',').map(s => s.trim());
-      if (parts.length === 2) {
-        const lat = parseFloat(parts[0]);
-        const lng = parseFloat(parts[1]);
-        if (!isNaN(lat) && !isNaN(lng)) {
-          onFocusPin({lat, lng});
-        }
-      }
+    if (onFocusPin && obj.location && obj.location.coordinates) {
+      const [lng, lat] = obj.location.coordinates;
+      onFocusPin({lat, lng});
     }
   }
-}
 
   // File upload handler
   async function handleImageUpload(fieldKey: string, event: Event): Promise<void> {
@@ -255,15 +375,16 @@
     }
   }
 
-  // Address geocoding handler
+  // Address geocoding handler - No longer updates coordinates field
+  // Coordinates are now handled separately via selectedCoordinates in GeoJSON format
   async function handleAddressGeocode(fieldKey: string): Promise<void> {
     const addressValue = formData[fieldKey] as string;
     if (!addressValue || !addressValue.trim()) {
       return;
     }
-    
+
     isGeocodingAddress = true;
-    
+
     try {
       const response = await fetch('/api/geocode', {
         method: 'POST',
@@ -272,20 +393,10 @@
         },
         body: JSON.stringify({ address: addressValue.trim() })
       });
-      
+
       const result = await response.json();
-      
+
       if (result.success && result.coordinates) {
-        // Update coordinates field
-        const coordField = template.fields.find(f => f.key === 'coordinates');
-        if (coordField) {
-          const coordinatesString = `${result.coordinates.lat.toFixed(6)}, ${result.coordinates.lng.toFixed(6)}`;
-          formData = {
-            ...formData,
-            [coordField.key]: coordinatesString
-          };
-        }
-        
         // Update address with formatted version
         if (result.formattedAddress) {
           formData = {
@@ -293,6 +404,9 @@
             [fieldKey]: result.formattedAddress
           };
         }
+
+        // Note: Coordinates are now set via map click, not stored in form data
+        alert('Adres znaleziony. Kliknij na mapę aby ustawić dokładną lokalizację.');
       } else {
         alert(result.error || 'Nie udało się znaleźć adresu');
       }
@@ -499,12 +613,11 @@
           // Create new object
           const newData: ProjectData = {};
           let hasIncompleteData = rowData.hasIncompleteData || false;
-          
+
           // Map original data to template fields
+          // Note: coordinates are no longer stored in form data, they're in GeoJSON location
           template.fields.forEach(field => {
-            if (field.key === 'coordinates' && rowData.coordinates) {
-              newData[field.key] = `${rowData.coordinates.lat.toFixed(6)}, ${rowData.coordinates.lng.toFixed(6)}`;
-            } else if (field.type === 'checkbox') {
+            if (field.type === 'checkbox') {
               // Try to map checkbox values
               const matchingKey = Object.keys(rowData.originalData).find(key => 
                 key.toLowerCase().includes(field.key.toLowerCase()) ||
@@ -645,34 +758,100 @@
         <div class="form-field">
           <label>
             {field.displayLabel || field.label} {field.required ? '*' : ''}
-            
-            {#if field.type === 'text'}
-              {#if field.key === 'coordinates'}
-                <div class="input-with-button">
-                  <input 
-                    value={getFieldValue(field.key)} 
-                    oninput={(e) => handleTextInput(field.key, e)}
-                    required={field.required}
-                    placeholder="Kliknij na mapę aby wybrać lokalizację"
+
+            {#if field.key === 'location'}
+              <!-- Special display for location field (GeoJSON coordinates) -->
+              <div class="location-display">
+                {#if selectedCoordinates}
+                  <input
+                    value="{selectedCoordinates.lat.toFixed(6)}, {selectedCoordinates.lng.toFixed(6)}"
                     readonly
+                    class="location-input"
+                    placeholder="Kliknij na mapę aby wybrać lokalizację"
                   >
                   <button
                     type="button"
                     onclick={clearCoordinates}
-                    disabled={!getFieldValue(field.key)}
                     class="clear-coords-btn"
                     title="Wyczyść współrzędne"
                   >
                     <Icon name="Close" size={16} />
                   </button>
-                </div>
-              {:else}
-                <input 
-                  value={getFieldValue(field.key)} 
-                  oninput={(e) => handleTextInput(field.key, e)}
-                  required={field.required}
-                >
-              {/if}
+                {:else}
+                  <input
+                    value=""
+                    readonly
+                    class="location-input"
+                    placeholder="Kliknij na mapę aby wybrać lokalizację"
+                  >
+                {/if}
+              </div>
+
+            <!-- NEW FIELD TYPES -->
+            {:else if (field.fieldType || field.type) === 'richtext'}
+              <RichTextInput
+                value={String(getFieldValue(field.fieldName || field.key))}
+                config={field.config as RichTextConfig}
+                required={field.required}
+                oninput={(val) => formData[field.fieldName || field.key] = val}
+              />
+
+            {:else if (field.fieldType || field.type) === 'links'}
+              <LinksInput
+                value={getFieldValue(field.fieldName || field.key) as LinkData[]}
+                config={field.config as LinksConfig}
+                required={field.required}
+                oninput={(val) => formData[field.fieldName || field.key] = val}
+              />
+
+            {:else if (field.fieldType || field.type) === 'multidate'}
+              <MultiDateInput
+                value={getFieldValue(field.fieldName || field.key) as MultiDateData}
+                config={field.config as MultiDateConfig}
+                required={field.required}
+                oninput={(val) => formData[field.fieldName || field.key] = val}
+              />
+
+            {:else if (field.fieldType || field.type) === 'address' && field.config}
+              <AddressInput
+                value={getFieldValue(field.fieldName || field.key) as AddressData}
+                config={field.config as AddressConfig}
+                required={field.required}
+                oninput={(val) => formData[field.fieldName || field.key] = val}
+                onGeocode={() => handleAddressGeocode(field.fieldName || field.key)}
+              />
+
+            {:else if (field.fieldType || field.type) === 'price'}
+              <PriceInput
+                value={getFieldValue(field.fieldName || field.key) as PriceData}
+                config={field.config as PriceConfig}
+                required={field.required}
+                oninput={(val) => formData[field.fieldName || field.key] = val}
+              />
+
+            {:else if (field.fieldType || field.type) === 'files'}
+              <FilesInput
+                value={getFieldValue(field.fieldName || field.key) as FileData[]}
+                config={field.config as FilesConfig}
+                required={field.required}
+                oninput={(val) => formData[field.fieldName || field.key] = val}
+              />
+
+            {:else if (field.fieldType || field.type) === 'gallery'}
+              <GalleryInput
+                value={getFieldValue(field.fieldName || field.key) as GalleryData}
+                config={field.config as GalleryConfig}
+                required={field.required}
+                oninput={(val) => formData[field.fieldName || field.key] = val}
+              />
+
+            <!-- LEGACY FIELD TYPES -->
+            {:else if field.type === 'text'}
+              <input
+                value={getFieldValue(field.key)}
+                oninput={(e) => handleTextInput(field.key, e)}
+                required={field.required}
+              >
             {:else if field.type === 'number'}
               <input 
                 type="number" 
@@ -1182,6 +1361,19 @@
 
   .input-with-button input {
     flex: 1;
+  }
+
+  .location-display {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+  }
+
+  .location-input {
+    flex: 1;
+    background: var(--color-surface);
+    color: var(--color-text-secondary);
+    font-family: monospace;
   }
 
   .clear-coords-btn {

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { Field, Template } from './types.js';
+  import type { Field, Template, FieldType, RichTextConfig, FilesConfig, GalleryConfig, MultiDateConfig, AddressConfig, LinksConfig, PriceConfig } from './types.js';
   import TagManager from './TagManager.svelte';
 
   // Icon components
@@ -33,7 +33,7 @@
   }
   
   const { template, onUpdate }: Props = $props();
-  
+
   let label = $state('');
   let type = $state<Field['type']>('text');
   let required = $state(false);
@@ -44,13 +44,44 @@
   let editingFieldIndex = $state<number | null>(null);
   let addingNewField = $state(false);
   let newFieldLabel = $state('');
-  let newFieldType = $state<Field['type']>('text');
+  let newFieldType = $state<FieldType>('richtext');
   let newFieldRequired = $state(false);
   let draggedFieldIndex = $state<number | null>(null);
   let dragOverIndex = $state<number | null>(null);
+
+  // New field type configurations
+  let richTextMaxLength = $state(5000);
+  let richTextFormatting = $state(['bold', 'italic', 'underline', 'lists', 'links']);
+
+  let filesAllowedTypes = $state(['pdf', 'docx', 'xlsx']);
+  let filesMaxSize = $state(10);
+  let filesMaxCount = $state(5);
+
+  let galleryStyle = $state<'carousel' | 'grid' | 'masonry'>('carousel');
+  let galleryAllowImages = $state(true);
+  let galleryAllowVideos = $state(true);
+  let galleryMaxItems = $state(10);
+
+  let multiDateFields = $state([
+    { key: 'submitted', label: 'Data złożenia', required: false }
+  ]);
+  let multiDateLayout = $state<'horizontal' | 'vertical'>('horizontal');
+
+  let addressDisplayFields = $state(['street', 'number', 'postalCode', 'city']);
+  let addressRequiredFields = $state(['city']);
+  let addressEnableGeocoding = $state(true);
+
+  let linksMaxCount = $state(10);
+
+  let priceCurrency = $state('PLN');
+  let priceFundingSources = $state(['UE', 'Wnioskodawca']);
+  let priceShowPercentages = $state(true);
+  let priceShowTotal = $state(true);
   
   // Check if category field already exists (only one allowed)
-  const hasCategoryField = $derived(template?.fields?.some(f => f.type === 'category') ?? false);
+  const hasCategoryField = $derived(
+    template?.fields?.some(f => f.fieldType === 'category' || f.type === 'category') ?? false
+  );
   const canAddCategoryField = $derived(!hasCategoryField && type === 'category');
   
   function addField(): void {
@@ -103,33 +134,146 @@
   }
 
   function saveNewField(): void {
-    if (newFieldLabel.trim() && template?.fields) {
-      const key = newFieldLabel.toLowerCase().replace(/[^a-z0-9]/g, '_');
-      // Check if trying to add second category field
-      if (newFieldType === 'category' && template.fields.some(f => f.type === 'category')) {
-        return; // Prevent adding multiple category fields
-      }
+    if (!newFieldLabel.trim() || !template?.fields) return;
 
-      const newField: Field = {
-        key,
-        label: newFieldLabel,
-        displayLabel: newFieldLabel,
-        type: newFieldType,
-        required: newFieldRequired,
-        visible: true,
-        protected: false,
-        adminVisible: true,
-        ...(newFieldType === 'category' && { tagConfig: { maxMinorTags: 3 } }),
-        ...(newFieldType === 'tags' && { tagConfig: { maxMinorTags: 0, allowMultiple } })
-      };
-      const updatedTemplate: Template = {
-        ...template,
-        fields: [...template.fields, newField]
-      };
-      onUpdate(updatedTemplate);
+    const fieldId = `field_${Date.now()}`;
+    const fieldName = newFieldLabel.toLowerCase().replace(/[^a-z0-9]/g, '_');
 
-      addingNewField = false;
+    // Check if trying to add second category field
+    if (newFieldType === 'category' && template.fields.some(f => f.fieldType === 'category' || f.type === 'category')) {
+      return;
     }
+
+    let config: any = undefined;
+
+    switch (newFieldType) {
+      case 'richtext':
+        config = {
+          maxLength: richTextMaxLength,
+          allowedFormatting: richTextFormatting
+        } as RichTextConfig;
+        break;
+
+      case 'files':
+        config = {
+          allowedTypes: filesAllowedTypes,
+          maxFileSize: filesMaxSize * 1024 * 1024, // Convert MB to bytes
+          maxFiles: filesMaxCount
+        } as FilesConfig;
+        break;
+
+      case 'gallery':
+        config = {
+          displayStyle: galleryStyle,
+          allowImages: galleryAllowImages,
+          allowVideos: galleryAllowVideos,
+          maxItems: galleryMaxItems
+        } as GalleryConfig;
+        break;
+
+      case 'multidate':
+        config = {
+          dateFields: multiDateFields,
+          layout: multiDateLayout
+        } as MultiDateConfig;
+        break;
+
+      case 'address':
+        config = {
+          displayFields: addressDisplayFields,
+          requiredFields: addressRequiredFields,
+          enableGeocoding: addressEnableGeocoding
+        } as AddressConfig;
+        break;
+
+      case 'links':
+        config = {
+          maxLinks: linksMaxCount
+        } as LinksConfig;
+        break;
+
+      case 'price':
+        config = {
+          currency: priceCurrency,
+          defaultFundingSources: priceFundingSources,
+          showPercentages: priceShowPercentages,
+          showTotal: priceShowTotal
+        } as PriceConfig;
+        break;
+
+      case 'tags':
+      case 'category':
+        // Tags and category use existing tag system
+        break;
+    }
+
+    const newField: Field = {
+      id: fieldId,
+      fieldType: newFieldType,
+      fieldName: fieldName,
+      label: newFieldLabel,
+      required: newFieldRequired,
+      order: template.fields.length,
+      config: config,
+      // Legacy compatibility
+      key: fieldName,
+      displayLabel: newFieldLabel,
+      type: newFieldType as any,
+      visible: true,
+      protected: false,
+      adminVisible: true
+    };
+
+    const updatedTemplate: Template = {
+      ...template,
+      version: 2,
+      fields: [...template.fields, newField]
+    };
+
+    onUpdate(updatedTemplate);
+    addingNewField = false;
+
+    // Reset config values to defaults
+    resetConfigDefaults();
+  }
+
+  function resetConfigDefaults(): void {
+    richTextMaxLength = 5000;
+    richTextFormatting = ['bold', 'italic', 'underline', 'lists', 'links'];
+    filesAllowedTypes = ['pdf', 'docx', 'xlsx'];
+    filesMaxSize = 10;
+    filesMaxCount = 5;
+    galleryStyle = 'carousel';
+    galleryAllowImages = true;
+    galleryAllowVideos = true;
+    galleryMaxItems = 10;
+    multiDateFields = [{ key: 'submitted', label: 'Data złożenia', required: false }];
+    multiDateLayout = 'horizontal';
+    addressDisplayFields = ['street', 'number', 'postalCode', 'city'];
+    addressRequiredFields = ['city'];
+    addressEnableGeocoding = true;
+    linksMaxCount = 10;
+    priceCurrency = 'PLN';
+    priceFundingSources = ['UE', 'Wnioskodawca'];
+    priceShowPercentages = true;
+    priceShowTotal = true;
+  }
+
+  // Helper functions for dynamic arrays
+  function addDateField(): void {
+    multiDateFields = [...multiDateFields, { key: '', label: '', required: false }];
+  }
+
+  function removeDateField(index: number): void {
+    multiDateFields = multiDateFields.filter((_, i) => i !== index);
+  }
+
+  function addFundingSource(): void {
+    priceFundingSources = [...priceFundingSources, ''];
+  }
+
+  function removeFundingSource(index: number): void {
+    priceFundingSources = priceFundingSources.filter((_, i) => i !== index);
   }
 
   function cancelNewField(): void {
@@ -139,8 +283,8 @@
   function removeField(index: number): void {
     const field = template.fields[index];
 
-    // Don't allow removal of protected fields or mandatory fields (title, coordinates)
-    if (field.protected || field.key === 'title' || field.key === 'coordinates') {
+    // Don't allow removal of protected fields
+    if (field.protected || field.key === 'title') {
       return;
     }
 
@@ -154,8 +298,8 @@
   function toggleRequired(index: number): void {
     const field = template.fields[index];
 
-    // Don't allow changing required state of protected fields or mandatory fields
-    if (field.protected || field.key === 'title' || field.key === 'coordinates') {
+    // Don't allow changing required state of protected fields
+    if (field.protected || field.key === 'title') {
       return;
     }
 
@@ -169,7 +313,7 @@
   }
 
   function isFieldMandatory(field: Field): boolean {
-    return field.protected || field.key === 'title' || field.key === 'coordinates';
+    return field.protected || field.key === 'title' || field.key === 'location';
   }
   
   function toggleVisibility(index: number): void {
@@ -318,8 +462,21 @@
     return field.key !== 'title' && field.key !== 'name';
   }
 
-  function getFieldTypeDisplayName(fieldType: Field['type']): string {
-    const typeNames: Record<Field['type'], string> = {
+  function getFieldTypeDisplayName(fieldType: string): string {
+    const typeNames: Record<string, string> = {
+      // New field types
+      'title': 'tytuł',
+      'location': 'lokalizacja',
+      'richtext': 'tekst sformatowany',
+      'files': 'pliki',
+      'gallery': 'galeria',
+      'multidate': 'daty',
+      'address': 'adres',
+      'links': 'linki',
+      'tags': 'tagi',
+      'price': 'cena',
+      'category': 'kategoria',
+      // Legacy field types
       'text': 'tekst',
       'textarea': 'długi tekst',
       'number': 'liczba',
@@ -331,12 +488,18 @@
       'select': 'lista',
       'image': 'obraz',
       'youtube': 'youtube',
-      'address': 'adres',
-      'checkbox': 'tak/nie',
-      'category': 'kategoria',
-      'tags': 'tagi'
+      'checkbox': 'tak/nie'
     };
     return typeNames[fieldType] || fieldType;
+  }
+
+  function getFieldDisplayType(field: Field): string {
+    if (field.key === 'location' || field.fieldName === 'location') {
+      return 'lokalizacja';
+    }
+    // Try new fieldType first, fall back to legacy type
+    const typeToUse = field.fieldType || field.type;
+    return getFieldTypeDisplayName(typeToUse as string);
   }
 </script>
 
@@ -385,7 +548,7 @@
             </div>
 
             <div class="field-type">
-              <span class="field-type-label">{getFieldTypeDisplayName(field.type)}</span>
+              <span class="field-type-label">{getFieldDisplayType(field)}</span>
             </div>
 
             <div class="field-actions">
@@ -460,26 +623,193 @@
 
             <div class="field-type">
               <select bind:value={newFieldType} class="field-type-select">
-                <option value="text">tekst</option>
-                <option value="textarea">długi tekst</option>
-                <option value="number">liczba</option>
-                <option value="currency">kwota</option>
-                <option value="percentage">procent</option>
-                <option value="email">email</option>
-                <option value="url">adres www</option>
-                <option value="date">data</option>
-                <option value="select">lista</option>
-                <option value="image">obraz</option>
-                <option value="youtube">youtube</option>
+                <option value="richtext">tekst sformatowany</option>
+                <option value="files">pliki</option>
+                <option value="gallery">galeria</option>
+                <option value="multidate">daty</option>
                 <option value="address">adres</option>
-                <option value="checkbox">tak/nie</option>
+                <option value="links">linki</option>
+                <option value="price">cena</option>
                 <option value="category" disabled={hasCategoryField}>kategoria {hasCategoryField ? '(już istnieje)' : ''}</option>
                 <option value="tags">tagi</option>
               </select>
             </div>
 
             <!-- Field configuration options -->
-            {#if newFieldType === 'tags'}
+            {#if newFieldType === 'richtext'}
+              <div class="field-config">
+                <label class="config-label">
+                  Maksymalna długość:
+                  <input type="number" bind:value={richTextMaxLength} min="100" step="100" class="config-input" />
+                </label>
+              </div>
+            {:else if newFieldType === 'files'}
+              <div class="field-config">
+                <div class="config-section">
+                  <label class="config-label">Dozwolone typy plików:</label>
+                  <div class="checkbox-grid">
+                    {#each ['pdf', 'docx', 'xlsx', 'doc', 'xls', 'txt', 'rtf', 'odt', 'ods'] as fileType}
+                      <label class="checkbox-label">
+                        <input type="checkbox" value={fileType} bind:group={filesAllowedTypes} />
+                        {fileType.toUpperCase()}
+                      </label>
+                    {/each}
+                  </div>
+                </div>
+                <label class="config-label">
+                  Max rozmiar (MB):
+                  <input type="number" bind:value={filesMaxSize} min="1" max="100" class="config-input" />
+                </label>
+                <label class="config-label">
+                  Max plików:
+                  <input type="number" bind:value={filesMaxCount} min="1" max="20" class="config-input" />
+                </label>
+              </div>
+            {:else if newFieldType === 'gallery'}
+              <div class="field-config">
+                <label class="config-label">
+                  Styl wyświetlania:
+                  <select bind:value={galleryStyle} class="config-select">
+                    <option value="carousel">Karuzela</option>
+                    <option value="grid">Siatka</option>
+                    <option value="masonry">Masonry</option>
+                  </select>
+                </label>
+                <label class="config-label">
+                  <input type="checkbox" bind:checked={galleryAllowImages} />
+                  Zezwól na obrazy
+                </label>
+                <label class="config-label">
+                  <input type="checkbox" bind:checked={galleryAllowVideos} />
+                  Zezwól na filmy (YouTube/Vimeo)
+                </label>
+                <label class="config-label">
+                  Max elementów:
+                  <input type="number" bind:value={galleryMaxItems} min="1" max="50" class="config-input" />
+                </label>
+              </div>
+            {:else if newFieldType === 'multidate'}
+              <div class="field-config">
+                <div class="config-section">
+                  <label class="config-label">Pola dat:</label>
+                  {#each multiDateFields as dateField, i}
+                    <div class="date-field-row">
+                      <input
+                        type="text"
+                        bind:value={dateField.label}
+                        placeholder="Etykieta (np. Data złożenia)"
+                        class="config-input"
+                      />
+                      <input
+                        type="text"
+                        bind:value={dateField.key}
+                        placeholder="Klucz (np. submitted)"
+                        class="config-input"
+                      />
+                      <label class="checkbox-label">
+                        <input type="checkbox" bind:checked={dateField.required} />
+                        Wymagane
+                      </label>
+                      {#if multiDateFields.length > 1}
+                        <button
+                          type="button"
+                          onclick={() => removeDateField(i)}
+                          class="remove-btn"
+                        >
+                          ✕
+                        </button>
+                      {/if}
+                    </div>
+                  {/each}
+                  <button type="button" onclick={addDateField} class="add-btn">
+                    + Dodaj pole daty
+                  </button>
+                </div>
+                <label class="config-label">
+                  Układ:
+                  <select bind:value={multiDateLayout} class="config-select">
+                    <option value="horizontal">Poziomy</option>
+                    <option value="vertical">Pionowy</option>
+                  </select>
+                </label>
+              </div>
+            {:else if newFieldType === 'address'}
+              <div class="field-config">
+                <div class="config-section">
+                  <label class="config-label">Wyświetlane pola:</label>
+                  <div class="checkbox-grid">
+                    {#each ['street', 'number', 'postalCode', 'city', 'gmina'] as addrField}
+                      <label class="checkbox-label">
+                        <input type="checkbox" value={addrField} bind:group={addressDisplayFields} />
+                        {addrField}
+                      </label>
+                    {/each}
+                  </div>
+                </div>
+                <div class="config-section">
+                  <label class="config-label">Wymagane pola:</label>
+                  <div class="checkbox-grid">
+                    {#each addressDisplayFields as addrField}
+                      <label class="checkbox-label">
+                        <input type="checkbox" value={addrField} bind:group={addressRequiredFields} />
+                        {addrField}
+                      </label>
+                    {/each}
+                  </div>
+                </div>
+                <label class="config-label">
+                  <input type="checkbox" bind:checked={addressEnableGeocoding} />
+                  Włącz synchronizację z lokalizacją
+                </label>
+              </div>
+            {:else if newFieldType === 'links'}
+              <div class="field-config">
+                <label class="config-label">
+                  Max liczba linków:
+                  <input type="number" bind:value={linksMaxCount} min="1" max="20" class="config-input" />
+                </label>
+              </div>
+            {:else if newFieldType === 'price'}
+              <div class="field-config">
+                <label class="config-label">
+                  Waluta:
+                  <input type="text" bind:value={priceCurrency} class="config-input" placeholder="PLN" />
+                </label>
+                <div class="config-section">
+                  <label class="config-label">Domyślne źródła finansowania:</label>
+                  {#each priceFundingSources as source, i}
+                    <div class="funding-source-row">
+                      <input
+                        type="text"
+                        bind:value={priceFundingSources[i]}
+                        placeholder="Źródło (np. UE)"
+                        class="config-input"
+                      />
+                      {#if priceFundingSources.length > 1}
+                        <button
+                          type="button"
+                          onclick={() => removeFundingSource(i)}
+                          class="remove-btn"
+                        >
+                          ✕
+                        </button>
+                      {/if}
+                    </div>
+                  {/each}
+                  <button type="button" onclick={addFundingSource} class="add-btn">
+                    + Dodaj źródło
+                  </button>
+                </div>
+                <label class="config-label">
+                  <input type="checkbox" bind:checked={priceShowPercentages} />
+                  Pokazuj procenty
+                </label>
+                <label class="config-label">
+                  <input type="checkbox" bind:checked={priceShowTotal} />
+                  Pokazuj sumę
+                </label>
+              </div>
+            {:else if newFieldType === 'tags'}
               <div class="field-config">
                 <label class="config-label">
                   <input
@@ -504,7 +834,7 @@
                 class="icon-button save-button"
                 title="Zapisz pole"
               >
-                ✓
+                <img src="/icons/Checkmark.svg" alt="Save" style="width: 16px; height: 16px;" />
               </button>
               <button
                 onclick={cancelNewField}
@@ -534,7 +864,7 @@
 
 
   <!-- Tag Manager - show if there's a category or tags field -->
-  {#if template?.fields?.some(f => f.type === 'category' || f.type === 'tags')}
+  {#if template?.fields?.some(f => f.fieldType === 'category' || f.fieldType === 'tags' || f.type === 'category' || f.type === 'tags')}
     <div class="tag-manager-section">
       <TagManager template={template} onUpdate={onUpdate} />
     </div>
@@ -807,6 +1137,99 @@
     margin-top: 16px;
   }
 
+  /* Configuration panel styles */
+  .config-section {
+    margin-bottom: 12px;
+  }
+
+  .config-input {
+    padding: 6px 8px;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    font-size: 14px;
+    font-family: inherit;
+    width: 100%;
+    box-sizing: border-box;
+  }
+
+  .config-input:focus {
+    outline: none;
+    border-color: #007acc;
+  }
+
+  .config-select {
+    padding: 6px 8px;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    font-size: 14px;
+    font-family: inherit;
+    background: white;
+  }
+
+  .config-select:focus {
+    outline: none;
+    border-color: #007acc;
+  }
+
+  .checkbox-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
+    gap: 8px;
+    margin-top: 8px;
+  }
+
+  .checkbox-label {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 13px;
+    color: #333;
+    cursor: pointer;
+  }
+
+  .checkbox-label input[type="checkbox"] {
+    cursor: pointer;
+  }
+
+  .date-field-row,
+  .funding-source-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr auto auto;
+    gap: 8px;
+    margin-bottom: 8px;
+    align-items: center;
+  }
+
+  .add-btn {
+    background: #007acc;
+    color: white;
+    border: none;
+    padding: 6px 12px;
+    border-radius: 4px;
+    font-size: 13px;
+    cursor: pointer;
+    margin-top: 8px;
+  }
+
+  .add-btn:hover {
+    background: #005a9e;
+  }
+
+  .remove-btn {
+    background: #dc2626;
+    color: white;
+    border: none;
+    padding: 6px 10px;
+    border-radius: 4px;
+    font-size: 13px;
+    cursor: pointer;
+    line-height: 1;
+  }
+
+  .remove-btn:hover {
+    background: #b91c1c;
+  }
+
   /* Mobile responsive */
   @media (max-width: 640px) {
     .field-row {
@@ -821,6 +1244,15 @@
 
     .field-type {
       margin-left: 0;
+    }
+
+    .date-field-row,
+    .funding-source-row {
+      grid-template-columns: 1fr;
+    }
+
+    .checkbox-grid {
+      grid-template-columns: repeat(auto-fill, minmax(80px, 1fr));
     }
   }
 </style>

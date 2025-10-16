@@ -1,43 +1,43 @@
 import { connectToDatabase } from './database.js';
-import type { Template, SavedObject, ProjectData, Tag, CategoryFieldData } from '../types.js';
+import type { Template, SavedObject, ProjectData, Tag, CategoryFieldData, GeoJSON, Field } from '../types.js';
 
-const PROTECTED_FIELDS = [
+// Version 2 Protected Fields - Always present
+const PROTECTED_FIELDS: Field[] = [
   {
-    key: 'title',
-    label: 'Title',
-    displayLabel: 'Tytuł',
-    type: 'text' as const,
+    id: 'field_title',
+    fieldType: 'title',
+    fieldName: 'title',
+    label: 'Tytuł',
     required: true,
+    order: 0,
+    // Legacy compatibility
+    key: 'title',
+    displayLabel: 'Tytuł',
+    type: 'text',
     visible: true,
     protected: true,
     adminVisible: true
   },
   {
-    key: 'coordinates',
-    label: 'Coordinates (lat, lng)',
-    displayLabel: 'Współrzędne (szer, dł)',
-    type: 'text' as const,
-    required: false,
+    id: 'field_location',
+    fieldType: 'location',
+    fieldName: 'location',
+    label: 'Lokalizacja',
+    required: true,
+    order: 1,
+    // Legacy compatibility
+    key: 'location',
+    displayLabel: 'Lokalizacja',
+    type: 'text',
     visible: true,
     protected: true,
     adminVisible: true
   }
 ];
 
-const DEFAULT_TEMPLATE: Template = { 
-  fields: [
-    ...PROTECTED_FIELDS,
-    {
-      key: 'address',
-      label: 'Address',
-      displayLabel: 'Adres',
-      type: 'text',
-      required: false,
-      visible: true,
-      protected: false,
-      adminVisible: true
-    }
-  ],
+const DEFAULT_TEMPLATE: Template = {
+  version: 2, // New system version
+  fields: [...PROTECTED_FIELDS],
   tags: []
 };
 
@@ -86,30 +86,67 @@ export async function getTemplate(): Promise<Template> {
 
 function ensureProtectedFields(template: Template): Template {
   const existingFields = template.fields || [];
-  const protectedFieldKeys = PROTECTED_FIELDS.map(f => f.key);
-  
-  // Find existing protected fields and preserve their settings (except protected status)
-  const existingProtected = existingFields.filter(f => protectedFieldKeys.includes(f.key));
-  const nonProtected = existingFields.filter(f => !protectedFieldKeys.includes(f.key));
-  
-  // Merge existing protected field settings with defaults
-  const mergedProtected = PROTECTED_FIELDS.map(defaultField => {
-    const existing = existingProtected.find(f => f.key === defaultField.key);
-    if (existing) {
-      return {
-        ...defaultField,
-        visible: existing.visible,
-        adminVisible: existing.adminVisible,
-        required: existing.required
-      };
-    }
-    return defaultField;
-  });
-  
-  return {
-    fields: [...mergedProtected, ...nonProtected],
-    tags: template.tags || []
-  };
+
+  // Check if this is a version 2 schema
+  const isV2 = template.version === 2;
+
+  if (isV2) {
+    // For version 2, just ensure title and location exist with new structure
+    const protectedFieldNames = PROTECTED_FIELDS.map(f => f.fieldName);
+    const existingProtected = existingFields.filter(f =>
+      f.fieldName && protectedFieldNames.includes(f.fieldName)
+    );
+    const nonProtected = existingFields.filter(f =>
+      !f.fieldName || !protectedFieldNames.includes(f.fieldName)
+    );
+
+    // Merge with defaults
+    const mergedProtected = PROTECTED_FIELDS.map(defaultField => {
+      const existing = existingProtected.find(f => f.fieldName === defaultField.fieldName);
+      if (existing) {
+        return {
+          ...defaultField,
+          label: existing.label,
+          required: existing.required
+        };
+      }
+      return defaultField;
+    });
+
+    return {
+      version: 2,
+      fields: [...mergedProtected, ...nonProtected],
+      tags: template.tags || []
+    };
+  } else {
+    // Legacy schema (version 1) - use key-based lookup
+    const protectedFieldKeys = PROTECTED_FIELDS.map(f => f.key);
+    const existingProtected = existingFields.filter(f =>
+      f.key && protectedFieldKeys.includes(f.key)
+    );
+    const nonProtected = existingFields.filter(f =>
+      !f.key || !protectedFieldKeys.includes(f.key)
+    );
+
+    const mergedProtected = PROTECTED_FIELDS.map(defaultField => {
+      const existing = existingProtected.find(f => f.key === defaultField.key);
+      if (existing) {
+        return {
+          ...defaultField,
+          visible: existing.visible,
+          adminVisible: existing.adminVisible,
+          required: existing.required
+        };
+      }
+      return defaultField;
+    });
+
+    return {
+      version: template.version,
+      fields: [...mergedProtected, ...nonProtected],
+      tags: template.tags || []
+    };
+  }
 }
 
 export async function updateTemplate(template: Template): Promise<void> {
@@ -149,6 +186,7 @@ export async function getObjects(): Promise<SavedObject[]> {
     const mapped = results.map(doc => {
       const obj: SavedObject = {
         id: doc._id.toString(),
+        location: doc.location || { type: 'Point', coordinates: [0, 0] }, // Fallback for legacy data
         data: doc.data
       };
 
@@ -167,23 +205,54 @@ export async function getObjects(): Promise<SavedObject[]> {
   }
 }
 
-export async function createObject(data: ProjectData, hasIncompleteData?: boolean): Promise<SavedObject> {
+export async function getObjectById(objectId: string): Promise<SavedObject | null> {
   try {
     const db = await connectToDatabase();
     const collection = db.collection('objects');
-    
-    const objectData: any = { data };
+
+    const { ObjectId } = await import('mongodb');
+
+    const doc = await collection.findOne({ _id: new ObjectId(objectId) });
+
+    if (!doc) {
+      return null;
+    }
+
+    const obj: SavedObject = {
+      id: doc._id.toString(),
+      location: doc.location || { type: 'Point', coordinates: [0, 0] },
+      data: doc.data
+    };
+
+    if (doc.hasIncompleteData) {
+      obj.hasIncompleteData = doc.hasIncompleteData;
+    }
+
+    return obj;
+  } catch (error) {
+    console.error('Error getting object by ID:', error);
+    return null;
+  }
+}
+
+export async function createObject(location: GeoJSON.Point, data: ProjectData, hasIncompleteData?: boolean): Promise<SavedObject> {
+  try {
+    const db = await connectToDatabase();
+    const collection = db.collection('objects');
+
+    const objectData: any = { location, data };
     if (hasIncompleteData) {
       objectData.hasIncompleteData = hasIncompleteData;
     }
-    
+
     const result = await collection.insertOne(objectData);
-    
+
     const savedObject: SavedObject = {
       id: result.insertedId.toString(),
+      location,
       data
     };
-    
+
     if (hasIncompleteData) {
       savedObject.hasIncompleteData = hasIncompleteData;
     }

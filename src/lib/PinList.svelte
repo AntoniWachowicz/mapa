@@ -26,19 +26,9 @@
   const availableTags = $derived((template.tags || []).filter(t => t.visible).sort((a, b) => a.order - b.order));
   
   function handlePinClick(obj: SavedObject): void {
-    if (onFocus) {
-      const coordField = template.fields.find(f => f.key === 'coordinates');
-      if (coordField && obj.data[coordField.key]) {
-        const coordString = obj.data[coordField.key] as string;
-        const parts = coordString.split(',').map(s => s.trim());
-        if (parts.length === 2) {
-          const lat = parseFloat(parts[0]);
-          const lng = parseFloat(parts[1]);
-          if (!isNaN(lat) && !isNaN(lng)) {
-            onFocus({lat, lng});
-          }
-        }
-      }
+    if (onFocus && obj.location && obj.location.coordinates) {
+      const [lng, lat] = obj.location.coordinates;
+      onFocus({lat, lng});
     }
   }
   
@@ -106,7 +96,9 @@
         <div class="pin-card" class:incomplete={obj.hasIncompleteData}>
           <div class="pin-header">
             {#if obj.hasIncompleteData}
-              <span class="incomplete-badge" title="Pinezka ma niekompletne dane - wymaga uzupełnienia">⚠️</span>
+              <span class="incomplete-badge" title="Pinezka ma niekompletne dane - wymaga uzupełnienia">
+                <img src="/icons/Triangle.svg" alt="Warning" style="width: 16px; height: 16px; filter: invert(65%) sepia(100%) saturate(3000%) hue-rotate(5deg);" />
+              </span>
             {/if}
             <h5 class="pin-title">{obj.data.title || 'Bez tytułu'}</h5>
             {#if onFocus}
@@ -188,40 +180,52 @@
             {/if}
           {/each}
           
-          <!-- Display key fields -->
+          <!-- Display key fields including location -->
           <div class="pin-details">
             {#each template.fields.filter(f => f.visible && f.key !== 'title' && f.type !== 'category' && f.type !== 'tags') as field}
-              {@const value = obj.data[field.key]}
-              {#if value && value !== ''}
-                <div class="pin-field" class:media-field={field.type === 'image' || field.type === 'youtube'}>
+              {#if field.key === 'location'}
+                <!-- Special display for location field (GeoJSON) -->
+                <div class="pin-field">
                   <span class="field-label">{field.displayLabel || field.label}:</span>
-                  {#if field.type === 'url'}
-                    <a href={String(value)} target="_blank" class="field-link">{value}</a>
-                  {:else if field.type === 'email'}
-                    <a href="mailto:{String(value)}" class="field-link">{value}</a>
-                  {:else if field.type === 'image'}
-                    <div class="image-display">
-                      <img src={String(value)} alt={field.displayLabel || field.label} loading="lazy" />
-                    </div>
-                  {:else if field.type === 'youtube'}
-                    {@const videoId = getYouTubeVideoId(String(value))}
-                    {#if videoId}
-                      <div class="youtube-display">
-                        <iframe
-                          src="https://www.youtube.com/embed/{videoId}"
-                          title="YouTube video"
-                          frameborder="0"
-                          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-                          allowfullscreen
-                        ></iframe>
-                      </div>
-                    {:else}
-                      <a href={String(value)} target="_blank" class="field-link">{value}</a>
-                    {/if}
+                  {#if obj.location && obj.location.coordinates}
+                    <span class="field-value location-value">{obj.location.coordinates[1].toFixed(6)}, {obj.location.coordinates[0].toFixed(6)}</span>
                   {:else}
-                    <span class="field-value">{formatFieldValue(field, value)}</span>
+                    <span class="field-value no-location">Brak lokalizacji</span>
                   {/if}
                 </div>
+              {:else}
+                {@const value = obj.data[field.key]}
+                {#if value && value !== ''}
+                  <div class="pin-field" class:media-field={field.type === 'image' || field.type === 'youtube'}>
+                    <span class="field-label">{field.displayLabel || field.label}:</span>
+                    {#if field.type === 'url'}
+                      <a href={String(value)} target="_blank" class="field-link">{value}</a>
+                    {:else if field.type === 'email'}
+                      <a href="mailto:{String(value)}" class="field-link">{value}</a>
+                    {:else if field.type === 'image'}
+                      <div class="image-display">
+                        <img src={String(value)} alt={field.displayLabel || field.label} loading="lazy" />
+                      </div>
+                    {:else if field.type === 'youtube'}
+                      {@const videoId = getYouTubeVideoId(String(value))}
+                      {#if videoId}
+                        <div class="youtube-display">
+                          <iframe
+                            src="https://www.youtube.com/embed/{videoId}"
+                            title="YouTube video"
+                            frameborder="0"
+                            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                            allowfullscreen
+                          ></iframe>
+                        </div>
+                      {:else}
+                        <a href={String(value)} target="_blank" class="field-link">{value}</a>
+                      {/if}
+                    {:else}
+                      <span class="field-value">{formatFieldValue(field, value)}</span>
+                    {/if}
+                  </div>
+                {/if}
               {/if}
             {/each}
           </div>
@@ -412,6 +416,20 @@
     font-size: 13px;
     flex: 1;
     word-break: break-word;
+  }
+
+  .location-value {
+    font-family: monospace;
+    background: #ecfdf5;
+    padding: 2px 6px;
+    border-radius: 4px;
+    color: #065f46;
+    font-size: 12px;
+  }
+
+  .no-location {
+    color: #9ca3af;
+    font-style: italic;
   }
 
   .field-link {

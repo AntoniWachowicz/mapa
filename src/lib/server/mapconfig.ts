@@ -12,6 +12,7 @@ const DEFAULT_MAP_CONFIG: MapConfig = {
   defaultZoom: 12,    // Starting zoom level
   maxCustomZoom: 14,  // Above this zoom = show OSM tiles
   customImageUrl: undefined,
+  overlayEnabled: true, // Default to showing overlay
   boundaryType: 'rectangle'
 };
 
@@ -29,11 +30,16 @@ export async function getMapConfig(): Promise<MapConfig> {
         return {
           ...config,
           customImageUrl: '/uploads/tiles/demo/{z}/{x}/{y}.png',
-          maxCustomZoom: 14 // Demo tiles go up to zoom 14
+          maxCustomZoom: 14, // Demo tiles go up to zoom 14
+          overlayEnabled: config.overlayEnabled ?? true // Preserve overlay setting
         };
       }
 
-      return config;
+      // Ensure overlayEnabled has a default value
+      return {
+        ...config,
+        overlayEnabled: config.overlayEnabled ?? true
+      };
     }
 
     return DEFAULT_MAP_CONFIG;
