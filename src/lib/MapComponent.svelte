@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
-  import type { SavedObject, MapConfig, MapObject, GeoJSON } from './types.js';
+  import type { SavedObject, MapConfig, MapObject, GeoJSON, Tag, CategoryFieldData } from './types.js';
   
   interface Props {
     objects: MapObject[];
@@ -12,9 +12,10 @@
     selectedObjectId?: string | null; // NEW: Track selected pin
     onPinPositionUpdate?: (x: number, y: number) => void; // NEW: Pin position callback
     panToPinCallback?: (() => void) | null; // NEW: Callback to trigger pan after panel renders
+    tags?: Tag[]; // NEW: Pass tags to get category colors
   }
 
-  let { objects, onMapClick, selectedCoordinates, focusCoordinates = null, mapConfig, onPinClick, selectedObjectId = null, onPinPositionUpdate, panToPinCallback = $bindable(null) }: Props = $props();
+  let { objects, onMapClick, selectedCoordinates, focusCoordinates = null, mapConfig, onPinClick, selectedObjectId = null, onPinPositionUpdate, panToPinCallback = $bindable(null), tags = [] }: Props = $props();
   
   let mapContainer: HTMLDivElement;
   let map: any;
@@ -45,6 +46,28 @@
       map.removeLayer(boundaryPolygon);
     }
   });
+
+  // Get pin color based on category
+  function getPinColor(obj: MapObject): string {
+    // Look for category field in object data
+    const categoryField = Object.values(obj.data).find(
+      (value): value is CategoryFieldData =>
+        typeof value === 'object' &&
+        value !== null &&
+        'majorTag' in value &&
+        typeof (value as any).majorTag === 'string'
+    ) as CategoryFieldData | undefined;
+
+    if (categoryField?.majorTag && tags) {
+      const tag = tags.find(t => t.id === categoryField.majorTag);
+      if (tag) {
+        return tag.color;
+      }
+    }
+
+    // Default color if no category or tag found
+    return '#FF0000';
+  }
 
   // Check if coordinates are within the configured bounds
   function isWithinBounds(lat: number, lng: number): boolean {
@@ -421,12 +444,22 @@
         // Check if this pin is selected
         const isSelected = selectedObjectId === obj.id;
 
+        // Get pin color from category
+        const pinColor = getPinColor(obj);
+
+        // Create SVG with dynamic color
+        const pinSvg = `
+          <svg width="23" height="33" viewBox="0 0 23 33" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M13.134 23.6579C13.134 22.6631 13.8739 21.8397 14.8213 21.5361C16.3387 21.05 17.766 20.2047 18.9702 19.0005C23.0095 14.9613 23.0095 8.4124 18.9702 4.37317C14.931 0.333943 8.38212 0.333943 4.3429 4.37317C0.30367 8.4124 0.30367 14.9613 4.3429 19.0005C5.54714 20.2047 6.97446 21.05 8.49184 21.5361C9.4392 21.8397 10.1791 22.6631 10.1791 23.6579V30.4934C10.1791 31.3095 10.8405 31.9708 11.6566 31.9708C12.4726 31.9708 13.134 31.3095 13.134 30.4934V23.6579Z" fill="${isSelected ? '#00FF00' : pinColor}" stroke="black" stroke-linecap="round"/>
+          </svg>
+        `;
+
         const marker = L.marker([lat, lng], {
           icon: L.divIcon({
             className: isSelected ? 'object-marker selected-pin' : 'object-marker',
-            html: `<img src="/icons/Pin.svg" style="width: 25px; height: 25px; ${isSelected ? 'filter: hue-rotate(120deg);' : ''}">`,
-            iconSize: [25, 25],
-            iconAnchor: [12, 25]
+            html: pinSvg,
+            iconSize: [23, 33],
+            iconAnchor: [11, 33]
           })
         })
         .addTo(map);
@@ -442,17 +475,20 @@
 
             // Create pan function that will be called after panel renders
             const doPan = () => {
-              // Calculate offset to account for detail panel (340px width + 20px margin + 20px extra)
-              const detailPanelWidth = 340 + 40; // panel width + margins
-              const offsetX = detailPanelWidth / 2; // Offset to shift center to the right
+              // Get map container dimensions
+              const mapContainerRect = mapContainer.getBoundingClientRect();
+              const mapCenterX = mapContainerRect.width / 2;
+              const mapCenterY = mapContainerRect.height / 2;
 
-              // Get the target point and offset it
-              const targetPoint = map.project([lat, lng], map.getZoom());
-              targetPoint.x += offsetX;
-              const targetLatLng = map.unproject(targetPoint, map.getZoom());
+              // Convert pin's lat/lng to container pixel coordinates
+              const pinPoint = map.latLngToContainerPoint([lat, lng]);
 
-              // Pan to the offset position (no zoom, just pan)
-              map.panTo(targetLatLng, { animate: true, duration: 0.3 });
+              // Calculate offset needed to center the pin in the map container
+              const offsetX = mapCenterX - pinPoint.x;
+              const offsetY = mapCenterY - pinPoint.y;
+
+              // Pan by the offset
+              map.panBy([-offsetX, -offsetY], { animate: true, duration: 0.3 });
             };
 
             // Set the callback so parent can trigger it after panel renders
@@ -491,13 +527,19 @@
         map.removeLayer(selectedMarker);
       }
 
-      // Create new marker at selected coordinates
+      // Create new marker at selected coordinates (green for new placement)
+      const selectedPinSvg = `
+        <svg width="23" height="33" viewBox="0 0 23 33" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <path d="M13.134 23.6579C13.134 22.6631 13.8739 21.8397 14.8213 21.5361C16.3387 21.05 17.766 20.2047 18.9702 19.0005C23.0095 14.9613 23.0095 8.4124 18.9702 4.37317C14.931 0.333943 8.38212 0.333943 4.3429 4.37317C0.30367 8.4124 0.30367 14.9613 4.3429 19.0005C5.54714 20.2047 6.97446 21.05 8.49184 21.5361C9.4392 21.8397 10.1791 22.6631 10.1791 23.6579V30.4934C10.1791 31.3095 10.8405 31.9708 11.6566 31.9708C12.4726 31.9708 13.134 31.3095 13.134 30.4934V23.6579Z" fill="#00FF00" stroke="black" stroke-linecap="round"/>
+        </svg>
+      `;
+
       selectedMarker = L.marker([selectedCoordinates.lat, selectedCoordinates.lng], {
         icon: L.divIcon({
           className: 'selected-marker',
-          html: '<img src="/icons/Pin.svg" style="width: 25px; height: 25px; filter: hue-rotate(120deg);">',
-          iconSize: [25, 25],
-          iconAnchor: [12, 25]
+          html: selectedPinSvg,
+          iconSize: [23, 33],
+          iconAnchor: [11, 33]
         })
       }).addTo(map);
     } else if (selectedMarker) {

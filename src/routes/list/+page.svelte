@@ -14,9 +14,6 @@
 
   const { data }: Props = $props();
 
-  console.log('[LIST PAGE CLIENT] Received objects:', data.objects?.length);
-  console.log('[LIST PAGE CLIENT] Objects data:', data.objects);
-
   let sortField = $state<string>('');
   let sortDirection = $state<'asc' | 'desc'>('asc');
   let filteredObjects = $state<SavedObject[]>(data.objects || []);
@@ -33,6 +30,13 @@
   let editingCell = $state<{objectId: string, fieldKey: string} | null>(null);
   let editingValue = $state<any>(null);
   let originalValue = $state<any>(null);
+
+  // Multi-select state
+  let selectedRows = $state<Set<string>>(new Set());
+  let lastSelectedIndex = $state<number>(-1);
+  let showBulkEditModal = $state(false);
+  let bulkEditField = $state<string>('');
+  let bulkEditValue = $state<any>('');
 
   // Initialize data
   $effect(() => {
@@ -279,6 +283,14 @@
     </svg>`;
   }
 
+  function SyncIcon(): string {
+    return `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <path d="M4 12C4 7.58172 7.58172 4 12 4C14.5264 4 16.7792 5.17107 18.2454 7M20 12C20 16.4183 16.4183 20 12 20C9.47362 20 7.22075 18.8289 5.75463 17" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+      <path d="M14 7H18.2454L18 3" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+      <path d="M10 17H5.75463L6 21" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+    </svg>`;
+  }
+
   // Column resizing functions
   let resizeRAF = $state<number | null>(null);
   let pendingMouseX = $state<number | null>(null);
@@ -425,6 +437,103 @@
     }
   }
 
+  // Multi-select functions
+  function handleRowSelection(objectId: string, index: number, event: MouseEvent) {
+    if (event.shiftKey && lastSelectedIndex !== -1) {
+      // Shift-click: select range
+      const start = Math.min(lastSelectedIndex, index);
+      const end = Math.max(lastSelectedIndex, index);
+      const newSelection = new Set(selectedRows);
+
+      for (let i = start; i <= end; i++) {
+        if (filteredObjects[i]) {
+          newSelection.add(filteredObjects[i].id);
+        }
+      }
+      selectedRows = newSelection;
+    } else {
+      // Normal click: toggle single selection
+      const newSelection = new Set(selectedRows);
+      if (newSelection.has(objectId)) {
+        newSelection.delete(objectId);
+      } else {
+        newSelection.add(objectId);
+      }
+      selectedRows = newSelection;
+      lastSelectedIndex = index;
+    }
+  }
+
+  function toggleSelectAll() {
+    if (selectedRows.size === filteredObjects.length) {
+      selectedRows = new Set();
+    } else {
+      selectedRows = new Set(filteredObjects.map(obj => obj.id));
+    }
+  }
+
+  function openBulkEditModal() {
+    if (selectedRows.size === 0) return;
+    if (!data.template) return;
+
+    // Default to first visible field
+    const firstField = data.template.fields.find(f => f.visible);
+    if (firstField) {
+      bulkEditField = firstField.key;
+    }
+    showBulkEditModal = true;
+  }
+
+  function closeBulkEditModal() {
+    showBulkEditModal = false;
+    bulkEditField = '';
+    bulkEditValue = '';
+  }
+
+  async function applyBulkEdit() {
+    if (!bulkEditField || selectedRows.size === 0) return;
+
+    try {
+      const selectedIds = Array.from(selectedRows);
+
+      // Send bulk update request
+      const response = await fetch('/api/bulk-update', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          objectIds: selectedIds,
+          fieldKey: bulkEditField,
+          value: bulkEditValue
+        })
+      });
+
+      if (response.ok) {
+        // Update local state
+        filteredObjects = filteredObjects.map(obj => {
+          if (selectedIds.includes(obj.id)) {
+            return {
+              ...obj,
+              data: {
+                ...obj.data,
+                [bulkEditField]: bulkEditValue
+              }
+            };
+          }
+          return obj;
+        });
+
+        selectedRows = new Set();
+        closeBulkEditModal();
+        alert(`Zaktualizowano ${selectedIds.length} wierszy`);
+      } else {
+        alert('Błąd podczas aktualizacji');
+      }
+    } catch (error) {
+      console.error('Bulk edit error:', error);
+      alert('Błąd podczas aktualizacji');
+    }
+  }
+
   // Calculate placeholder rows to fill the screen
   function calculatePlaceholderRows(): void {
     if (!tableBodyElement) return;
@@ -463,6 +572,76 @@
     };
   });
 
+  // Sync address with location coordinates
+  async function syncAddressWithLocation(objectId: string) {
+    const obj = filteredObjects.find(o => o.id === objectId);
+    if (!obj || !obj.location || !obj.location.coordinates) {
+      alert('Brak współrzędnych dla tego obiektu');
+      return;
+    }
+
+    const [lng, lat] = obj.location.coordinates;
+
+    try {
+      const response = await fetch('/api/reverse-geocode', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ lat, lng })
+      });
+
+      const result = await response.json();
+
+      if (result.success && result.structuredAddress) {
+        // Find the address field in the template
+        const addressField = data.template?.fields.find(f => f.type === 'address');
+        if (!addressField) {
+          alert('Brak pola adresu w schemacie');
+          return;
+        }
+
+        // Use structured address data with all components
+        const addressValue = {
+          street: result.structuredAddress.street || '',
+          number: result.structuredAddress.number || '',
+          postalCode: result.structuredAddress.postalCode || '',
+          city: result.structuredAddress.city || '',
+          gmina: result.structuredAddress.gmina || ''
+        };
+
+        // Update the address field
+        const updateResponse = await fetch(`/api/objects/${objectId}`, {
+          method: 'PATCH',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            fieldKey: addressField.key,
+            value: addressValue
+          })
+        });
+
+        if (updateResponse.ok) {
+          // Update local state
+          const objIndex = filteredObjects.findIndex(o => o.id === objectId);
+          if (objIndex !== -1) {
+            filteredObjects[objIndex].data[addressField.key] = addressValue;
+            filteredObjects = [...filteredObjects];
+          }
+          alert('Adres został zaktualizowany');
+        } else {
+          alert('Błąd podczas zapisywania adresu');
+        }
+      } else {
+        alert(result.error || 'Nie udało się pobrać adresu');
+      }
+    } catch (error) {
+      console.error('Sync address error:', error);
+      alert('Błąd podczas synchronizacji adresu');
+    }
+  }
+
 </script>
 
 <svelte:head>
@@ -500,12 +679,33 @@
       </button>
     </div>
 
+    <!-- Bulk Edit Toolbar -->
+    {#if selectedRows.size > 0}
+      <div class="bulk-toolbar">
+        <span class="bulk-count">{selectedRows.size} wierszy zaznaczonych</span>
+        <button class="btn btn-bulk" onclick={openBulkEditModal}>
+          Edytuj zaznaczone
+        </button>
+        <button class="btn btn-bulk-clear" onclick={() => selectedRows = new Set()}>
+          Wyczyść zaznaczenie
+        </button>
+      </div>
+    {/if}
+
     <div class="table-container">
       <!-- Sticky Header -->
       <div class="table-header">
         <table class="header-table">
           <thead>
             <tr>
+              <!-- Checkbox column -->
+              <th class="checkbox-column" onclick={toggleSelectAll}>
+                <input
+                  type="checkbox"
+                  checked={selectedRows.size === filteredObjects.length && filteredObjects.length > 0}
+                  onchange={toggleSelectAll}
+                />
+              </th>
               {#each data.template.fields.filter(f => f.visible) as field, index}
                 <th
                   onclick={() => handleSort(field.key)}
@@ -548,8 +748,16 @@
                 </td>
               </tr>
             {:else}
-              {#each filteredObjects as obj}
+              {#each filteredObjects as obj, rowIndex}
                 <tr class:incomplete={obj.hasIncompleteData}>
+                  <!-- Checkbox column -->
+                  <td class="checkbox-column">
+                    <input
+                      type="checkbox"
+                      checked={selectedRows.has(obj.id)}
+                      onchange={(e) => handleRowSelection(obj.id, rowIndex, e)}
+                    />
+                  </td>
                   {#each data.template.fields.filter(f => f.visible) as field}
                     {@const cellId = `${obj.id}-${field.key}`}
                     {@const isExpanded = expandedCells.has(cellId)}
@@ -599,10 +807,10 @@
                                 />
                               </div>
                               <div class="edit-date-row">
-                                <span class="edit-label">Miasto:</span>
+                                <span class="edit-label">Numer:</span>
                                 <input
                                   type="text"
-                                  bind:value={editingValue.city}
+                                  bind:value={editingValue.number}
                                   class="edit-field-input-small"
                                   onkeydown={handleKeydown}
                                 />
@@ -611,7 +819,16 @@
                                 <span class="edit-label">Kod:</span>
                                 <input
                                   type="text"
-                                  bind:value={editingValue.postal}
+                                  bind:value={editingValue.postalCode}
+                                  class="edit-field-input-small"
+                                  onkeydown={handleKeydown}
+                                />
+                              </div>
+                              <div class="edit-date-row">
+                                <span class="edit-label">Miasto:</span>
+                                <input
+                                  type="text"
+                                  bind:value={editingValue.city}
                                   class="edit-field-input-small"
                                   onkeydown={handleKeydown}
                                 />
@@ -757,31 +974,43 @@
                             </div>
                           {:else if field.type === 'address' && typeof fieldValue === 'object' && fieldValue !== null}
                             {@const addressData = fieldValue}
-                            <div class="sub-fields">
-                              {#if addressData.street}
-                                <div class="sub-field-row">
-                                  <span class="sub-label">Ulica:</span>
-                                  <span class="sub-value">{addressData.street}</span>
-                                </div>
-                              {/if}
-                              {#if addressData.city}
-                                <div class="sub-field-row">
-                                  <span class="sub-label">Miasto:</span>
-                                  <span class="sub-value">{addressData.city}</span>
-                                </div>
-                              {/if}
-                              {#if addressData.postal}
-                                <div class="sub-field-row">
-                                  <span class="sub-label">Kod:</span>
-                                  <span class="sub-value">{addressData.postal}</span>
-                                </div>
-                              {/if}
-                              {#if addressData.gmina}
-                                <div class="sub-field-row">
-                                  <span class="sub-label">Gmina:</span>
-                                  <span class="sub-value">{addressData.gmina}</span>
-                                </div>
-                              {/if}
+                            <div class="address-display-container">
+                              <div class="sub-fields">
+                                {#if addressData.street}
+                                  <div class="sub-field-row">
+                                    <span class="sub-label">Ulica:</span>
+                                    <span class="sub-value">{addressData.street}{#if addressData.number} {addressData.number}{/if}</span>
+                                  </div>
+                                {/if}
+                                {#if addressData.postalCode}
+                                  <div class="sub-field-row">
+                                    <span class="sub-label">Kod:</span>
+                                    <span class="sub-value">{addressData.postalCode}</span>
+                                  </div>
+                                {/if}
+                                {#if addressData.city}
+                                  <div class="sub-field-row">
+                                    <span class="sub-label">Miasto:</span>
+                                    <span class="sub-value">{addressData.city}</span>
+                                  </div>
+                                {/if}
+                                {#if addressData.gmina}
+                                  <div class="sub-field-row">
+                                    <span class="sub-label">Gmina:</span>
+                                    <span class="sub-value">{addressData.gmina}</span>
+                                  </div>
+                                {/if}
+                              </div>
+                              <button
+                                class="sync-address-btn"
+                                onclick={(e) => {
+                                  e.stopPropagation();
+                                  syncAddressWithLocation(obj.id);
+                                }}
+                                title="Synchronizuj adres z lokalizacją"
+                              >
+                                {@html SyncIcon()}
+                              </button>
                             </div>
                           {:else if field.type === 'links' && Array.isArray(fieldValue) && fieldValue.length > 0}
                             <div class="sub-fields">
@@ -820,6 +1049,9 @@
               <!-- Placeholder rows to fill screen -->
               {#each Array(placeholderRowCount).fill(null) as _, index}
                 <tr class="placeholder-row" class:even={index % 2 === 0}>
+                  <td class="checkbox-column">
+                    <div class="cell-content placeholder-cell"></div>
+                  </td>
                   {#each data.template.fields.filter(f => f.visible) as field}
                     <td style="width: {columnWidths[field.key] || 200}px;" class:sorted-column={sortField === field.key}>
                       <div class="cell-content placeholder-cell"></div>
@@ -832,6 +1064,66 @@
         </table>
       </div>
     </div>
+
+    <!-- Bulk Edit Modal -->
+    {#if showBulkEditModal}
+      <div class="bulk-modal-overlay" onclick={closeBulkEditModal}>
+        <div class="bulk-modal" onclick={(e) => e.stopPropagation()}>
+          <h2>Edycja zaznaczonych wierszy</h2>
+          <p class="bulk-modal-info">Edytujesz {selectedRows.size} wierszy</p>
+
+          <div class="bulk-modal-form">
+            <div class="form-group">
+              <label for="bulkEditField">Pole do edycji:</label>
+              <select id="bulkEditField" bind:value={bulkEditField}>
+                {#each data.template.fields.filter(f => f.visible) as field}
+                  <option value={field.key}>{getFieldDisplayName(field)}</option>
+                {/each}
+              </select>
+            </div>
+
+            <div class="form-group">
+              <label for="bulkEditValue">Nowa wartość:</label>
+              {#if data.template.fields.find(f => f.key === bulkEditField)?.type === 'checkbox'}
+                <select id="bulkEditValue" bind:value={bulkEditValue}>
+                  <option value={true}>Tak</option>
+                  <option value={false}>Nie</option>
+                </select>
+              {:else if data.template.fields.find(f => f.key === bulkEditField)?.type === 'number' || data.template.fields.find(f => f.key === bulkEditField)?.type === 'currency'}
+                <input
+                  id="bulkEditValue"
+                  type="number"
+                  bind:value={bulkEditValue}
+                  placeholder="Wprowadź wartość"
+                />
+              {:else if data.template.fields.find(f => f.key === bulkEditField)?.type === 'date'}
+                <input
+                  id="bulkEditValue"
+                  type="date"
+                  bind:value={bulkEditValue}
+                />
+              {:else}
+                <input
+                  id="bulkEditValue"
+                  type="text"
+                  bind:value={bulkEditValue}
+                  placeholder="Wprowadź wartość"
+                />
+              {/if}
+            </div>
+          </div>
+
+          <div class="bulk-modal-actions">
+            <button class="btn btn-primary" onclick={applyBulkEdit}>
+              Zastosuj
+            </button>
+            <button class="btn btn-secondary" onclick={closeBulkEditModal}>
+              Anuluj
+            </button>
+          </div>
+        </div>
+      </div>
+    {/if}
   </div>
 {/if}
 
@@ -1376,6 +1668,180 @@
     min-width: 80px;
     text-align: right;
     flex-shrink: 0;
+  }
+
+  /* Checkbox column styles */
+  .checkbox-column {
+    width: 40px !important;
+    min-width: 40px !important;
+    max-width: 40px !important;
+    text-align: center;
+    cursor: pointer;
+  }
+
+  .checkbox-column input[type="checkbox"] {
+    cursor: pointer;
+    transform: scale(1.2);
+  }
+
+  /* Bulk toolbar styles */
+  .bulk-toolbar {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    padding: var(--space-3);
+    background: #f0f9ff;
+    border: 1px solid #0ea5e9;
+    border-radius: var(--radius-base);
+    margin-bottom: var(--space-4);
+  }
+
+  .bulk-count {
+    font-family: var(--font-ui);
+    font-size: var(--text-sm);
+    font-weight: var(--font-weight-medium);
+    color: #0c4a6e;
+  }
+
+  .btn-bulk {
+    background: #0ea5e9;
+    color: white;
+  }
+
+  .btn-bulk:hover {
+    background: #0284c7;
+  }
+
+  .btn-bulk-clear {
+    background: #ef4444;
+    color: white;
+  }
+
+  .btn-bulk-clear:hover {
+    background: #dc2626;
+  }
+
+  /* Bulk edit modal styles */
+  .bulk-modal-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.5);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+  }
+
+  .bulk-modal {
+    background: white;
+    border-radius: var(--radius-lg);
+    padding: var(--space-6);
+    max-width: 500px;
+    width: 90%;
+    box-shadow: var(--shadow-lg);
+  }
+
+  .bulk-modal h2 {
+    margin: 0 0 var(--space-2) 0;
+    font-family: var(--font-ui);
+    font-size: var(--text-xl);
+    font-weight: var(--font-weight-bold);
+    color: var(--color-text-primary);
+  }
+
+  .bulk-modal-info {
+    margin: 0 0 var(--space-4) 0;
+    font-family: var(--font-ui);
+    font-size: var(--text-sm);
+    color: var(--color-text-secondary);
+  }
+
+  .bulk-modal-form {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-4);
+    margin-bottom: var(--space-6);
+  }
+
+  .form-group {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+  }
+
+  .form-group label {
+    font-family: var(--font-ui);
+    font-size: var(--text-sm);
+    font-weight: var(--font-weight-medium);
+    color: var(--color-text-primary);
+  }
+
+  .form-group select,
+  .form-group input {
+    padding: var(--space-2) var(--space-3);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-base);
+    font-family: var(--font-ui);
+    font-size: var(--text-sm);
+    background: white;
+  }
+
+  .form-group select:focus,
+  .form-group input:focus {
+    outline: none;
+    border-color: #0ea5e9;
+  }
+
+  .bulk-modal-actions {
+    display: flex;
+    gap: var(--space-2);
+    justify-content: flex-end;
+  }
+
+  .btn-secondary {
+    background: #6b7280;
+    color: white;
+  }
+
+  .btn-secondary:hover {
+    background: #4b5563;
+  }
+
+  /* Address sync button styles */
+  .address-display-container {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    width: 100%;
+  }
+
+  .sync-address-btn {
+    flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 4px;
+    background: #8b5cf6;
+    color: white;
+    border: none;
+    border-radius: var(--radius-base);
+    cursor: pointer;
+    transition: all var(--transition-fast);
+    width: 24px;
+    height: 24px;
+    margin-top: 2px;
+  }
+
+  .sync-address-btn:hover {
+    background: #7c3aed;
+    transform: scale(1.05);
+  }
+
+  .sync-address-btn:active {
+    transform: scale(0.95);
   }
 
 </style>

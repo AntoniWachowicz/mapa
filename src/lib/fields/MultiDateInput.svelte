@@ -31,7 +31,7 @@
 <div class="multidate-container" class:horizontal={config.layout === 'horizontal'}>
   {#each config.dateFields as dateField}
     <div class="date-field">
-      <label>
+      <label class="date-label">
         {dateField.label}
         {#if dateField.required}
           <span class="required">*</span>
@@ -52,7 +52,7 @@
   .multidate-container {
     display: flex;
     flex-direction: column;
-    gap: 12px;
+    gap: 4px;
   }
 
   .multidate-container.horizontal {
@@ -62,16 +62,19 @@
 
   .date-field {
     display: flex;
-    flex-direction: column;
-    gap: 4px;
+    flex-direction: row;
+    align-items: center;
+    gap: 8px;
     flex: 1;
-    min-width: 150px;
+    min-width: 200px;
   }
 
-  .date-field label {
-    font-size: 14px;
-    font-weight: 500;
-    color: #333;
+  .date-label {
+    font-size: 12px;
+    font-weight: 400;
+    color: #666;
+    white-space: nowrap;
+    min-width: auto;
   }
 
   .required {

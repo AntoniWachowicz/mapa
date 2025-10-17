@@ -6,10 +6,7 @@ export async function load() {
     // Make sure to await both calls
     const template = await getTemplate();
     const objects = await getObjects();
-    
-    console.log('Server loaded template:', template); // Add debug
-    console.log('Server loaded objects:', objects); // Add debug
-    
+
     return {
       template,
       objects
@@ -42,9 +39,7 @@ export const actions = {
       throw new Error('Invalid template data');
     }
     const template: Template = JSON.parse(templateString);
-    console.log('Updating template:', template); // Debug log
     await updateTemplate(template);
-    console.log('Template updated successfully'); // Debug log
     return { success: true };
   },
   

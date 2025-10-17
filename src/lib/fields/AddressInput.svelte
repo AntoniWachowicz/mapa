@@ -29,19 +29,13 @@
 <div class="address-container">
   {#each config.displayFields as field}
     <div class="address-field">
-      <label>
-        {fieldLabels[field]}
-        {#if config.requiredFields.includes(field)}
-          <span class="required">*</span>
-        {/if}
-      </label>
       <input
         type="text"
         value={value[field] || ''}
         oninput={(e) => updateField(field, e.currentTarget.value)}
         required={config.requiredFields.includes(field)}
         class="address-input"
-        placeholder={fieldLabels[field]}
+        placeholder={fieldLabels[field] + (config.requiredFields.includes(field) ? ' *' : '')}
       />
     </div>
   {/each}
@@ -71,7 +65,7 @@
   .address-container {
     display: flex;
     flex-direction: column;
-    gap: 12px;
+    gap: 4px;
   }
 
   .address-field {
@@ -109,7 +103,7 @@
   }
 
   .geocode-btn {
-    background: #007acc;
+    background: #000000;
     color: white;
     border: none;
     padding: 8px 12px;
@@ -119,7 +113,7 @@
   }
 
   .geocode-btn:hover {
-    background: #005a9e;
+    background: #1a1a1a;
   }
 
   .sync-warning {

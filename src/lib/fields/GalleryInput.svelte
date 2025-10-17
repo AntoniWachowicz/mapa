@@ -191,14 +191,14 @@
   .upload-label {
     display: inline-block;
     padding: 8px 16px;
-    background: #007acc;
+    background: #000000;
     color: white;
     border-radius: 4px;
     cursor: pointer;
   }
 
   .upload-label:hover {
-    background: #005a9e;
+    background: #1a1a1a;
   }
 
   .info-text {
@@ -224,7 +224,7 @@
   }
 
   .add-video-btn {
-    background: #007acc;
+    background: #000000;
     color: white;
     border: none;
     padding: 8px 16px;
@@ -233,7 +233,7 @@
   }
 
   .add-video-btn:hover:not(:disabled) {
-    background: #005a9e;
+    background: #1a1a1a;
   }
 
   .add-video-btn:disabled {

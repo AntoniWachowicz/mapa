@@ -1,211 +1,408 @@
-import type { ProjectData } from './types.js';
+import type { ProjectData, GalleryData, MultiDateData, AddressData, LinkData, PriceData, CategoryFieldData, TagsFieldData } from './types.js';
 
 /**
- * Sample data for schema preview
- * Contains realistic Polish data for all supported field types
+ * Sample data for schema preview - Real LGD Żywiecki Raj Investment Example
+ * Based on typical EU-funded local development projects in rural Poland
  */
 export const sampleData: ProjectData = {
-  // Basic text fields
-  title: 'Kamienica Śląska 15',
-  name: 'Jan Kowalski',
-  description: 'Zabytkowa kamienica z początku XX wieku. Znajduje się w centrum miasta, w pobliżu głównego rynku. Budynek został odnowiony w 2018 roku i zachował swój historyczny charakter.',
-  address: 'ul. Śląska 15, 50-086 Wrocław',
-  notes: 'Uwagi: Wymaga drobnych napraw elewacji. Kontakt z administratorem w godzinach 9-17.',
+  // Title field (always required)
+  title: 'Modernizacja świetlicy wiejskiej w Koszarawie',
 
-  // Contact information
-  email: 'j.kowalski@example.pl',
-  phone: '+48 123 456 789',
-  website: 'https://kamienica-slaska.pl',
+  // Location (GeoJSON Point - always required, handled separately in app)
+  // coordinates: [19.1234, 49.5678] - handled by map component
 
-  // Numbers and financial
-  price: 850000,
-  area: 120.5,
-  rooms: 4,
-  floor: 2,
-  year: 1923,
-  rent: 3500,
-  deposit: 7000,
-  commission: 2.5,
+  // Rich text field
+  richtext: '<p><strong>Świetlica wiejska</strong> w Koszarawie to <em>ważny punkt</em> integracji społeczności lokalnej.</p><ul><li>Organizacja spotkań</li><li>Zajęcia dla dzieci</li><li>Wydarzenia kulturalne</li></ul>',
 
-  // Percentage fields
-  percentage: 15.5,
-  discount: 10,
-  tax: 8,
+  // Address field (structured)
+  address: {
+    street: 'Główna',
+    number: '45A',
+    postalCode: '34-335',
+    city: 'Koszarawa',
+    gmina: 'Gmina Milówka'
+  } as AddressData,
 
-  // Currency fields (Polish złoty)
-  monthly_cost: 1200,
-  utilities: 350,
-  maintenance: 180,
+  // Multiple dates
+  multidate: {
+    submitted: new Date('2023-09-15'),
+    approved: new Date('2023-11-20'),
+    started: new Date('2024-02-01'),
+    completed: new Date('2024-08-30')
+  } as MultiDateData,
 
-  // Boolean/checkbox fields
-  parking: true,
-  balcony: true,
-  elevator: false,
-  furnished: true,
-  pets_allowed: false,
-  smoking_allowed: false,
-  internet: true,
-  heating: true,
+  // Links
+  links: [
+    { text: 'Strona gminy Milówka', url: 'https://milowka.pl', order: 0 },
+    { text: 'LGD Żywiecki Raj', url: 'https://zywieckiraj.pl', order: 1 },
+    { text: 'Dokumentacja projektu', url: 'https://zywieckiraj.pl/projekty/swietlica-koszarawa', order: 2 }
+  ] as LinkData[],
 
-  // Date fields
-  available_from: '2024-03-15',
-  contract_end: '2025-03-14',
-  last_renovation: '2018-06-20',
-  inspection_date: '2024-01-10',
+  // Price/Funding breakdown
+  price: {
+    total: 285000,
+    currency: 'PLN',
+    funding: [
+      { source: 'UE - PROW', amount: 199500, percentage: 70 },
+      { source: 'Budżet gminy', amount: 57000, percentage: 20 },
+      { source: 'Wkład własny', amount: 28500, percentage: 10 }
+    ],
+    showTotal: true,
+    showBreakdown: true
+  } as PriceData,
 
-  // Textarea fields
-  amenities: 'Klimatyzacja, ogrzewanie centralne, internet światłowodowy, monitoring, ochrona 24h, miejsce parkingowe w garażu podziemnym.',
-  terms: 'Umowa najmu na rok z możliwością przedłużenia. Wymagana kaucja w wysokości dwumiesięcznego czynszu. Zwierzęta niedozwolone.',
+  // Gallery (images + videos)
+  gallery: {
+    items: [
+      {
+        id: 'img1',
+        type: 'image',
+        url: '/images/swietlica-przed.jpg',
+        caption: 'Stan przed modernizacją',
+        order: 0
+      },
+      {
+        id: 'img2',
+        type: 'image',
+        url: '/images/swietlica-po.jpg',
+        caption: 'Efekt końcowy realizacji',
+        order: 1
+      },
+      {
+        id: 'vid1',
+        type: 'video',
+        url: 'https://www.youtube.com/watch?v=example123',
+        embedType: 'youtube',
+        caption: 'Film z otwarcia świetlicy',
+        order: 2
+      }
+    ]
+  } as GalleryData,
 
-  // Location coordinates
-  coordinates: '51.1079,17.0385',
+  // Files (documents)
+  files: [
+    {
+      id: 'file1',
+      filename: 'wniosek-o-dofinansowanie.pdf',
+      originalName: 'Wniosek o dofinansowanie - Świetlica Koszarawa.pdf',
+      path: '/uploads/file1.pdf',
+      mimeType: 'application/pdf',
+      size: 2457600,
+      uploadedAt: new Date('2023-09-15')
+    },
+    {
+      id: 'file2',
+      filename: 'kosztorys.xlsx',
+      originalName: 'Kosztorys inwestycji.xlsx',
+      path: '/uploads/file2.xlsx',
+      mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      size: 89600,
+      uploadedAt: new Date('2023-09-18')
+    },
+    {
+      id: 'file3',
+      filename: 'protokol-odbioru.pdf',
+      originalName: 'Protokół odbioru końcowego.pdf',
+      path: '/uploads/file3.pdf',
+      mimeType: 'application/pdf',
+      size: 1234567,
+      uploadedAt: new Date('2024-08-30')
+    }
+  ],
 
-  // Selection/dropdown
-  type: 'wynajem',
-  condition: 'bardzo_dobry',
-  district: 'srodmiescie',
-
-  // Image fields
-  main_image: '/sample-images/kamienica-front.jpg',
-  gallery_1: '/sample-images/salon.jpg',
-  gallery_2: '/sample-images/kuchnia.jpg',
-  gallery_3: '/sample-images/sypialnia.jpg',
-  floor_plan: '/sample-images/plan.jpg',
-
-  // YouTube videos
-  video_tour: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
-  neighborhood_video: 'https://www.youtube.com/watch?v=jNQXAC9IVRw',
-
-  // Category field structure (with visual impact - major/minor tags)
+  // Category (major tag + minor tags)
   category: {
-    majorTag: 'residential',
-    minorTags: ['premium', 'central']
-  },
+    majorTag: 'infrastruktura_spoleczna',
+    minorTags: ['kultura', 'edukacja', 'integracja_spoleczna']
+  } as CategoryFieldData,
 
-  // Tags field structure (simple multi-select without visual impact)
+  // Tags (simple multi-select)
   tags: {
-    selectedTags: ['investment_plan_a', 'major_investor_kowalski', 'downtown_project'],
-    selectedTag: 'investment_plan_a' // For single selection mode
-  }
-};
+    selectedTags: ['obszar_wiejski', 'wsparcie_ue', 'realizacja_zakonczona'],
+    selectedTag: 'obszar_wiejski'
+  } as TagsFieldData,
 
-/**
- * Field-specific sample values for different contexts
- */
-export const sampleFieldValues: Record<string, any> = {
-  // Real estate specific
-  property_type: 'Apartament',
-  building_type: 'Kamienica',
-  ownership: 'Własność',
-  legal_status: 'Księga wieczysta',
+  // Legacy text fields (for backward compatibility)
+  name: 'Świetlica Wiejska Koszarawa',
+  description: 'Projekt modernizacji świetlicy wiejskiej obejmował kompleksową renowację budynku, wymianę instalacji elektrycznej i sanitarnej, docieplenie ścian zewnętrznych, wymianę stolarki okiennej i drzwiowej oraz wyposażenie w nowe meble i sprzęt multimedialny. Inwestycja ma na celu stworzenie nowoczesnej przestrzeni dla mieszkańców, gdzie będą mogły odbywać się spotkania, zajęcia edukacyjne, warsztaty oraz wydarzenia kulturalne.',
+  notes: 'Beneficjent: Gmina Milówka. Projekt realizowany w ramach działania "Podstawowe usługi i odnowa wsi na obszarach wiejskich" PROW 2014-2020. Wniosek pozytywnie zaopiniowany przez Radę LGD Żywiecki Raj.',
 
-  // Commercial
-  business_type: 'Restauracja',
-  license_number: 'DG-4521/2023',
-  opening_hours: 'Pn-Pt: 8:00-22:00, Sb-Nd: 10:00-24:00',
+  // Contact
+  email: 'inwestycje@milowka.pl',
+  phone: '+48 33 863 90 90',
+  website: 'https://milowka.pl',
 
-  // Personal
-  company: 'Kowalski Development Sp. z o.o.',
-  position: 'Kierownik Projektu',
-  experience: '8 lat doświadczenia',
+  // Numbers
+  area: 280,
+  rooms: 4,
+  capacity: 60,
+  year: 1978,
 
-  // Technical
-  energy_class: 'B',
-  heating_type: 'Centralne gazowe',
-  internet_speed: 'Do 1 Gb/s',
+  // Currency
+  monthly_cost: 1200,
+  maintenance: 450,
 
-  // Location details
-  metro_distance: '5 minut pieszo',
-  school_distance: '200m',
-  shopping_distance: '3 minuty pieszo',
+  // Percentage
+  eu_funding_rate: 70,
+  local_contribution: 20,
+  own_contribution: 10,
 
-  // Investment
-  roi: '6.2%',
-  rental_yield: '5.8%',
-  appreciation: '12% rocznie',
-
-  // Additional amenities
-  security: 'System alarmowy + monitoring',
-  storage: 'Piwnica 8m²',
-  garden: 'Ogród 50m²',
+  // Checkboxes
+  completed: true,
+  accessible: true,
+  parking: true,
+  heating: true,
+  internet: true,
 
   // Dates
-  move_in: '2024-04-01',
-  lease_expires: '2025-12-31',
-  built_year: '1925',
+  available_from: '2024-09-01',
+  contract_end: '2029-08-31',
+  inspection_date: '2024-08-25',
 
-  // Financial details
-  admin_fee: 450,
-  insurance: 180,
-  property_tax: 220,
-
-  // Measurements
-  ceiling_height: '3.2m',
-  plot_size: '800m²',
-  usable_area: '95.5m²',
-
-  // Status fields
-  availability: 'Dostępne natychmiast',
-  condition_detail: 'Po remoncie generalnym',
-  occupancy: 'Wolne',
-
-  // Contact preferences
-  preferred_contact: 'Telefon',
-  best_time: 'Popołudnie (14-18)',
-  language: 'Polski/Angielski'
+  // Selection
+  type: 'modernizacja',
+  condition: 'bardzo_dobry',
+  status: 'zrealizowany',
+  priority: 'wysoki'
 };
 
 /**
- * Get sample value for a specific field type and key
+ * Field-specific sample values for LGD projects
  */
-export function getSampleValue(fieldKey: string, fieldType: string): any {
-  // First try to get specific value for this field key
-  if (fieldKey in sampleData) {
-    return sampleData[fieldKey as keyof ProjectData];
+export const sampleFieldValues: Record<string, any> = {
+  // Project types
+  project_type: 'Infrastruktura społeczna',
+  investment_type: 'Modernizacja',
+  category_name: 'Kultura i integracja',
+
+  // Locations
+  voivodeship: 'śląskie',
+  county: 'żywiecki',
+  commune: 'Gmina Milówka',
+  village: 'Koszarawa',
+  region: 'Beskid Żywiecki',
+
+  // Beneficiaries
+  beneficiary: 'Gmina Milówka',
+  beneficiary_type: 'Jednostka samorządu terytorialnego',
+  contact_person: 'Jan Kowalski - Inspektor ds. Inwestycji',
+  organization: 'Urząd Gminy w Milówce',
+
+  // Funding sources
+  program: 'PROW 2014-2020',
+  measure: 'Podstawowe usługi i odnowa wsi',
+  sub_measure: '19.2 - Wsparcie na wdrażanie operacji',
+  fund_name: 'EFRROW - Europejski Fundusz Rolny na rzecz Rozwoju Obszarów Wiejskich',
+
+  // Financial
+  total_value: 285000,
+  eu_grant: 199500,
+  local_budget: 57000,
+  own_funds: 28500,
+  unit_cost: 1017.86,
+
+  // Technical specifications
+  building_area: 280,
+  plot_area: 1200,
+  renovation_scope: 'Kompleksowa termomodernizacja, wymiana instalacji, nowe wyposażenie',
+  energy_class: 'C',
+  heating_type: 'Kotłownia gazowa',
+
+  // Capacity and usage
+  max_capacity: 60,
+  daily_users: 25,
+  events_per_year: 48,
+  target_groups: 'Mieszkańcy wsi, dzieci, seniorzy, organizacje pozarządowe',
+
+  // Timeline
+  planning_start: '2023-06-01',
+  application_date: '2023-09-15',
+  approval_date: '2023-11-20',
+  construction_start: '2024-02-01',
+  construction_end: '2024-08-30',
+  warranty_period: '5 lat',
+
+  // Goals and impact
+  main_goal: 'Poprawa jakości życia mieszkańców poprzez dostęp do nowoczesnej infrastruktury społecznej',
+  expected_impact: 'Wzrost integracji społecznej, rozwój edukacji i kultury lokalnej, 300 osób rocznie korzystających',
+  sustainability: 'Gmina zapewnia utrzymanie obiektu przez minimum 10 lat',
+
+  // Documentation
+  decision_number: 'LGD/ŻR/2023/127',
+  contract_number: 'UM-INW/2024/015',
+  permit_number: 'PB-3413-26/2023',
+
+  // Monitoring
+  progress: '100%',
+  status_desc: 'Projekt zakończony i rozliczony',
+  inspection_result: 'Pozytywny - bez uwag',
+
+  // Accessibility
+  wheelchair_access: 'Tak - wejście z poziomu gruntu',
+  parking_spaces: 8,
+  public_transport: 'Przystanek autobusowy 150m',
+
+  // Equipment
+  equipment_list: 'Projektor multimedialny, nagłośnienie, stoły (15 szt.), krzesła (60 szt.), kuchnia wyposażona',
+  technology: 'Internet 300 Mb/s, WiFi, TV 65"',
+  safety: 'System p.poż., monitoring, oświetlenie awaryjne',
+
+  // Operations
+  opening_hours: 'Pn-Pt: 14:00-22:00, Sb-Nd: 10:00-22:00',
+  management: 'Gmina Milówka',
+  staff: 'Kierownik świetlicy + obsługa',
+  booking: 'Rezerwacja przez e-mail lub telefon',
+
+  // Legal
+  land_ownership: 'Własność gminy',
+  legal_status: 'Księga wieczysta nr KW3413/00045678/9',
+  permits: 'Pozwolenie na użytkowanie, zgoda konserwatora zabytków',
+
+  // Additional
+  historical_note: 'Budynek wybudowany w 1978 r. jako dom kultury',
+  previous_renovation: '1998 - drobne prace remontowe',
+  future_plans: 'Zagospodarowanie terenu wokół budynku - 2025',
+  awards: 'Wyróżnienie LGD za najlepszy projekt 2024',
+  media_coverage: 'Artykuł w Gazecie Żywieckiej, reportaż w TVP Katowice',
+
+  // Measurements
+  wall_thickness: '45cm cegła + docieplenie 15cm',
+  ceiling_height: '3.2m',
+  window_area: '45m²',
+  roof_area: '320m²',
+
+  // Environmental
+  water_source: 'Sieć gminna',
+  sewage: 'Kanalizacja sanitarna',
+  waste_management: 'Segregacja odpadów',
+  green_area: '200m² trawnik',
+  trees_planted: 12
+};
+
+/**
+ * Get sample value for a specific field by field name and type
+ */
+export function getSampleValue(fieldName: string, fieldType: string): any {
+  // First try to get specific value for this field name
+  if (fieldName in sampleData) {
+    return sampleData[fieldName as keyof ProjectData];
   }
 
-  // If not found, try field-specific values
-  if (fieldKey in sampleFieldValues) {
-    return sampleFieldValues[fieldKey];
+  // Try field-specific values
+  if (fieldName in sampleFieldValues) {
+    return sampleFieldValues[fieldName];
   }
 
-  // Fall back to type-based defaults
+  // Fall back to type-based defaults with LGD context
   switch (fieldType) {
+    case 'title':
+      return 'Modernizacja świetlicy wiejskiej w Koszarawie';
+
+    case 'richtext':
+      return '<p><strong>Świetlica wiejska</strong> to <em>ważne miejsce</em> dla społeczności lokalnej.</p><ul><li>Spotkania mieszkańców</li><li>Zajęcia edukacyjne</li><li>Wydarzenia kulturalne</li></ul>';
+
+    case 'address':
+      return {
+        street: 'Główna',
+        number: '45A',
+        postalCode: '34-335',
+        city: 'Koszarawa',
+        gmina: 'Gmina Milówka'
+      } as AddressData;
+
+    case 'multidate':
+      return {
+        submitted: new Date('2023-09-15'),
+        approved: new Date('2023-11-20'),
+        started: new Date('2024-02-01'),
+        completed: new Date('2024-08-30')
+      } as MultiDateData;
+
+    case 'links':
+      return [
+        { text: 'Strona projektu', url: 'https://zywieckiraj.pl/projekt', order: 0 },
+        { text: 'Dokumentacja', url: 'https://zywieckiraj.pl/docs', order: 1 }
+      ] as LinkData[];
+
+    case 'price':
+      return {
+        total: 285000,
+        currency: 'PLN',
+        funding: [
+          { source: 'UE - PROW', amount: 199500, percentage: 70 },
+          { source: 'Budżet gminy', amount: 57000, percentage: 20 },
+          { source: 'Wkład własny', amount: 28500, percentage: 10 }
+        ],
+        showTotal: true,
+        showBreakdown: true
+      } as PriceData;
+
+    case 'gallery':
+      return {
+        items: [
+          {
+            id: 'img1',
+            type: 'image',
+            url: '/images/example.jpg',
+            caption: 'Zdjęcie przykładowe',
+            order: 0
+          }
+        ]
+      } as GalleryData;
+
+    case 'files':
+      return [
+        {
+          id: 'file1',
+          filename: 'wniosek.pdf',
+          originalName: 'Wniosek o dofinansowanie.pdf',
+          path: '/uploads/wniosek.pdf',
+          mimeType: 'application/pdf',
+          size: 1234567,
+          uploadedAt: new Date('2023-09-15')
+        }
+      ];
+
+    case 'category':
+      return {
+        majorTag: 'infrastruktura_spoleczna',
+        minorTags: ['kultura', 'edukacja']
+      } as CategoryFieldData;
+
+    case 'tags':
+      return {
+        selectedTags: ['obszar_wiejski', 'wsparcie_ue'],
+        selectedTag: 'obszar_wiejski'
+      } as TagsFieldData;
+
+    // Legacy field types
     case 'text':
-      return 'Przykładowy tekst';
+      return 'Przykładowa wartość tekstowa';
     case 'textarea':
-      return 'To jest przykład dłuższego tekstu, który może zawierać więcej szczegółów i informacji o danym elemencie.';
+      return 'Projekt ma na celu rozwój infrastruktury społecznej na obszarach wiejskich, co przyczyni się do poprawy jakości życia mieszkańców oraz wzmocnienia więzi społecznych w lokalnej społeczności.';
     case 'number':
-      return 123;
+      return 285000;
     case 'email':
-      return 'przyklad@example.pl';
+      return 'kontakt@zywieckiraj.pl';
     case 'url':
-      return 'https://example.pl';
+      return 'https://zywieckiraj.pl';
     case 'date':
-      return '2024-03-15';
+      return '2024-08-30';
     case 'checkbox':
       return true;
     case 'currency':
-      return 2500;
+      return 285000;
     case 'percentage':
-      return 15.5;
+      return 70;
     case 'select':
-      return 'Opcja przykładowa';
+      return 'modernizacja';
     case 'image':
-      return '/sample-images/placeholder.jpg';
+      return '/images/swietlica.jpg';
     case 'youtube':
-      return 'https://www.youtube.com/watch?v=dQw4w9WgXcQ';
-    case 'category':
-      return {
-        majorTag: 'sample',
-        minorTags: ['example', 'preview']
-      };
-    case 'tags':
-      return {
-        selectedTags: ['plan_basic', 'investor_example', 'central_location'],
-        selectedTag: 'plan_basic' // For single selection mode
-      };
+      return 'https://www.youtube.com/watch?v=example';
+    case 'location':
+      return 'Koszarawa, Gmina Milówka';
     default:
-      return 'Wartość przykładowa';
+      return 'Przykładowa wartość';
   }
 }

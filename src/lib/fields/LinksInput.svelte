@@ -112,7 +112,7 @@
   }
 
   .add-btn {
-    background: #007acc;
+    background: #000000;
     color: white;
     border: none;
     padding: 8px 12px;
@@ -122,6 +122,6 @@
   }
 
   .add-btn:hover {
-    background: #005a9e;
+    background: #1a1a1a;
   }
 </style>

@@ -121,51 +121,6 @@
 </script>
 
 <div class="tag-manager">
-  <div class="tag-manager-header">
-    <h4>Zarządzanie Tagami</h4>
-    <button 
-      onclick={() => showAddForm = !showAddForm}
-      class="add-tag-button"
-      class:active={showAddForm}
-    >
-      {showAddForm ? '✕ Anuluj' : '+ Dodaj Tag'}
-    </button>
-  </div>
-  
-  {#if showAddForm}
-    <div class="add-tag-form">
-      <div class="form-row">
-        <div class="form-group">
-          <label>Nazwa (EN):</label>
-          <input 
-            bind:value={newTagName}
-            placeholder="np. education"
-            class="tag-input"
-          >
-        </div>
-        <div class="form-group">
-          <label>Nazwa (PL):</label>
-          <input 
-            bind:value={newTagDisplayName}
-            placeholder="np. Edukacja"
-            class="tag-input"
-          >
-        </div>
-        <div class="form-group">
-          <label>Kolor:</label>
-          <input 
-            type="color" 
-            bind:value={newTagColor}
-            class="color-input"
-          >
-        </div>
-      </div>
-      <div class="form-actions">
-        <button onclick={addTag} class="save-button">Dodaj Tag</button>
-        <button onclick={() => showAddForm = false} class="cancel-button">Anuluj</button>
-      </div>
-    </div>
-  {/if}
   
   <div class="tags-list">
     {#if visibleTags.length > 0}
@@ -210,61 +165,107 @@
                 <span class="tag-db-name">({tag.name})</span>
               </div>
             </div>
-            
+
             <div class="tag-actions">
-              <button 
+              <button
+                onclick={() => startEdit(tag)}
+                class="icon-button"
+                title="Edytuj kategorię"
+              >
+                <img src="/icons/Pen.svg" alt="Edit" style="width: 16px; height: 16px;" />
+              </button>
+
+              <button
+                onclick={() => archiveTag(tag)}
+                class="icon-button"
+                title="Usuń kategorię"
+              >
+                <img src="/icons/Trash.svg" alt="Delete" style="width: 16px; height: 16px;" />
+              </button>
+
+              <button
                 onclick={() => moveTagUp(i)}
                 disabled={i === 0}
-                class="action-button"
+                class="icon-button"
                 title="Przenieś w górę"
               >
-                ↑
+                <img src="/icons/Chevron/Up.svg" alt="Up" style="width: 16px; height: 16px;" />
               </button>
-              
-              <button 
+
+              <button
                 onclick={() => moveTagDown(i)}
                 disabled={i === visibleTags.length - 1}
-                class="action-button"
+                class="icon-button"
                 title="Przenieś w dół"
               >
-                ↓
-              </button>
-              
-              <button 
-                onclick={() => startEdit(tag)}
-                class="action-button edit-button"
-                title="Edytuj tag"
-              >
-                ✏️
-              </button>
-              
-              <button 
-                onclick={() => archiveTag(tag)}
-                class="action-button archive-button"
-                title="Archiwizuj tag"
-              >
-                📦
+                <img src="/icons/Chevron/Down.svg" alt="Down" style="width: 16px; height: 16px;" />
               </button>
             </div>
           {/if}
         </div>
       {/each}
-    {:else}
-      <div class="no-tags">
-        Brak tagów. Dodaj pierwszy tag powyżej.
-      </div>
     {/if}
   </div>
-  
+
+  <!-- Add category button at the bottom -->
+  {#if !showAddForm}
+    <button
+      onclick={() => showAddForm = true}
+      class="add-category-btn"
+    >
+      <img src="/icons/Action/Plus.svg" alt="Add" style="width: 16px; height: 16px; margin-right: 6px;" />
+      Dodaj Kategorię
+    </button>
+  {:else}
+    <div class="add-tag-form">
+      <div class="form-row">
+        <div class="form-group">
+          <label>Nazwa (EN):</label>
+          <input
+            bind:value={newTagName}
+            placeholder="np. social_infrastructure"
+            class="tag-input"
+          >
+        </div>
+        <div class="form-group">
+          <label>Nazwa (PL):</label>
+          <input
+            bind:value={newTagDisplayName}
+            placeholder="np. Infrastruktura społeczna"
+            class="tag-input"
+          >
+        </div>
+        <div class="form-group">
+          <label>Kolor:</label>
+          <input
+            type="color"
+            bind:value={newTagColor}
+            class="color-input"
+          >
+        </div>
+      </div>
+      <div class="form-actions">
+        <button onclick={addTag} class="save-button">
+          <img src="/icons/Checkmark.svg" alt="Save" style="width: 16px; height: 16px; margin-right: 6px;" />
+          Zapisz
+        </button>
+        <button onclick={() => showAddForm = false} class="cancel-button">
+          <img src="/icons/Close.svg" alt="Cancel" style="width: 16px; height: 16px; margin-right: 6px;" />
+          Anuluj
+        </button>
+      </div>
+    </div>
+  {/if}
+
   {#if archivedTags.length > 0}
     <div class="archived-section">
-      <button 
+      <button
         onclick={() => showArchived = !showArchived}
         class="archived-toggle"
       >
-        {showArchived ? '▼' : '▶'} Zarchiwizowane tagi ({archivedTags.length})
+        {showArchived ? '▼' : '▶'} Zarchiwizowane kategorie ({archivedTags.length})
       </button>
-      
+
       {#if showArchived}
         <div class="archived-tags">
           {#each archivedTags as tag}
@@ -276,10 +277,10 @@
                   <span class="tag-db-name">({tag.name})</span>
                 </div>
               </div>
-              <button 
+              <button
                 onclick={() => restoreTag(tag.id)}
                 class="restore-button"
-                title="Przywróć tag"
+                title="Przywróć kategorię"
               >
                 🔄 Przywróć
               </button>
@@ -293,52 +294,40 @@
 
 <style>
   .tag-manager {
-    margin-top: 24px;
-    padding: 24px;
-    background: #f9fafb;
-    border: 1px solid #e5e7eb;
-    border-radius: 12px;
-  }
-  
-  .tag-manager-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 16px;
-  }
-  
-  .tag-manager-header h4 {
-    color: #1f2937;
-    margin: 0;
-    font-size: 16px;
-  }
-  
-  .add-tag-button {
-    padding: 8px 16px;
-    background: #1f2937;
-    color: white;
+    padding: 0;
+    background: transparent;
     border: none;
-    border-radius: 6px;
+    border-radius: 0;
+  }
+  
+  .add-category-btn {
+    width: 100%;
+    padding: 8px 12px;
+    background: transparent;
+    color: #666;
+    border: none;
+    border-radius: 4px;
     font-size: 14px;
+    font-family: 'Space Mono', monospace;
     cursor: pointer;
     transition: all 0.2s ease;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-top: 8px;
   }
-  
-  .add-tag-button:hover {
-    background: #111827;
-    transform: translateY(-1px);
-  }
-  
-  .add-tag-button.active {
-    background: #dc2626;
+
+  .add-category-btn:hover {
+    background: rgba(0, 0, 0, 0.02);
+    color: #000;
   }
   
   .add-tag-form {
-    background: white;
-    padding: 20px;
-    border-radius: 8px;
-    border: 1px solid #d1d5db;
-    margin-bottom: 16px;
+    background: transparent;
+    padding: 0;
+    border-radius: 0;
+    border: none;
+    margin-bottom: 20px;
   }
   
   .form-row {
@@ -359,21 +348,21 @@
   .tag-input {
     width: 100%;
     padding: 8px 12px;
-    border: 1px solid #d1d5db;
+    border: 1px solid rgba(0, 0, 0, 0.1);
     border-radius: 6px;
     font-size: 14px;
+    background: white;
   }
-  
+
   .tag-input:focus {
     outline: none;
-    border-color: #6b7280;
-    box-shadow: 0 0 0 3px rgba(107, 114, 128, 0.1);
+    border-color: #000;
   }
-  
+
   .color-input {
     width: 60px;
     height: 38px;
-    border: 1px solid #d1d5db;
+    border: 1px solid rgba(0, 0, 0, 0.1);
     border-radius: 6px;
     cursor: pointer;
   }
@@ -385,42 +374,53 @@
   
   .form-actions {
     display: flex;
-    gap: 12px;
+    gap: 8px;
+    justify-content: flex-end;
+    margin-top: 12px;
   }
-  
+
   .save-button {
-    padding: 8px 16px;
-    background: #059669;
+    padding: 6px 12px;
+    background: #000000;
     color: white;
     border: none;
-    border-radius: 6px;
+    border-radius: 4px;
+    font-size: 14px;
+    font-family: 'Space Mono', monospace;
     cursor: pointer;
     transition: all 0.2s ease;
+    display: flex;
+    align-items: center;
   }
-  
+
   .save-button:hover {
-    background: #047857;
+    background: #1a1a1a;
   }
-  
+
   .save-button.small {
     padding: 4px 8px;
     font-size: 12px;
   }
-  
+
   .cancel-button {
-    padding: 8px 16px;
-    background: #6b7280;
-    color: white;
-    border: none;
-    border-radius: 6px;
+    padding: 6px 12px;
+    background: transparent;
+    color: #666;
+    border: 1px solid rgba(0, 0, 0, 0.1);
+    border-radius: 4px;
+    font-size: 14px;
+    font-family: 'Space Mono', monospace;
     cursor: pointer;
     transition: all 0.2s ease;
+    display: flex;
+    align-items: center;
   }
-  
+
   .cancel-button:hover {
-    background: #4b5563;
+    background: rgba(0, 0, 0, 0.02);
+    border-color: #000;
   }
-  
+
   .cancel-button.small {
     padding: 4px 8px;
     font-size: 12px;
@@ -430,17 +430,16 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 12px;
-    margin-bottom: 8px;
-    background: white;
-    border: 1px solid #e5e7eb;
-    border-radius: 8px;
+    padding: 10px 0;
+    margin-bottom: 4px;
+    background: transparent;
+    border: none;
+    border-radius: 0;
     transition: all 0.2s ease;
   }
-  
+
   .tag-item:hover {
-    border-color: #d1d5db;
-    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+    background: rgba(0, 0, 0, 0.02);
   }
   
   .tag-info {
@@ -483,41 +482,27 @@
     gap: 4px;
   }
   
-  .action-button {
+  .icon-button {
     width: 32px;
     height: 32px;
-    border: 1px solid #d1d5db;
-    background: white;
-    border-radius: 6px;
+    border: none;
+    background: transparent;
+    border-radius: 4px;
     cursor: pointer;
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 12px;
     transition: all 0.2s ease;
+    padding: 0;
   }
-  
-  .action-button:hover:not(:disabled) {
-    border-color: #9ca3af;
-    transform: translateY(-1px);
-    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+
+  .icon-button:hover:not(:disabled) {
+    background: rgba(0, 0, 0, 0.05);
   }
-  
-  .action-button:disabled {
-    opacity: 0.4;
+
+  .icon-button:disabled {
+    opacity: 0.3;
     cursor: not-allowed;
-  }
-  
-  .edit-button {
-    background: #dbeafe;
-    border-color: #bfdbfe;
-    color: #1d4ed8;
-  }
-  
-  .archive-button {
-    background: #fef3c7;
-    border-color: #fed7aa;
-    color: #d97706;
   }
   
   .tag-edit-form {
@@ -536,9 +521,15 @@
   .tag-edit-input {
     flex: 1;
     padding: 6px 8px;
-    border: 1px solid #d1d5db;
+    border: 1px solid rgba(0, 0, 0, 0.1);
     border-radius: 4px;
     font-size: 13px;
+    background: white;
+  }
+
+  .tag-edit-input:focus {
+    outline: none;
+    border-color: #000;
   }
   
   .edit-actions {
@@ -547,9 +538,8 @@
   }
   
   .archived-section {
-    margin-top: 20px;
-    padding-top: 20px;
-    border-top: 1px solid #e5e7eb;
+    margin-top: 32px;
+    padding-top: 0;
   }
   
   .archived-toggle {
@@ -573,16 +563,16 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 8px 12px;
+    padding: 8px 0;
     margin-bottom: 4px;
-    background: #f3f4f6;
-    border: 1px dashed #d1d5db;
-    border-radius: 6px;
+    background: transparent;
+    border: none;
+    border-radius: 0;
   }
   
   .restore-button {
     padding: 6px 12px;
-    background: #059669;
+    background: #000000;
     color: white;
     border: none;
     border-radius: 4px;
@@ -590,18 +580,18 @@
     cursor: pointer;
     transition: all 0.2s ease;
   }
-  
+
   .restore-button:hover {
-    background: #047857;
+    background: #1a1a1a;
   }
   
   .no-tags {
-    padding: 32px;
+    padding: 24px 0;
     text-align: center;
-    color: #6b7280;
+    color: #999;
     font-style: italic;
-    background: white;
-    border: 2px dashed #d1d5db;
-    border-radius: 8px;
+    background: transparent;
+    border: none;
+    border-radius: 0;
   }
 </style>

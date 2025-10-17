@@ -15,7 +15,9 @@
       return '—';
     }
 
-    switch (field.type) {
+    const fieldType = field.fieldType || field.type;
+
+    switch (fieldType) {
       case 'currency':
         return `${value.toLocaleString('pl-PL')} PLN`;
       case 'percentage':
@@ -43,9 +45,16 @@
     }
   }
 
+  // Check if field is a complex type that needs special rendering
+  function isComplexField(field: Field): boolean {
+    const fieldType = field.fieldType || field.type;
+    return ['richtext', 'address', 'multidate', 'links', 'price', 'gallery', 'files'].includes(fieldType);
+  }
+
   // Get sample data for field
   function getFieldSampleValue(field: Field): any {
-    return getSampleValue(field.key, field.type);
+    const fieldType = field.fieldType || field.type;
+    return getSampleValue(field.key, fieldType);
   }
 
   // Check if field should be displayed in preview
@@ -89,6 +98,8 @@
       <!-- Main Content Fields -->
       <div class="pin-content">
         {#each visibleFields.filter(f => f.key !== 'title') as field}
+          {@const fieldType = field.fieldType || field.type}
+          {@const fieldValue = getFieldSampleValue(field)}
           <div class="field-item" class:required={field.required}>
             <div class="field-header">
               <label class="field-label">
@@ -100,7 +111,88 @@
             </div>
 
             <div class="field-value">
-              {#if field.type === 'image'}
+
+              {#if fieldType === 'richtext'}
+                <div class="richtext-preview">
+                  {@html fieldValue}
+                </div>
+              {:else if fieldType === 'address'}
+                <div class="address-preview">
+                  {#if fieldValue?.street || fieldValue?.number}
+                    <div>{fieldValue.street} {fieldValue.number}</div>
+                  {/if}
+                  {#if fieldValue?.postalCode || fieldValue?.city}
+                    <div>{fieldValue.postalCode} {fieldValue.city}</div>
+                  {/if}
+                  {#if fieldValue?.gmina}
+                    <div>{fieldValue.gmina}</div>
+                  {/if}
+                </div>
+              {:else if fieldType === 'multidate'}
+                <div class="multidate-preview">
+                  {#each Object.entries(fieldValue || {}) as [key, date]}
+                    <div class="date-item">
+                      <span class="date-label">{key}:</span>
+                      <span class="date-value">
+                        {date instanceof Date ? date.toLocaleDateString('pl-PL') : date}
+                      </span>
+                    </div>
+                  {/each}
+                </div>
+              {:else if fieldType === 'links'}
+                <div class="links-preview">
+                  {#each (fieldValue || []) as link}
+                    <div class="link-item">
+                      <Icon name="Link" size={14} />
+                      <span>{link.text || link.url}</span>
+                    </div>
+                  {/each}
+                </div>
+              {:else if fieldType === 'price'}
+                <div class="price-preview">
+                  {#if fieldValue?.showTotal && fieldValue?.total}
+                    <div class="price-total">
+                      <strong>Suma: {fieldValue.total.toLocaleString('pl-PL')} {fieldValue.currency}</strong>
+                    </div>
+                  {/if}
+                  {#if fieldValue?.showBreakdown && fieldValue?.funding?.length > 0}
+                    <div class="funding-breakdown">
+                      {#each fieldValue.funding as source}
+                        <div class="funding-item">
+                          <span>{source.source}:</span>
+                          <span>{source.amount.toLocaleString('pl-PL')} {fieldValue.currency}</span>
+                          {#if source.percentage}
+                            <span class="percentage">({source.percentage}%)</span>
+                          {/if}
+                        </div>
+                      {/each}
+                    </div>
+                  {/if}
+                </div>
+              {:else if fieldType === 'gallery'}
+                <div class="gallery-preview">
+                  {#each (fieldValue?.items || []) as item}
+                    <div class="gallery-item">
+                      {#if item.type === 'image'}
+                        <Icon name="Picture" size={14} />
+                        <span>{item.caption || 'Obrazek'}</span>
+                      {:else if item.type === 'video'}
+                        <Icon name="Video" size={14} />
+                        <span>{item.caption || 'Film'}</span>
+                      {/if}
+                    </div>
+                  {/each}
+                </div>
+              {:else if fieldType === 'files'}
+                <div class="files-preview">
+                  {#each (fieldValue || []) as file}
+                    <div class="file-item">
+                      <Icon name="File" size={14} />
+                      <span>{file.originalName || file.filename}</span>
+                    </div>
+                  {/each}
+                </div>
+              {:else if field.type === 'image'}
                 <div class="image-preview">
                   <Icon name="Picture" size={16} />
                   <span>Obrazek: {field.displayLabel || field.label}</span>
@@ -111,7 +203,7 @@
                   <span>Film YouTube</span>
                 </div>
               {:else if field.type === 'category'}
-                {@const categoryValue = getFieldSampleValue(field)}
+                {@const categoryValue = fieldValue}
                 <div class="tags-preview">
                   {#if categoryValue?.majorTag}
                     <span class="tag major-tag">Główny tag</span>
@@ -123,7 +215,7 @@
                   {/if}
                 </div>
               {:else if field.type === 'tags'}
-                {@const tagsValue = getFieldSampleValue(field)}
+                {@const tagsValue = fieldValue}
                 <div class="tags-preview simple-tags">
                   {#if field.tagConfig?.allowMultiple !== false}
                     <!-- Multiple selection mode -->
@@ -141,16 +233,16 @@
                 </div>
               {:else if field.type === 'textarea'}
                 <div class="textarea-preview">
-                  {formatFieldValue(field, getFieldSampleValue(field))}
+                  {formatFieldValue(field, fieldValue)}
                 </div>
               {:else if field.type === 'checkbox'}
                 <div class="checkbox-preview">
-                  <Icon name={getFieldSampleValue(field) ? 'Star' : 'Close'} size={14} />
-                  <span>{formatFieldValue(field, getFieldSampleValue(field))}</span>
+                  <Icon name={fieldValue ? 'Star' : 'Close'} size={14} />
+                  <span>{formatFieldValue(field, fieldValue)}</span>
                 </div>
               {:else}
                 <span class="text-value">
-                  {formatFieldValue(field, getFieldSampleValue(field))}
+                  {formatFieldValue(field, fieldValue)}
                 </span>
               {/if}
             </div>
@@ -340,6 +432,163 @@
   .simple-tags .tag {
     font-size: var(--text-xs);
     padding: var(--space-1) var(--space-2);
+  }
+
+  /* Rich text preview */
+  .richtext-preview {
+    padding: var(--space-2);
+    background: var(--color-surface);
+    border-radius: var(--radius-sm);
+    font-size: var(--text-sm);
+    line-height: 1.5;
+    border: 1px solid var(--color-border);
+  }
+
+  .richtext-preview :global(p) {
+    margin: 0 0 var(--space-2) 0;
+  }
+
+  .richtext-preview :global(p:last-child) {
+    margin-bottom: 0;
+  }
+
+  .richtext-preview :global(ul),
+  .richtext-preview :global(ol) {
+    margin: var(--space-2) 0;
+    padding-left: var(--space-4);
+  }
+
+  .richtext-preview :global(li) {
+    margin: var(--space-1) 0;
+  }
+
+  /* Address preview */
+  .address-preview {
+    padding: var(--space-2);
+    background: var(--color-surface);
+    border-radius: var(--radius-sm);
+    font-size: var(--text-sm);
+    line-height: 1.4;
+    border: 1px solid var(--color-border);
+  }
+
+  .address-preview div {
+    margin: 2px 0;
+  }
+
+  /* MultiDate preview */
+  .multidate-preview {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+  }
+
+  .date-item {
+    display: flex;
+    gap: var(--space-2);
+    padding: var(--space-1) var(--space-2);
+    background: var(--color-surface);
+    border-radius: var(--radius-sm);
+    font-size: var(--text-xs);
+  }
+
+  .date-label {
+    color: var(--color-text-secondary);
+    font-weight: var(--font-weight-medium);
+    min-width: 80px;
+  }
+
+  .date-value {
+    color: var(--color-text-primary);
+  }
+
+  /* Links preview */
+  .links-preview {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+  }
+
+  .link-item {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    padding: var(--space-1) var(--space-2);
+    background: var(--color-surface);
+    border-radius: var(--radius-sm);
+    font-size: var(--text-xs);
+    color: var(--color-text-secondary);
+  }
+
+  /* Price preview */
+  .price-preview {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+  }
+
+  .price-total {
+    padding: var(--space-2);
+    background: var(--color-surface);
+    border-radius: var(--radius-sm);
+    font-size: var(--text-sm);
+  }
+
+  .funding-breakdown {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+  }
+
+  .funding-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: var(--space-1) var(--space-2);
+    background: var(--color-surface);
+    border-radius: var(--radius-sm);
+    font-size: var(--text-xs);
+  }
+
+  .funding-item .percentage {
+    color: var(--color-text-secondary);
+    margin-left: var(--space-1);
+  }
+
+  /* Gallery preview */
+  .gallery-preview {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+  }
+
+  .gallery-item {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    padding: var(--space-1) var(--space-2);
+    background: var(--color-surface);
+    border-radius: var(--radius-sm);
+    font-size: var(--text-xs);
+    color: var(--color-text-secondary);
+  }
+
+  /* Files preview */
+  .files-preview {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+  }
+
+  .file-item {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    padding: var(--space-1) var(--space-2);
+    background: var(--color-surface);
+    border-radius: var(--radius-sm);
+    font-size: var(--text-xs);
+    color: var(--color-text-secondary);
   }
 
   .pin-footer {

@@ -135,7 +135,7 @@
   .file-label {
     display: inline-block;
     padding: 8px 16px;
-    background: #007acc;
+    background: #000000;
     color: white;
     border-radius: 4px;
     cursor: pointer;
@@ -144,7 +144,7 @@
   }
 
   .file-label:hover {
-    background: #005a9e;
+    background: #1a1a1a;
   }
 
   .file-info {

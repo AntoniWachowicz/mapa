@@ -3,7 +3,7 @@
   import PinManager from '$lib/PinManager.svelte';
   import PinList from '$lib/PinList.svelte';
   import Icon from '$lib/Icon.svelte';
-  import type { Template, SavedObject, MapObject, MapConfig, CategoryFieldData, ProjectData } from '$lib/types.js';
+  import type { Template, SavedObject, MapObject, MapConfig, CategoryFieldData, ProjectData, PriceData, TagsFieldData, AddressData, LinkData, FileData, GalleryData, MultiDateData, GeoJSON } from '$lib/types.js';
 
   interface PageData {
     template: Template;
@@ -21,11 +21,10 @@
   let objects = $state<SavedObject[]>(data.objects || []);
   let mapConfig = $state<MapConfig>(data.mapConfig);
 
-  console.log('[MAP PAGE CLIENT] Received objects:', objects.length);
-  console.log('[MAP PAGE CLIENT] Objects data:', objects);
   let focusCoordinates = $state<{lat: number, lng: number} | null>(null);
   let selectedCoordinates = $state<{lat: number, lng: number} | null>(null);
   let selectedObject = $state<SavedObject | null>(null); // Currently selected pin for detail view
+  let showAdditionPanel = $state(false); // Track if addition panel is shown
   let sidebarWidth = $state(400); // Default sidebar width in pixels
   let isDragging = $state(false);
   let isPinSectionCollapsed = $state(false); // New state for pin section collapse
@@ -86,23 +85,42 @@
 
   function handleMapClick(coordinates: {lat: number, lng: number}): void {
     selectedCoordinates = coordinates;
+    showAdditionPanel = true;
+    // Close detail panel when opening addition panel
+    selectedObject = null;
   }
 
   function clearSelectedCoordinates(): void {
     selectedCoordinates = null;
   }
 
+  function closeAdditionPanel(): void {
+    showAdditionPanel = false;
+    selectedCoordinates = null;
+    editingObject = null; // Clear editing object when closing panel
+  }
+
   function togglePinSection(): void {
     isPinSectionCollapsed = !isPinSectionCollapsed;
   }
 
+  let editingObject = $state<SavedObject | null>(null); // Object being edited
+
   function handleEditPin(obj: SavedObject): void {
-    // Expand the pin section when editing
-    if (isPinSectionCollapsed) {
-      isPinSectionCollapsed = false;
+    // Set the object to be edited
+    editingObject = obj;
+
+    // Set coordinates from the object's location
+    if (obj.location && obj.location.coordinates && obj.location.coordinates.length === 2) {
+      const [lng, lat] = obj.location.coordinates;
+      selectedCoordinates = { lat, lng };
     }
-    // TODO: Pass the editing object to PinManager
-    // This would require adding state management for edited object
+
+    // Open the addition panel for editing
+    showAdditionPanel = true;
+
+    // Close detail panel when opening edit mode
+    selectedObject = null;
   }
 
   function handleFocusPin(coordinates: {lat: number, lng: number}): void {
@@ -202,8 +220,10 @@
         if (result.success) {
           // Add the new object to our local state
           objects = [...objects, result.object];
-          // Clear selected coordinates after successful save
+          // Clear selected coordinates and close addition panel after successful save
           selectedCoordinates = null;
+          showAdditionPanel = false;
+          editingObject = null;
         } else {
           alert('Błąd podczas zapisywania pinezki');
         }
@@ -218,12 +238,21 @@
 
   async function handleUpdatePin(id: string, data: ProjectData): Promise<void> {
     try {
+      // Create location from selectedCoordinates if available
+      let location: GeoJSON.Point | undefined;
+      if (selectedCoordinates) {
+        location = {
+          type: 'Point',
+          coordinates: [selectedCoordinates.lng, selectedCoordinates.lat]
+        };
+      }
+
       const response = await fetch(`/api/objects/${id}`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ data })
+        body: JSON.stringify({ data, location })
       });
 
       if (response.ok) {
@@ -231,6 +260,10 @@
         if (result.success) {
           // Update the object in our local state
           objects = objects.map(obj => obj.id === id ? result.object : obj);
+          // Clear editing state and close addition panel after successful update
+          selectedCoordinates = null;
+          showAdditionPanel = false;
+          editingObject = null;
         } else {
           alert('Błąd podczas aktualizacji pinezki');
         }
@@ -273,16 +306,121 @@
   function formatFieldValue(field: any, value: any): string {
     if (!value && value !== 0) return '';
 
-    if (field.type === 'currency') {
-      return `${Number(value).toLocaleString('pl-PL')} zł`;
-    } else if (field.type === 'date') {
-      try {
-        return new Date(value).toLocaleDateString('pl-PL');
-      } catch {
+    const fieldType = field.fieldType || field.type;
+
+    // Handle complex field types
+    switch (fieldType) {
+      case 'price':
+        if (typeof value === 'object' && 'funding' in value) {
+          const priceData = value as PriceData;
+          if (priceData.total) {
+            return `${Number(priceData.total).toLocaleString('pl-PL')} ${priceData.currency || 'PLN'}`;
+          }
+          if (priceData.funding && priceData.funding.length > 0) {
+            const total = priceData.funding.reduce((sum, f) => sum + (f.amount || 0), 0);
+            return `${total.toLocaleString('pl-PL')} ${priceData.currency || 'PLN'}`;
+          }
+        }
+        return '';
+
+      case 'category':
+        if (typeof value === 'object' && 'majorTag' in value) {
+          const categoryData = value as CategoryFieldData;
+          if (categoryData.majorTag) {
+            const tag = template.tags.find(t => t.id === categoryData.majorTag || t.name === categoryData.majorTag);
+            return tag ? (tag.displayName || tag.name) : categoryData.majorTag;
+          }
+        }
+        return '';
+
+      case 'tags':
+        if (typeof value === 'object' && 'selectedTags' in value) {
+          const tagsData = value as TagsFieldData;
+          if (tagsData.selectedTags && tagsData.selectedTags.length > 0) {
+            return tagsData.selectedTags.map(tagId => {
+              const tag = template.tags.find(t => t.id === tagId || t.name === tagId);
+              return tag ? (tag.displayName || tag.name) : tagId;
+            }).join(', ');
+          }
+        }
+        return '';
+
+      case 'address':
+        if (typeof value === 'object') {
+          const addressData = value as AddressData;
+          const parts = [];
+          if (addressData.street) parts.push(addressData.street);
+          if (addressData.number) parts.push(addressData.number);
+          if (addressData.postalCode || addressData.city) {
+            const cityPart = [];
+            if (addressData.postalCode) cityPart.push(addressData.postalCode);
+            if (addressData.city) cityPart.push(addressData.city);
+            parts.push(cityPart.join(' '));
+          }
+          if (addressData.gmina) parts.push(`gm. ${addressData.gmina}`);
+          return parts.join(', ');
+        }
+        return '';
+
+      case 'links':
+        if (Array.isArray(value)) {
+          const links = value as LinkData[];
+          return links.map(link => link.text || link.url).join(', ');
+        }
+        return '';
+
+      case 'files':
+        if (Array.isArray(value)) {
+          const files = value as FileData[];
+          return files.map(file => file.originalName || file.filename).join(', ');
+        }
+        return '';
+
+      case 'gallery':
+        if (typeof value === 'object' && 'items' in value) {
+          const galleryData = value as GalleryData;
+          if (galleryData.items && galleryData.items.length > 0) {
+            return `${galleryData.items.length} ${galleryData.items.length === 1 ? 'element' : 'elementy'}`;
+          }
+        }
+        return '';
+
+      case 'multidate':
+        if (typeof value === 'object') {
+          const multiDateData = value as MultiDateData;
+          const dates = Object.entries(multiDateData)
+            .filter(([_, date]) => date !== null)
+            .map(([key, date]) => {
+              try {
+                return new Date(date!).toLocaleDateString('pl-PL');
+              } catch {
+                return String(date);
+              }
+            });
+          return dates.join(', ');
+        }
+        return '';
+
+      case 'richtext':
+        if (typeof value === 'string') {
+          // Strip HTML tags for display
+          const stripped = value.replace(/<[^>]*>/g, '');
+          return stripped.length > 200 ? stripped.substring(0, 200) + '...' : stripped;
+        }
         return String(value);
-      }
-    } else {
-      return String(value);
+
+      case 'currency':
+        return `${Number(value).toLocaleString('pl-PL')} zł`;
+
+      case 'date':
+        try {
+          return new Date(value).toLocaleDateString('pl-PL');
+        } catch {
+          return String(value);
+        }
+
+      default:
+        return String(value);
     }
   }
 
@@ -339,36 +477,6 @@
 
 <div class="map-container">
   <div class="sidebar" style="width: {sidebarWidth}px;">
-    <!-- Pin Addition Section Header (Always Visible) -->
-    <div class="pin-section-header">
-      <h3>
-        <Icon name="Pin" size={16} />
-        Dodaj nową pinezkę
-      </h3>
-      <button class="toggle-btn" onclick={togglePinSection} title={isPinSectionCollapsed ? 'Rozwiń sekcję dodawania' : 'Zwiń sekcję dodawania'}>
-        <Icon name={isPinSectionCollapsed ? 'Chevron/Down' : 'Chevron/Up'} size={16} />
-      </button>
-    </div>
-
-    <!-- Pin Addition Section Content (Collapsible) -->
-    {#if !isPinSectionCollapsed}
-      <div class="pin-manager-container">
-        <PinManager
-          {template}
-          objects={filteredObjects}
-          {selectedCoordinates}
-          onSave={handleSavePin}
-          onUpdate={handleUpdatePin}
-          onDelete={handleDeletePin}
-          onClearCoordinates={clearSelectedCoordinates}
-          onFocusPin={handleFocusPin}
-          showForm={true}
-          showExcelFeatures={false}
-          showPinList={false}
-        />
-      </div>
-    {/if}
-
     <!-- Filters Section (Always Visible) -->
     <div class="filters">
       <div class="filter-group">
@@ -418,37 +526,64 @@
       selectedObjectId={selectedObject?.id || null}
       onPinPositionUpdate={handlePinPositionUpdate}
       bind:panToPinCallback
+      tags={template.tags || []}
     />
 
-    <!-- Detail Panel -->
+    <!-- Detail Panel Container -->
     {#if selectedObject}
-      <div class="detail-panel" bind:this={detailPanelEl}>
-        <div class="detail-header">
-          <h3>Szczegóły pinezki</h3>
-          <button class="close-btn" onclick={closeDetailPanel}>
-            <Icon name="Close" size={16} />
-          </button>
-        </div>
-        <div class="detail-content">
-          <!-- Show fields including location -->
-          {#each template.fields.filter(f => f.visible) as field}
-            <div class="detail-field">
-              <label>{field.displayLabel || field.label}:</label>
-              <div class="detail-value" class:location-value={field.key === 'location'}>
-                {#if field.key === 'location'}
-                  <!-- Special display for location field -->
-                  {#if selectedObject.location && selectedObject.location.coordinates}
-                    {selectedObject.location.coordinates[1].toFixed(6)}, {selectedObject.location.coordinates[0].toFixed(6)}
-                  {:else}
-                    <span class="no-location">Brak lokalizacji</span>
-                  {/if}
-                {:else}
-                  {formatFieldValue(field, selectedObject.data[field.key])}
-                {/if}
+      {@const categoryField = template.fields.find(f => f.fieldType === 'category' || f.type === 'category')}
+      {@const categoryData = categoryField ? selectedObject.data[categoryField.key || categoryField.fieldName] : null}
+      {@const categoryTag = categoryData && typeof categoryData === 'object' && 'majorTag' in categoryData ? template.tags.find(t => t.id === categoryData.majorTag || t.name === categoryData.majorTag) : null}
+      {@const categoryColor = categoryTag?.color || '#666666'}
+      {@const titleField = template.fields.find(f => f.fieldType === 'title' || f.key === 'title')}
+      {@const titleValue = titleField ? selectedObject.data[titleField.key || titleField.fieldName] : ''}
+
+      <div class="detail-container">
+        <div class="detail-panel" bind:this={detailPanelEl} style="--category-color: {categoryColor}">
+          <div class="detail-header-new">
+            <h3 class="detail-title">{titleValue || 'Bez tytułu'}</h3>
+            {#if categoryTag}
+              <div class="category-badge" style="background-color: {categoryColor}">
+                {categoryTag.displayName || categoryTag.name}
               </div>
-            </div>
-          {/each}
+            {/if}
+            <button class="close-btn-new" onclick={closeDetailPanel}>
+              <Icon name="Close" size={16} />
+            </button>
+          </div>
+          <div class="detail-content-new">
+            <!-- Show fields excluding title and category (already in header) -->
+            {#each template.fields.filter(f => f.visible && f.fieldType !== 'title' && f.key !== 'title' && f.fieldType !== 'category' && f.type !== 'category') as field}
+              <div class="detail-field">
+                <label>{field.displayLabel || field.label}:</label>
+                <div class="detail-value" class:location-value={field.key === 'location'}>
+                  {#if field.key === 'location'}
+                    <!-- Special display for location field -->
+                    {#if selectedObject.location && selectedObject.location.coordinates}
+                      {selectedObject.location.coordinates[1].toFixed(6)}, {selectedObject.location.coordinates[0].toFixed(6)}
+                    {:else}
+                      <span class="no-location">Brak lokalizacji</span>
+                    {/if}
+                  {:else}
+                    {formatFieldValue(field, selectedObject.data[field.key])}
+                  {/if}
+                </div>
+              </div>
+            {/each}
+          </div>
+          <div class="gradient-overlay"></div>
         </div>
+
+        <!-- Edit Button -->
+        <button
+          class="floating-edit-btn"
+          onclick={() => selectedObject && handleEditPin(selectedObject)}
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path fill-rule="evenodd" clip-rule="evenodd" d="M4 5C4 3.34315 5.34315 2 7 2H12.7574C13.553 2 14.3161 2.31607 14.8787 2.87868L19.1213 7.12132C19.6839 7.68393 20 8.44699 20 9.24264V19C20 20.6569 18.6569 22 17 22H7C5.34315 22 4 20.6569 4 19V5ZM14 9C13.4477 9 13 8.55228 13 8V5.20711C13 4.76165 13.5386 4.53857 13.8536 4.85355L17.1464 8.14645C17.4614 8.46143 17.2383 9 16.7929 9H14ZM8.29289 15.7071C8.10536 15.8946 8 16.149 8 16.4142V18.5C8 18.7761 8.22386 19 8.5 19H10.5858C10.851 19 11.1054 18.8946 11.2929 18.7071L15.2929 14.7071C15.6834 14.3166 15.6834 13.6834 15.2929 13.2929L13.7071 11.7071C13.3166 11.3166 12.6834 11.3166 12.2929 11.7071L8.29289 15.7071Z" fill="white"/>
+          </svg>
+          <span>Edytuj</span>
+        </button>
       </div>
 
       <!-- Connection Line SVG -->
@@ -463,6 +598,37 @@
           opacity="0.6"
         />
       </svg>
+    {/if}
+
+    <!-- Addition Panel -->
+    {#if showAdditionPanel && selectedCoordinates}
+      <div class="addition-panel">
+        <div class="addition-panel-header">
+          <h3>
+            <Icon name={editingObject ? "Document" : "Pin"} size={16} />
+            {editingObject ? "Edytuj pinezkę" : "Dodaj nową pinezkę"}
+          </h3>
+          <button class="close-btn-addition" onclick={closeAdditionPanel}>
+            <Icon name="Close" size={16} />
+          </button>
+        </div>
+        <div class="addition-panel-content">
+          <PinManager
+            {template}
+            objects={filteredObjects}
+            {selectedCoordinates}
+            {editingObject}
+            onSave={handleSavePin}
+            onUpdate={handleUpdatePin}
+            onDelete={handleDeletePin}
+            onClearCoordinates={clearSelectedCoordinates}
+            onFocusPin={handleFocusPin}
+            showForm={true}
+            showExcelFeatures={false}
+            showPinList={false}
+          />
+        </div>
+      </div>
     {/if}
   </div>
 </div>
@@ -601,59 +767,108 @@
     overflow: hidden;
   }
 
-  /* Detail Panel */
-  .detail-panel {
+  /* Detail Panel Container */
+  .detail-container {
     position: absolute;
     left: 20px;
     top: 20px;
-    width: 320px;
-    max-height: calc(100% - 40px);
-    background: var(--color-surface);
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-base);
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
-    overflow-y: auto;
     z-index: 1000;
-  }
-
-  .detail-header {
     display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: var(--space-3);
-    border-bottom: 1px solid var(--color-border);
-    position: sticky;
-    top: 0;
-    background: var(--color-surface);
+    flex-direction: column;
+    gap: 12px;
   }
 
-  .detail-header h3 {
+  /* Detail Panel */
+  .detail-panel {
+    width: 420px;
+    max-height: calc(100vh - 120px);
+    background: var(--color-surface);
+    border: 1px solid #000000;
+    border-radius: 5px 5px 0px 5px;
+    overflow: hidden;
+  }
+
+  .detail-header-new {
+    position: relative;
+    padding: var(--space-4);
+    padding-right: 40px;
+    display: grid;
+    grid-template-columns: 1fr auto;
+    grid-template-rows: auto auto;
+    gap: var(--space-3);
+    align-items: start;
+  }
+
+  .detail-title {
+    grid-column: 1;
+    grid-row: 1;
     margin: 0;
     font-family: var(--font-ui);
-    font-size: var(--text-base);
-    font-weight: var(--font-weight-medium);
+    font-size: 20px;
+    font-weight: var(--font-weight-bold);
+    color: var(--color-text-primary);
+    line-height: 1.3;
+    word-break: break-word;
   }
 
-  .close-btn {
-    background: none;
-    border: none;
-    padding: var(--space-1);
-    border-radius: var(--radius-base);
+  .category-badge {
+    grid-column: 2;
+    grid-row: 1;
+    padding: 6px 12px;
+    border-radius: 8px;
+    font-family: var(--font-ui);
+    font-size: 13px;
+    font-weight: var(--font-weight-medium);
+    color: white;
+    white-space: nowrap;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .close-btn-new {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    background: rgba(255, 255, 255, 0.9);
+    border: 1px solid rgba(0, 0, 0, 0.1);
+    padding: 6px;
+    border-radius: 6px;
     cursor: pointer;
     color: var(--color-text-secondary);
     transition: all var(--transition-fast);
     display: flex;
     align-items: center;
     justify-content: center;
+    z-index: 10;
   }
 
-  .close-btn:hover {
-    background: var(--color-border);
+  .close-btn-new:hover {
+    background: rgba(255, 255, 255, 1);
     color: var(--color-text-primary);
+    border-color: rgba(0, 0, 0, 0.2);
   }
 
-  .detail-content {
-    padding: var(--space-3);
+  .detail-content-new {
+    padding: 0 var(--space-4) var(--space-4) var(--space-4);
+    max-height: calc(100vh - 200px);
+    overflow-y: auto;
+  }
+
+  .gradient-overlay {
+    position: absolute;
+    bottom: 0;
+    right: 0;
+    width: 180px;
+    height: 180px;
+    background: radial-gradient(
+      circle at bottom right,
+      var(--category-color) 0%,
+      rgba(255, 255, 255, 0) 70%
+    );
+    opacity: 0.25;
+    pointer-events: none;
+    border-radius: 0 0 0 0;
   }
 
   .detail-field {
@@ -693,6 +908,39 @@
     font-style: italic;
   }
 
+  /* Floating Edit Button */
+  .floating-edit-btn {
+    background: var(--color-accent);
+    color: white;
+    border: 1px solid #000000;
+    padding: var(--space-2) var(--space-3);
+    border-radius: 5px;
+    cursor: pointer;
+    transition: all var(--transition-fast);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--space-2);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+    font-family: var(--font-ui);
+    font-size: var(--text-sm);
+    font-weight: var(--font-weight-medium);
+    align-self: flex-start;
+  }
+
+  .floating-edit-btn:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 6px 16px rgba(0, 0, 0, 0.2);
+  }
+
+  .floating-edit-btn:active {
+    transform: translateY(0px);
+  }
+
+  .floating-edit-btn svg {
+    flex-shrink: 0;
+  }
+
   /* Connection Line */
   .connection-line {
     position: absolute;
@@ -702,6 +950,68 @@
     height: 100%;
     pointer-events: none;
     z-index: 999;
+  }
+
+  /* Addition Panel */
+  .addition-panel {
+    position: absolute;
+    right: 20px;
+    top: 20px;
+    width: 420px;
+    max-height: calc(100% - 40px);
+    background: #ffffff;
+    border: 1px solid #000000;
+    border-radius: var(--radius-lg);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+    overflow: hidden;
+    z-index: 1000;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .addition-panel-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: var(--space-3);
+    border-bottom: 1px solid #000000;
+    background: #ffffff;
+    flex-shrink: 0;
+  }
+
+  .addition-panel-header h3 {
+    margin: 0;
+    font-family: var(--font-ui);
+    font-size: var(--text-base);
+    font-weight: var(--font-weight-medium);
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    color: var(--color-text-primary);
+  }
+
+  .close-btn-addition {
+    background: none;
+    border: none;
+    padding: var(--space-1);
+    border-radius: var(--radius-base);
+    cursor: pointer;
+    color: var(--color-text-secondary);
+    transition: all var(--transition-fast);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .close-btn-addition:hover {
+    background: var(--color-border);
+    color: var(--color-text-primary);
+  }
+
+  .addition-panel-content {
+    flex: 1;
+    overflow-y: auto;
+    padding: var(--space-2);
   }
 
   /* Mobile responsive */

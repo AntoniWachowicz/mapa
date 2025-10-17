@@ -34,6 +34,7 @@
     template: Template;
     objects: SavedObject[];
     selectedCoordinates?: {lat: number, lng: number} | null;
+    editingObject?: SavedObject | null;
     onSave: (data: ProjectData, hasIncompleteData?: boolean) => Promise<void>;
     onUpdate?: (id: string, data: ProjectData) => Promise<void>;
     onDelete?: (id: string) => Promise<void>;
@@ -43,8 +44,8 @@
     showExcelFeatures?: boolean;
     showPinList?: boolean;
   }
-  
-  const { template, objects, selectedCoordinates = null, onSave, onDelete, onUpdate, showForm = true, onClearCoordinates, onFocusPin, showExcelFeatures = true, showPinList = true }: Props = $props();
+
+  const { template, objects, selectedCoordinates = null, editingObject: externalEditingObject = null, onSave, onDelete, onUpdate, showForm = true, onClearCoordinates, onFocusPin, showExcelFeatures = true, showPinList = true }: Props = $props();
   
   let formData = $state<ProjectData>({});
   let editingObject = $state<SavedObject | null>(null);
@@ -56,9 +57,17 @@
   let importProgress = $state({ current: 0, total: 0, message: '' });
   let importController = $state<AbortController | null>(null);
 
-  // Initialize form data when template changes
+  // Sync external editingObject to internal state
   $effect(() => {
-    if (template?.fields) {
+    if (externalEditingObject) {
+      editingObject = externalEditingObject;
+      formData = { ...externalEditingObject.data };
+    }
+  });
+
+  // Initialize form data when template changes (only if not editing)
+  $effect(() => {
+    if (template?.fields && !editingObject) {
       const newFormData: ProjectData = {};
       template.fields.forEach((field) => {
         const fieldType = field.fieldType || field.type;
@@ -245,12 +254,10 @@
     
     if (editingObject && onUpdate) {
       // Update existing object
-      console.log('Updating object:', editingObject.id, formData); // ADD DEBUG
       await onUpdate(editingObject.id, formData);
       editingObject = null;
     } else {
       // Create new object
-      console.log('Creating new object:', formData); // ADD DEBUG
       await onSave(formData);
     }
     
@@ -756,8 +763,8 @@
     {:else}
       {#each visibleFields as field}
         <div class="form-field">
-          <label>
-            {field.displayLabel || field.label} {field.required ? '*' : ''}
+          <span class="field-label" class:required-field={field.required}>{#if field.required}<span class="required-indicator">*</span>{/if}{field.displayLabel || field.label}</span>
+          <div class="field-input">
 
             {#if field.key === 'location'}
               <!-- Special display for location field (GeoJSON coordinates) -->
@@ -1002,21 +1009,21 @@
                 checked={getCheckboxValue(field.key)}
                 onchange={(e) => handleCheckboxChange(field.key, e)}
               >
-            {:else if field.type === 'tags'}
-              <!-- Tag Selection UI -->
-              {@const tagData = getTagValue(field.key)}
+            {:else if field.type === 'tags' || (field.fieldType || field.type) === 'category'}
+              <!-- Tag/Category Selection UI -->
+              {@const tagData = getTagValue(field.fieldName || field.key)}
               {@const maxMinorTags = field.tagConfig?.maxMinorTags || 3}
-              
+
               <div class="tag-field">
                 <!-- Major Tag Selection -->
-                <div class="major-tag-section">
-                  <label class="tag-section-label">Główny tag (wymagany):</label>
+                <div class="sub-field">
+                  <span class="sub-field-label">Główny tag (wymagany)</span>
                   <select 
                     value={tagData.majorTag || ''}
                     onchange={(e) => {
                       const target = e.target as HTMLSelectElement;
                       const newTagData = { ...tagData, majorTag: target.value || null };
-                      handleTagChange(field.key, newTagData);
+                      handleTagChange(field.fieldName || field.key, newTagData);
                     }}
                     class="tag-select"
                     required={field.required}
@@ -1036,10 +1043,12 @@
                     {/if}
                   {/if}
                 </div>
-                
+
                 <!-- Minor Tags Selection -->
                 <div class="minor-tags-section">
-                  <label class="tag-section-label">Dodatkowe tagi (max {maxMinorTags}):</label>
+                  <div class="sub-field">
+                    <span class="sub-field-label">Dodatkowe tagi (max {maxMinorTags})</span>
+                    <div class="minor-tags-container">
                   <div class="minor-tags-grid">
                     {#each availableTags as tag}
                       {@const isSelected = tagData.minorTags.includes(tag.id)}
@@ -1064,7 +1073,7 @@
                             }
                             
                             const newTagData = { ...tagData, minorTags: newMinorTags };
-                            handleTagChange(field.key, newTagData);
+                            handleTagChange(field.fieldName || field.key, newTagData);
                           }}
                         >
                         <div class="tag-preview minor" style="background-color: {tag.color}" class:major={isMajor}>
@@ -1077,29 +1086,34 @@
                     {/each}
                   </div>
                   
-                  <div class="tag-counter">
-                    {tagData.minorTags.length} / {maxMinorTags} wybranych
+                      <div class="tag-counter">
+                        {tagData.minorTags.length} / {maxMinorTags} wybranych
+                      </div>
+                    </div>
                   </div>
                 </div>
               </div>
             {/if}
-          </label>
+          </div>
         </div>
       {/each}
-      
-      <button onclick={saveObject}>
-        {#if editingObject}
-          <Icon name="Checkmark" size={16} /> Aktualizuj Pinezkę
-        {:else}
-          <Icon name="Pin" size={16} /> Zapisz Pinezkę
-        {/if}
-      </button>
 
-      {#if editingObject}
-        <button type="button" class="cancel-btn" onclick={cancelEdit}>
-          <Icon name="Close" size={16} /> Anuluj
+
+      <div style="grid-column: 1 / -1; display: flex; gap: var(--space-2); margin-top: var(--space-2);">
+        <button onclick={saveObject}>
+          {#if editingObject}
+            <Icon name="Checkmark" size={16} /> Aktualizuj Pinezkę
+          {:else}
+            <Icon name="Pin" size={16} /> Zapisz Pinezkę
+          {/if}
         </button>
-      {/if}
+
+        {#if editingObject}
+          <button type="button" class="cancel-btn" onclick={cancelEdit}>
+            <Icon name="Close" size={16} /> Anuluj
+          </button>
+        {/if}
+      </div>
     {/if}
   </div>
 {/if}
@@ -1235,6 +1249,10 @@
     margin-bottom: 0;
     padding: var(--space-3);
     background: transparent;
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: var(--space-2) var(--space-3);
+    align-items: start;
   }
 
   /* Compact mode for even tighter spacing */
@@ -1249,18 +1267,57 @@
   .form-section.compact .form-field label {
     margin-bottom: 2px;
   }
-  
+
   .form-field {
-    margin-bottom: var(--space-3);
+    display: contents;
   }
 
-  .form-field label {
-    display: block;
-    margin-bottom: var(--space-1);
+  .field-label {
     font-family: var(--font-ui);
-    font-weight: var(--font-weight-medium);
+    font-weight: var(--font-weight-semibold);
     color: var(--color-text-primary);
     font-size: var(--text-sm);
+    text-align: right;
+    white-space: nowrap;
+    align-self: start;
+    line-height: 1;
+    padding-top: 1px;
+    display: inline-block;
+  }
+
+  .field-label.required-field {
+    font-weight: var(--font-weight-bold, 700);
+  }
+
+  .required-indicator {
+    color: var(--color-danger, #dc2626);
+    margin-right: 4px;
+  }
+
+  .field-input {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    min-width: 0;
+    margin-bottom: var(--space-4);
+  }
+
+  .sub-field {
+    display: contents;
+  }
+
+  .sub-field-label {
+    font-family: var(--font-ui);
+    font-weight: var(--font-weight-normal);
+    color: var(--color-text-secondary);
+    font-size: var(--text-xs);
+    text-align: right;
+    white-space: nowrap;
+    padding-top: var(--space-2);
+  }
+
+  .sub-field > *:not(.sub-field-label) {
+    /* All elements after the label span the input column */
   }
   
   .form-field input, .form-field select {
@@ -1401,7 +1458,7 @@
   
   
   button:not(.clear-coords-btn):not(.cancel-btn) {
-    background: var(--color-accent);
+    background: #000000;
     color: white;
     border: none;
     padding: var(--space-2) var(--space-3);
@@ -1414,7 +1471,7 @@
   }
 
   button:not(.clear-coords-btn):not(.cancel-btn):hover {
-    opacity: 0.9;
+    background: #1a1a1a;
   }
 
   .cancel-btn {
@@ -1445,15 +1502,11 @@
   }
 
   .major-tag-section {
-    margin-bottom: var(--space-3);
+    margin-bottom: var(--space-2);
   }
-  
-  .tag-section-label {
-    display: block !important;
-    font-size: var(--text-sm);
-    font-weight: var(--font-weight-medium);
-    color: var(--color-text-primary);
-    margin-bottom: var(--space-1);
+
+  .minor-tags-container {
+    width: 100%;
   }
   
   .tag-select {
@@ -1510,8 +1563,7 @@
   }
   
   .minor-tags-section {
-    border-top: 1px solid var(--color-border);
-    padding-top: var(--space-2);
+
   }
   
   .minor-tags-grid {
@@ -1657,7 +1709,7 @@
   }
 
   .geocode-btn {
-    background: #8b5cf6;
+    background: #000000;
     color: white;
     border: none;
     padding: 12px 16px;
@@ -1671,7 +1723,7 @@
   }
 
   .geocode-btn:hover:not(:disabled) {
-    background: #7c3aed;
+    background: #1a1a1a;
     transform: translateY(-1px);
   }
 

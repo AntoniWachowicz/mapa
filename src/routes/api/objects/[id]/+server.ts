@@ -4,14 +4,14 @@ import { updateObject, deleteObject, getObjectById } from '$lib/server/schemadb.
 
 export const PUT: RequestHandler = async ({ request, params }) => {
 	try {
-		const { data } = await request.json();
+		const { data, location } = await request.json();
 		const { id } = params;
 
 		if (!data || !id) {
 			return json({ success: false, error: 'No data or ID provided' }, { status: 400 });
 		}
 
-		const updatedObject = await updateObject(id, data);
+		const updatedObject = await updateObject(id, data, location);
 
 		if (!updatedObject) {
 			return json({ success: false, error: 'Object not found' }, { status: 404 });

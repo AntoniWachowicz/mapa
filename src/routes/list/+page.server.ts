@@ -13,9 +13,6 @@ export async function load({ locals }: { locals: App.Locals }) {
     const template = await getTemplate();
     const objects = await getObjects();
 
-    console.log('[LIST PAGE LOAD] Objects count:', objects.length);
-    console.log('[LIST PAGE LOAD] Template fields:', template.fields.length);
-
     return {
       user: locals.user,
       template,

@@ -264,26 +264,46 @@ export async function createObject(location: GeoJSON.Point, data: ProjectData, h
   }
 }
 
-export async function updateObject(objectId: string, newData: ProjectData): Promise<SavedObject | null> {
+export async function updateObject(objectId: string, newData: ProjectData, location?: GeoJSON.Point): Promise<SavedObject | null> {
   try {
     const db = await connectToDatabase();
     const collection = db.collection('objects');
-    
+
     const { ObjectId } = await import('mongodb');
-    
+
+    // Build update object - only update location if provided
+    const updateFields: any = { data: newData };
+    if (location) {
+      updateFields.location = location;
+    }
+
     const result = await collection.updateOne(
       { _id: new ObjectId(objectId) },
-      { $set: { data: newData } }
+      { $set: updateFields }
     );
-    
+
     if (result.matchedCount === 0) {
       return null;
     }
-    
-    return {
+
+    // Fetch the complete updated object including location
+    const updatedDoc = await collection.findOne({ _id: new ObjectId(objectId) });
+
+    if (!updatedDoc) {
+      return null;
+    }
+
+    const savedObject: SavedObject = {
       id: objectId,
+      location: updatedDoc.location || { type: 'Point', coordinates: [0, 0] },
       data: newData
     };
+
+    if (updatedDoc.hasIncompleteData) {
+      savedObject.hasIncompleteData = updatedDoc.hasIncompleteData;
+    }
+
+    return savedObject;
   } catch (error) {
     console.error('Error updating object:', error);
     throw error;
