@@ -292,7 +292,11 @@
     if (typeof value === 'object') return ''; // Handle CategoryFieldData
     return value || '';
   }
-  
+
+  function getComplexFieldValue(key: string): any {
+    return formData[key];
+  }
+
   function getCheckboxValue(key: string): boolean {
     const value = formData[key];
     return typeof value === 'boolean' ? value : false;
@@ -805,7 +809,7 @@
 
             {:else if (field.fieldType || field.type) === 'links'}
               <LinksInput
-                value={getFieldValue(field.fieldName || field.key) as LinkData[]}
+                value={getComplexFieldValue(field.fieldName || field.key) as LinkData[]}
                 config={field.config as LinksConfig}
                 required={field.required}
                 oninput={(val) => formData[field.fieldName || field.key] = val}
@@ -813,7 +817,7 @@
 
             {:else if (field.fieldType || field.type) === 'multidate'}
               <MultiDateInput
-                value={getFieldValue(field.fieldName || field.key) as MultiDateData}
+                value={getComplexFieldValue(field.fieldName || field.key) as MultiDateData}
                 config={field.config as MultiDateConfig}
                 required={field.required}
                 oninput={(val) => formData[field.fieldName || field.key] = val}
@@ -821,7 +825,7 @@
 
             {:else if (field.fieldType || field.type) === 'address' && field.config}
               <AddressInput
-                value={getFieldValue(field.fieldName || field.key) as AddressData}
+                value={getComplexFieldValue(field.fieldName || field.key) as AddressData}
                 config={field.config as AddressConfig}
                 required={field.required}
                 oninput={(val) => formData[field.fieldName || field.key] = val}
@@ -830,7 +834,7 @@
 
             {:else if (field.fieldType || field.type) === 'price'}
               <PriceInput
-                value={getFieldValue(field.fieldName || field.key) as PriceData}
+                value={getComplexFieldValue(field.fieldName || field.key) as PriceData}
                 config={field.config as PriceConfig}
                 required={field.required}
                 oninput={(val) => formData[field.fieldName || field.key] = val}
@@ -838,7 +842,7 @@
 
             {:else if (field.fieldType || field.type) === 'files'}
               <FilesInput
-                value={getFieldValue(field.fieldName || field.key) as FileData[]}
+                value={getComplexFieldValue(field.fieldName || field.key) as FileData[]}
                 config={field.config as FilesConfig}
                 required={field.required}
                 oninput={(val) => formData[field.fieldName || field.key] = val}
@@ -846,7 +850,7 @@
 
             {:else if (field.fieldType || field.type) === 'gallery'}
               <GalleryInput
-                value={getFieldValue(field.fieldName || field.key) as GalleryData}
+                value={getComplexFieldValue(field.fieldName || field.key) as GalleryData}
                 config={field.config as GalleryConfig}
                 required={field.required}
                 oninput={(val) => formData[field.fieldName || field.key] = val}

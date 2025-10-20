@@ -31,6 +31,7 @@
   let detailPanelEl: HTMLDivElement | null = null; // Reference to detail panel
   let mapViewEl: HTMLDivElement | null = null; // Reference to map view
   let connectionLine = $state({ x1: 0, y1: 0, x2: 0, y2: 0 }); // Connection line coordinates
+  let lightboxImageUrl = $state<string | null>(null); // Image lightbox state
 
   // Filter and sort state
   let filterText = $state('');
@@ -158,6 +159,14 @@
     selectedObject = null;
     // Clear the pan callback to prevent any panning when closing
     panToPinCallback = null;
+  }
+
+  function openImageLightbox(imageUrl: string): void {
+    lightboxImageUrl = imageUrl;
+  }
+
+  function closeLightbox(): void {
+    lightboxImageUrl = null;
   }
 
   function handlePinPositionUpdate(x: number, y: number): void {
@@ -564,6 +573,26 @@
                     {:else}
                       <span class="no-location">Brak lokalizacji</span>
                     {/if}
+                  {:else if (field.fieldType || field.type) === 'gallery'}
+                    <!-- Special display for gallery field -->
+                    {@const galleryData = selectedObject.data[field.key || field.fieldName] as GalleryData}
+                    {#if galleryData && galleryData.items && galleryData.items.length > 0}
+                      <div class="gallery-preview-detail">
+                        {#each galleryData.items as item}
+                          {#if item.type === 'image'}
+                            <button
+                              class="gallery-thumbnail"
+                              onclick={() => openImageLightbox(item.url)}
+                              type="button"
+                            >
+                              <img src={item.url} alt={item.caption || ''} />
+                            </button>
+                          {/if}
+                        {/each}
+                      </div>
+                    {:else}
+                      <span class="no-data">Brak zdjęć</span>
+                    {/if}
                   {:else}
                     {formatFieldValue(field, selectedObject.data[field.key])}
                   {/if}
@@ -632,6 +661,18 @@
     {/if}
   </div>
 </div>
+
+<!-- Image Lightbox -->
+{#if lightboxImageUrl}
+  <div class="lightbox-overlay" onclick={closeLightbox}>
+    <button class="lightbox-close" onclick={closeLightbox} type="button">
+      <Icon name="Close" size={32} />
+    </button>
+    <div class="lightbox-content" onclick={(e) => e.stopPropagation()}>
+      <img src={lightboxImageUrl} alt="Powiększone zdjęcie" />
+    </div>
+  </div>
+{/if}
 
 <style>
   .map-container {
@@ -780,6 +821,7 @@
 
   /* Detail Panel */
   .detail-panel {
+    position: relative;
     width: 420px;
     max-height: calc(100vh - 120px);
     background: var(--color-surface);
@@ -1038,5 +1080,105 @@
     .pin-manager-container {
       padding: var(--space-2);
     }
+  }
+
+  /* Gallery Preview in Detail Panel */
+  .gallery-preview-detail {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 4px;
+  }
+
+  .gallery-thumbnail {
+    width: auto;
+    height: 100px;
+    border: 2px solid #e5e7eb;
+    border-radius: 4px;
+    overflow: hidden;
+    cursor: pointer;
+    transition: all 0.2s;
+    background: none;
+    padding: 0;
+  }
+
+  .gallery-thumbnail:hover {
+    border-color: var(--color-accent);
+    transform: scale(1.05);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+  }
+
+  .gallery-thumbnail img {
+    height: 100%;
+    width: auto;
+    display: block;
+    object-fit: cover;
+  }
+
+  .no-data {
+    color: #9ca3af;
+    font-style: italic;
+    font-size: var(--text-sm);
+  }
+
+  /* Image Lightbox */
+  .lightbox-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.85);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 20000;
+    padding: 40px;
+    backdrop-filter: blur(4px);
+  }
+
+  .lightbox-content {
+    background: white;
+    border-radius: 12px;
+    padding: 20px;
+    max-width: 90vw;
+    max-height: 90vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+  }
+
+  .lightbox-content img {
+    max-width: 100%;
+    max-height: calc(90vh - 40px);
+    width: auto;
+    height: auto;
+    display: block;
+    border-radius: 8px;
+  }
+
+  .lightbox-close {
+    position: absolute;
+    top: 20px;
+    right: 20px;
+    background: rgba(255, 255, 255, 0.1);
+    border: 2px solid rgba(255, 255, 255, 0.3);
+    color: white;
+    width: 50px;
+    height: 50px;
+    border-radius: 50%;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s;
+    z-index: 20001;
+  }
+
+  .lightbox-close:hover {
+    background: rgba(255, 255, 255, 0.2);
+    border-color: rgba(255, 255, 255, 0.5);
+    transform: scale(1.1);
   }
 </style>
