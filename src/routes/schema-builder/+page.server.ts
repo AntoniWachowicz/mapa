@@ -46,16 +46,18 @@ export const actions = {
   createObject: async ({ request }: RequestEvent) => {
     const data = await request.formData();
     const objectDataString = data.get('data');
+    const locationString = data.get('location');
     const hasIncompleteDataString = data.get('hasIncompleteData');
-    
+
     if (typeof objectDataString !== 'string') {
       throw new Error('Invalid object data');
     }
-    
+
     const objectData: ProjectData = JSON.parse(objectDataString);
+    const location = locationString ? JSON.parse(locationString as string) : { type: 'Point', coordinates: [0, 0] };
     const hasIncompleteData = hasIncompleteDataString === 'true';
-    
-    await createObject(objectData, hasIncompleteData);
+
+    await createObject(location, objectData, hasIncompleteData);
     return { success: true };
   },
   

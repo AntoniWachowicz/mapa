@@ -39,8 +39,6 @@ export const POST: RequestHandler = async ({ request }) => {
 
     // If we don't have a street or house number, try to find nearest address within 100m radius
     if (!addressData.road || !addressData.house_number) {
-      console.log('No street/number found, searching nearby addresses...');
-
       // Search for nearby addresses within ~100m radius
       const searchUrl = `https://nominatim.openstreetmap.org/search?format=json&lat=${lat}&lon=${lng}&addressdetails=1&accept-language=pl,en&limit=5&countrycodes=pl`;
 
@@ -76,7 +74,6 @@ export const POST: RequestHandler = async ({ request }) => {
 
         // If we found a better address nearby, use it
         if (closestWithAddress) {
-          console.log('Found nearby address:', closestWithAddress.display_name);
           addressData = closestWithAddress.address;
         }
       }

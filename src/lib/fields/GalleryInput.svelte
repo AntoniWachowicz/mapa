@@ -436,6 +436,7 @@
 
   .image-url-section {
     display: flex;
+    flex-direction: column;
     gap: 8px;
   }
 
@@ -462,6 +463,7 @@
     font-size: 14px;
     white-space: nowrap;
     transition: all 0.2s;
+    width: 100%;
   }
 
   .add-image-btn:hover:not(:disabled) {
@@ -475,6 +477,7 @@
 
   .video-embed-section {
     display: flex;
+    flex-direction: column;
     gap: 8px;
   }
 
@@ -497,6 +500,7 @@
     padding: 8px 16px;
     border-radius: 4px;
     cursor: pointer;
+    width: 100%;
   }
 
   .add-video-btn:hover:not(:disabled) {

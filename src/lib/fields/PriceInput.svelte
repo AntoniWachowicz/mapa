@@ -67,48 +67,56 @@
 <div class="price-container">
   {#each priceData.funding as source, i}
     <div class="funding-row">
-      <select
-        value={source.source}
-        onchange={(e) => updateFundingSource(i, 'source', e.currentTarget.value)}
-        class="funding-source"
-      >
-        <option value="">Wybierz źródło</option>
-        {#each config.defaultFundingSources as defaultSource}
-          <option value={defaultSource}>{defaultSource}</option>
-        {/each}
-        <option value="Inny">Inny</option>
-      </select>
+      <div class="funding-source-row">
+        <select
+          value={source.source}
+          onchange={(e) => updateFundingSource(i, 'source', e.currentTarget.value)}
+          class="funding-source"
+        >
+          <option value="">Wybierz źródło</option>
+          {#each config.defaultFundingSources as defaultSource}
+            <option value={defaultSource}>{defaultSource}</option>
+          {/each}
+          <option value="Inny">Inny</option>
+        </select>
 
-      <input
-        type="number"
-        step="0.01"
-        value={source.amount}
-        oninput={(e) => updateFundingSource(i, 'amount', e.currentTarget.value)}
-        placeholder="Kwota"
-        class="funding-amount"
-      />
-      <span class="currency">{config.currency}</span>
+        <button
+          type="button"
+          onclick={() => removeFundingSource(i)}
+          class="remove-btn"
+        >
+          ✕
+        </button>
+      </div>
 
-      {#if config.showPercentages}
-        <input
-          type="number"
-          min="0"
-          max="100"
-          value={source.percentage ?? calculatePercentage(priceData.funding, source.amount)}
-          oninput={(e) => updateFundingSource(i, 'percentage', e.currentTarget.value)}
-          placeholder="%"
-          class="funding-percentage"
-        />
-        <span>%</span>
-      {/if}
+      <div class="funding-amount-row">
+        <div style="display: flex; align-items: center; gap: 8px; flex: 1;">
+          <input
+            type="number"
+            step="0.01"
+            value={source.amount}
+            oninput={(e) => updateFundingSource(i, 'amount', e.currentTarget.value)}
+            placeholder="Kwota"
+            class="funding-amount"
+          />
+          <span class="currency">{config.currency}</span>
+        </div>
 
-      <button
-        type="button"
-        onclick={() => removeFundingSource(i)}
-        class="remove-btn"
-      >
-        ✕
-      </button>
+        {#if config.showPercentages}
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <input
+              type="number"
+              min="0"
+              max="100"
+              value={source.percentage ?? calculatePercentage(priceData.funding, source.amount)}
+              oninput={(e) => updateFundingSource(i, 'percentage', e.currentTarget.value)}
+              placeholder="%"
+              class="funding-percentage"
+            />
+            <span>%</span>
+          </div>
+        {/if}
+      </div>
     </div>
   {/each}
 
@@ -136,19 +144,46 @@
   }
 
   .funding-row {
-    display: grid;
-    grid-template-columns: 2fr 1fr auto auto auto auto;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 12px;
+    background: #f9f9f9;
+    border-radius: 4px;
+    border: 1px solid #e5e5e5;
+  }
+
+  .funding-source-row,
+  .funding-amount-row {
+    display: flex;
     gap: 8px;
     align-items: center;
   }
 
-  .funding-source,
+  .funding-source-row {
+    flex-wrap: wrap;
+  }
+
+  .funding-amount-row {
+    justify-content: space-between;
+  }
+
+  .funding-source {
+    padding: 6px 8px;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    font-family: inherit;
+    flex: 1;
+    min-width: 0;
+  }
+
   .funding-amount,
   .funding-percentage {
     padding: 6px 8px;
     border: 1px solid #ccc;
     border-radius: 4px;
     font-family: inherit;
+    width: 100px;
   }
 
   .funding-source:focus,

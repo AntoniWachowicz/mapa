@@ -1106,15 +1106,15 @@
       <div style="grid-column: 1 / -1; display: flex; gap: var(--space-2); margin-top: var(--space-2);">
         <button onclick={saveObject}>
           {#if editingObject}
-            <Icon name="Checkmark" size={16} /> Aktualizuj Pinezkę
+            Aktualizuj Pinezkę
           {:else}
-            <Icon name="Pin" size={16} /> Zapisz Pinezkę
+            Zapisz Pinezkę
           {/if}
         </button>
 
         {#if editingObject}
           <button type="button" class="cancel-btn" onclick={cancelEdit}>
-            <Icon name="Close" size={16} /> Anuluj
+            Anuluj
           </button>
         {/if}
       </div>
@@ -1257,6 +1257,7 @@
     grid-template-columns: auto 1fr;
     gap: var(--space-2) var(--space-3);
     align-items: start;
+    box-sizing: border-box;
   }
 
   /* Compact mode for even tighter spacing */
@@ -1304,6 +1305,7 @@
     gap: var(--space-2);
     min-width: 0;
     margin-bottom: var(--space-4);
+    box-sizing: border-box;
   }
 
   .sub-field {
@@ -1571,8 +1573,8 @@
   }
   
   .minor-tags-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+    display: flex;
+    flex-direction: column;
     gap: var(--space-1);
     margin-bottom: var(--space-2);
   }

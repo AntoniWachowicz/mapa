@@ -14,7 +14,6 @@
 
   function updateIndicator() {
     if (!navTabs || !indicator) {
-      console.log('Missing elements:', { navTabs: !!navTabs, indicator: !!indicator });
       return;
     }
 
@@ -27,13 +26,9 @@
       const left = activeRect.left - containerRect.left;
       const width = activeRect.width;
 
-      console.log('Updating indicator:', { left, width, pathname: $page.url.pathname });
-
       indicator.style.transform = `translateX(${left}px)`;
       indicator.style.width = `${width}px`;
       indicator.style.opacity = '1';
-    } else {
-      console.log('No active tab found for:', $page.url.pathname);
     }
   }
 

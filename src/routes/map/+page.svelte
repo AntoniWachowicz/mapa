@@ -37,6 +37,8 @@
   let filterText = $state('');
   let sortField = $state('');
   let filteredObjects = $state<SavedObject[]>([]);
+  let showFilterInput = $state(false);
+  let showSortSelect = $state(false);
 
   // Initialize filtered objects
   filteredObjects = objects;
@@ -52,6 +54,7 @@
       filtered = filtered.filter(obj => {
         const searchTerm = filterText.toLowerCase();
         return template.fields.some(field => {
+          if (!field.key) return false;
           const value = obj.data[field.key];
           if (typeof value === 'string') {
             return value.toLowerCase().includes(searchTerm);
@@ -99,6 +102,7 @@
     showAdditionPanel = false;
     selectedCoordinates = null;
     editingObject = null; // Clear editing object when closing panel
+    originalEditLocation = null; // Clear original location
   }
 
   function togglePinSection(): void {
@@ -106,15 +110,17 @@
   }
 
   let editingObject = $state<SavedObject | null>(null); // Object being edited
+  let originalEditLocation = $state<{lat: number, lng: number} | null>(null); // Original location before editing
 
   function handleEditPin(obj: SavedObject): void {
     // Set the object to be edited
     editingObject = obj;
 
-    // Set coordinates from the object's location
+    // Set coordinates from the object's location and store original location
     if (obj.location && obj.location.coordinates && obj.location.coordinates.length === 2) {
       const [lng, lat] = obj.location.coordinates;
       selectedCoordinates = { lat, lng };
+      originalEditLocation = { lat, lng }; // Store original location
     }
 
     // Open the addition panel for editing
@@ -488,24 +494,40 @@
   <div class="sidebar" style="width: {sidebarWidth}px;">
     <!-- Filters Section (Always Visible) -->
     <div class="filters">
-      <div class="filter-group">
-        <label>Filtruj <Icon name="Divider-1" size={12} /></label>
+      {#if showFilterInput}
         <input
           type="text"
           bind:value={filterText}
           placeholder="Wyszukaj..."
           class="filter-input"
+          autofocus
         >
-      </div>
-
-      <div class="filter-group">
-        <label>Sortuj <Icon name="Divider-1" size={12} /></label>
-        <select bind:value={sortField} class="sort-select">
-          <option value="">Wybierz pole...</option>
+      {/if}
+      {#if showSortSelect}
+        <select bind:value={sortField} class="sort-select-full">
+          <option value="">Sortuj według...</option>
           {#each template.fields.filter(f => f.visible) as field}
             <option value={field.key}>{field.displayLabel || field.label}</option>
           {/each}
         </select>
+      {/if}
+      <div class="filter-controls">
+        <button
+          class="filter-icon-btn"
+          class:active={showFilterInput}
+          title="Filtruj"
+          onclick={() => showFilterInput = !showFilterInput}
+        >
+          <Icon name="Magnigier Glass" size={18} />
+        </button>
+        <button
+          class="filter-icon-btn"
+          class:active={showSortSelect}
+          title="Sortuj"
+          onclick={() => showSortSelect = !showSortSelect}
+        >
+          <Icon name="List/Arrow Up-down" size={18} />
+        </button>
       </div>
     </div>
 
@@ -533,6 +555,8 @@
       {mapConfig}
       onPinClick={handlePinClickWithPan}
       selectedObjectId={selectedObject?.id || null}
+      editingObjectId={editingObject?.id || null}
+      {originalEditLocation}
       onPinPositionUpdate={handlePinPositionUpdate}
       bind:panToPinCallback
       tags={template.tags || []}
@@ -594,7 +618,7 @@
                       <span class="no-data">Brak zdjęć</span>
                     {/if}
                   {:else}
-                    {formatFieldValue(field, selectedObject.data[field.key])}
+                    {formatFieldValue(field, field.key ? selectedObject.data[field.key] : undefined)}
                   {/if}
                 </div>
               </div>
@@ -634,7 +658,6 @@
       <div class="addition-panel">
         <div class="addition-panel-header">
           <h3>
-            <Icon name={editingObject ? "Document" : "Pin"} size={16} />
             {editingObject ? "Edytuj pinezkę" : "Dodaj nową pinezkę"}
           </h3>
           <button class="close-btn-addition" onclick={closeAdditionPanel}>
@@ -693,31 +716,45 @@
 
   /* Filters Section - Always visible */
   .filters {
-    padding: var(--space-4);
+    padding: var(--space-2);
     border-bottom: 1px solid var(--color-border);
     background: var(--color-surface);
     flex-shrink: 0; /* Don't shrink */
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
   }
 
-  .filter-group {
-    margin-bottom: var(--space-4);
+  .filter-controls {
+    display: flex;
+    justify-content: flex-end;
+    align-items: center;
+    gap: var(--space-2);
   }
 
-  .filter-group:last-child {
-    margin-bottom: 0;
+  .filter-icon-btn {
+    background: transparent;
+    border: none;
+    padding: var(--space-2);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all var(--transition-fast);
+    color: var(--color-text-secondary);
+    flex-shrink: 0;
   }
 
-  .filter-group label {
-    display: block;
-    font-family: var(--font-ui);
-    font-size: var(--text-sm);
-    font-weight: var(--font-weight-medium);
+  .filter-icon-btn:hover {
     color: var(--color-text-primary);
-    margin-bottom: var(--space-2);
+  }
+
+  .filter-icon-btn.active {
+    color: var(--color-accent);
   }
 
   .filter-input,
-  .sort-select {
+  .sort-select-full {
     width: 100%;
     padding: var(--space-2) var(--space-3);
     border: 1px solid var(--color-border);
@@ -729,7 +766,7 @@
   }
 
   .filter-input:focus,
-  .sort-select:focus {
+  .sort-select-full:focus {
     outline: none;
     border-color: var(--color-accent);
   }
@@ -999,7 +1036,9 @@
     position: absolute;
     right: 20px;
     top: 20px;
-    width: 420px;
+    min-width: 420px;
+    max-width: calc(100vw - 40px);
+    width: max-content;
     max-height: calc(100% - 40px);
     background: #ffffff;
     border: 1px solid #000000;
@@ -1054,6 +1093,7 @@
     flex: 1;
     overflow-y: auto;
     padding: var(--space-2);
+    box-sizing: border-box;
   }
 
   /* Mobile responsive */

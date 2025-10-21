@@ -80,10 +80,6 @@
 </script>
 
 <div class="pin-list" class:compact>
-  <div class="pin-list-header">
-    <h4>Wszystkie Pinezki ({objects.length})</h4>
-  </div>
-  
   {#if objects.length === 0}
     <div class="empty-state">
       <div class="empty-icon">📍</div>
@@ -114,7 +110,7 @@
 
           <!-- Display category if category field exists -->
           {#each template.fields.filter(f => f.type === 'category') as categoryField}
-            {#if obj.data[categoryField.key]}
+            {#if categoryField.key && obj.data[categoryField.key]}
               {@const categoryData = obj.data[categoryField.key] as CategoryFieldData}
             <div class="pin-tags">
               {#if categoryData.majorTag}
@@ -142,7 +138,7 @@
 
           <!-- Display tags if tags field exists (simple list without visual styling) -->
           {#each template.fields.filter(f => f.type === 'tags') as tagsField}
-            {#if obj.data[tagsField.key]}
+            {#if tagsField.key && obj.data[tagsField.key]}
               {@const tagsData = obj.data[tagsField.key] as TagsFieldData}
             <div class="pin-tags simple-tags">
               {#if tagsField.tagConfig?.allowMultiple !== false}
@@ -194,7 +190,7 @@
                   {/if}
                 </div>
               {:else}
-                {@const value = obj.data[field.key]}
+                {@const value = field.key ? obj.data[field.key] : undefined}
                 {#if value && value !== ''}
                   <div class="pin-field" class:media-field={field.type === 'image' || field.type === 'youtube'}>
                     <span class="field-label">{field.displayLabel || field.label}:</span>
@@ -271,19 +267,6 @@
     font-size: 14px;
   }
   
-  .pin-list-header {
-    padding: 16px 0 12px 0;
-    border-bottom: 2px solid #e5e7eb;
-    margin-bottom: 16px;
-  }
-  
-  .pin-list-header h4 {
-    margin: 0;
-    color: #1f2937;
-    font-size: 18px;
-    font-weight: 600;
-  }
-  
   .empty-state {
     display: flex;
     flex-direction: column;
@@ -295,6 +278,7 @@
     background: #f9fafb;
     border-radius: 12px;
     border: 2px dashed #d1d5db;
+    margin-top: 16px;
   }
   
   .empty-icon {

@@ -31,7 +31,7 @@
     <div class="address-field">
       <input
         type="text"
-        value={value[field] || ''}
+        value={value[field as keyof AddressData] || ''}
         oninput={(e) => updateField(field, e.currentTarget.value)}
         required={config.requiredFields.includes(field)}
         class="address-input"

@@ -1,14 +1,30 @@
 import { writable } from 'svelte/store';
-import type { Template, Field, SavedObject, ProjectData } from './types.js';
+import type { Template, Field, SavedObject, ProjectData, GeoJSON } from './types.js';
 
 export const template = writable<Template>({ fields: [], tags: [] });
-export const project = writable<SavedObject>({ id: '', data: {} as ProjectData });
+export const project = writable<SavedObject>({
+  id: '',
+  location: { type: 'Point', coordinates: [0, 0] } as GeoJSON.Point,
+  data: {} as ProjectData
+});
 
-export function addField(label: string, type: Field['type'], required: boolean = false): void {
+export function addField(label: string, type: string | undefined, required: boolean = false): void {
   const key = label.toLowerCase().replace(/[^a-z0-9]/g, '_');
   template.update((t: Template) => ({
     ...t,
-    fields: [...t.fields, { key, label, type, required, visible: true, protected: false, adminVisible: true }] // Add visible: true
+    fields: [...t.fields, {
+      id: crypto.randomUUID(),
+      fieldType: type as any,
+      fieldName: key,
+      key,
+      label,
+      type,
+      required,
+      visible: true,
+      protected: false,
+      adminVisible: true,
+      order: t.fields.length
+    }]
   }));
 }
 

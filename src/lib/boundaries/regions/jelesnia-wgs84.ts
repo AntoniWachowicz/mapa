@@ -4,6 +4,8 @@
 // Original projection: EPSG:2180 (Poland CS92)
 // Converted to: WGS84 (EPSG:4326)
 // Coordinate count: 2765
+import type { GeoJSON } from '$lib/types.js';
+
 export const ZYWIECKI_RAJ_BOUNDARY: GeoJSON.Polygon = {
   type: 'Polygon',
   coordinates: [[

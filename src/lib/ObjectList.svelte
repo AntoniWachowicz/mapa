@@ -22,8 +22,8 @@
       <div>
         <div>
           {#each visibleFields as field}
-            <strong>{field.label}:</strong> 
-            {object.data[field.key] || 'N/A'} |
+            <strong>{field.label}:</strong>
+            {field.key ? (object.data[field.key] || 'N/A') : 'N/A'} |
           {/each}
         </div>
         <button onclick={() => onDelete(object.id)}>Delete</button>

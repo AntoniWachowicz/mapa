@@ -23,7 +23,7 @@ export const POST: RequestHandler = async ({ request }) => {
     
     // Add field columns
     template.fields.forEach(field => {
-      if (field.visible && field.key !== 'coordinates') {
+      if (field.visible && field.key && field.key !== 'coordinates') {
         const columnName = field.displayLabel || field.label;
         headers.push(columnName);
         fieldMap[field.key] = columnName;
@@ -35,13 +35,15 @@ export const POST: RequestHandler = async ({ request }) => {
     
     objects.forEach(obj => {
       const row: any[] = [];
-      
-      // Add coordinates
-      row.push(obj.coordinates.lat, obj.coordinates.lng);
-      
+
+      // Add coordinates - extract from GeoJSON Point
+      const lat = obj.location.coordinates[1];
+      const lng = obj.location.coordinates[0];
+      row.push(lat, lng);
+
       // Add field data
       template.fields.forEach(field => {
-        if (field.visible && field.key !== 'coordinates') {
+        if (field.visible && field.key && field.key !== 'coordinates') {
           let value = obj.data[field.key];
           
           // Format value based on field type

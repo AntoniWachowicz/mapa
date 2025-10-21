@@ -56,24 +56,22 @@
   }
 
   .multidate-container.horizontal {
-    flex-direction: row;
-    flex-wrap: wrap;
+    flex-direction: column;
+    flex-wrap: nowrap;
   }
 
   .date-field {
     display: flex;
-    flex-direction: row;
-    align-items: center;
-    gap: 8px;
-    flex: 1;
-    min-width: 200px;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 4px;
+    width: 100%;
   }
 
   .date-label {
     font-size: 12px;
-    font-weight: 400;
+    font-weight: 500;
     color: #666;
-    white-space: nowrap;
     min-width: auto;
   }
 
@@ -86,6 +84,8 @@
     border: 1px solid #ccc;
     border-radius: 4px;
     font-family: inherit;
+    width: 100%;
+    box-sizing: border-box;
   }
 
   .date-input:focus {

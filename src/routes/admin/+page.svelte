@@ -59,6 +59,13 @@
   let resetMessage = $state('');
   let showResetConfirm = $state(false);
 
+  // Database seeding state
+  let seeding = $state(false);
+  let seedMessage = $state('');
+  let showSeedConfirm = $state(false);
+  let clearBeforeSeed = $state(false);
+  let objectCount = $state<number | null>(null);
+
   // Custom overlay toggle
   let showCustomOverlay = $state(true);
   let customTileLayer: any = null;
@@ -88,6 +95,8 @@
     updateMapVisualization();
     // Set initial zoom constraints
     updateZoomLevels();
+    // Load object count for seeding UI
+    fetchObjectCount();
   });
   
   async function loadLeaflet() {
@@ -152,24 +161,16 @@
   
   
   function updateMapVisualization() {
-    console.log('=== updateMapVisualization called ===');
-    console.log('Map exists:', !!map);
-    console.log('L exists:', !!L);
-    console.log('config.boundaryType:', config.boundaryType);
-
     if (!map || !L) {
-      console.log('Exiting: map or L not available');
       return;
     }
 
     // Clear existing visualizations
     if (boundsRectangle) {
-      console.log('Removing existing boundsRectangle');
       map.removeLayer(boundsRectangle);
       boundsRectangle = null;
     }
     if (boundsOverlay) {
-      console.log('Removing existing boundsOverlay');
       map.removeLayer(boundsOverlay);
       boundsOverlay = null;
     }
@@ -200,19 +201,12 @@
     ];
 
     // Draw boundary based on type
-    console.log('Checking boundary type:', config.boundaryType);
     if (config.boundaryType === 'polygon' && config.polygonBoundary) {
-      console.log('POLYGON MODE ACTIVATED');
-      console.log('Selected boundary:', selectedBoundaryId);
-      console.log('Boundary type:', config.polygonBoundary.type);
-
       if (config.polygonBoundary.type === 'Polygon') {
         // Single polygon
         const polygonCoordinates = config.polygonBoundary.coordinates[0].map(
           (coord: [number, number]) => [coord[1], coord[0]]
         );
-
-        console.log('Drawing single polygon with', polygonCoordinates.length, 'coordinates');
 
         // Draw the precise polygon boundary
         boundsRectangle = L.polygon([polygonCoordinates], {
@@ -243,8 +237,6 @@
           overlayHoles.push(converted);
         });
 
-        console.log('Drawing multipolygon with', allPolygonCoords.length, 'polygons');
-
         // Draw all polygons
         boundsRectangle = L.polygon(allPolygonCoords, {
           color: '#007bff',
@@ -262,8 +254,6 @@
           interactive: false
         }).addTo(map);
       }
-
-      console.log('Polygon layer created and added to map');
     } else {
       // Use rectangle boundary
       boundsRectangle = L.rectangle(bounds, {
@@ -736,6 +726,73 @@
       resetting = false;
     }
   }
+
+  // Database seeding functions
+  async function fetchObjectCount() {
+    try {
+      const response = await fetch('/api/objects');
+      const result = await response.json();
+      objectCount = result.objects?.length || 0;
+    } catch (error) {
+      console.error('Error fetching object count:', error);
+      objectCount = 0;
+    }
+  }
+
+  function initiateSeed() {
+    fetchObjectCount();
+    showSeedConfirm = true;
+  }
+
+  function cancelSeed() {
+    showSeedConfirm = false;
+    clearBeforeSeed = false;
+  }
+
+  async function confirmSeed() {
+    showSeedConfirm = false;
+    seeding = true;
+    seedMessage = '';
+
+    try {
+      const url = clearBeforeSeed ? '/api/seed?clear=true' : '/api/seed';
+      const response = await fetch(url, {
+        method: 'POST'
+      });
+
+      const result = await response.json();
+
+      if (!response.ok && !result.success) {
+        if (result.currentCount) {
+          seedMessage = `Baza danych zawiera już ${result.currentCount} obiektów. Użyj opcji "Wyczyść przed zasiewem" aby rozpocząć od nowa.`;
+        } else {
+          throw new Error(result.error || 'Failed to seed database');
+        }
+      } else {
+        const dist = result.distribution || {};
+        const details = Object.entries(dist)
+          .map(([cat, count]) => `${cat}: ${count}`)
+          .join(', ');
+
+        seedMessage = `✓ Pomyślnie utworzono ${result.created} projektów LGD! (${details})`;
+
+        if (result.cleared > 0) {
+          seedMessage += ` Wyczyszczono ${result.cleared} poprzednich obiektów.`;
+        }
+
+        // Reload page after 3 seconds to show new data
+        setTimeout(() => {
+          window.location.reload();
+        }, 3000);
+      }
+    } catch (error) {
+      console.error('Seed error:', error);
+      seedMessage = `Błąd: ${error instanceof Error ? error.message : 'Nieznany błąd'}`;
+    } finally {
+      seeding = false;
+      clearBeforeSeed = false;
+    }
+  }
 </script>
 
 <svelte:head>
@@ -943,6 +1000,10 @@
           {cleaningUp ? 'Cleaning...' : 'Cleanup Unused Tiles'}
         </button>
 
+        <button onclick={initiateSeed} class="btn btn-success" disabled={seeding || saving}>
+          {seeding ? 'Generowanie...' : 'Załaduj Dane Demo LGD'}
+        </button>
+
         <button onclick={initiateReset} class="btn btn-danger" disabled={resetting || saving}>
           {resetting ? 'Resetting...' : 'Reset Database'}
         </button>
@@ -990,8 +1051,59 @@
         {resetMessage}
       </div>
     {/if}
+
+    {#if seedMessage}
+      <div class="message" class:error={seedMessage.includes('Błąd')}>
+        {seedMessage}
+      </div>
+    {/if}
   </div>
 </div>
+
+<!-- Seed Confirmation Modal -->
+{#if showSeedConfirm}
+  <div class="modal-overlay" onclick={cancelSeed}>
+    <div class="modal-content" onclick={(e) => e.stopPropagation()}>
+      <h2>Załaduj Dane Demo LGD Żywiecki Raj</h2>
+      <p>
+        Ta operacja wygeneruje <strong>160 przykładowych projektów LGD</strong> z realistycznymi danymi:
+      </p>
+      <ul style="text-align: left; margin: var(--space-3) 0;">
+        <li>40 projektów infrastrukturalnych</li>
+        <li>30 projektów turystycznych</li>
+        <li>25 projektów kulturalnych</li>
+        <li>25 projektów gospodarczych</li>
+        <li>20 projektów rolniczych</li>
+        <li>20 projektów edukacyjnych</li>
+      </ul>
+      {#if objectCount !== null && objectCount > 0}
+        <p class="warning-text">
+          ⚠️ Baza danych zawiera już <strong>{objectCount} obiektów</strong>.
+        </p>
+        <label style="display: flex; align-items: center; gap: var(--space-2); margin: var(--space-3) 0; cursor: pointer;">
+          <input
+            type="checkbox"
+            bind:checked={clearBeforeSeed}
+            style="width: 20px; height: 20px; cursor: pointer;"
+          />
+          <span>Wyczyść istniejące dane przed zasiewem</span>
+        </label>
+      {:else}
+        <p style="color: var(--color-success);">
+          ✓ Baza danych jest pusta, gotowa do załadowania danych demo.
+        </p>
+      {/if}
+      <div class="modal-buttons">
+        <button onclick={cancelSeed} class="btn btn-secondary">
+          Anuluj
+        </button>
+        <button onclick={confirmSeed} class="btn btn-success">
+          {clearBeforeSeed ? 'Wyczyść i Załaduj Dane' : 'Załaduj Dane Demo'}
+        </button>
+      </div>
+    </div>
+  </div>
+{/if}
 
 <!-- Reset Confirmation Modal -->
 {#if showResetConfirm}
@@ -1380,6 +1492,16 @@
 
   .btn-danger:hover:not(:disabled) {
     background: #b91c1c;
+  }
+
+  /* Success button */
+  .btn-success {
+    background: #16a34a;
+    color: white;
+  }
+
+  .btn-success:hover:not(:disabled) {
+    background: #15803d;
   }
 
   /* Modal styles */

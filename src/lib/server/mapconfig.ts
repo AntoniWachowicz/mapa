@@ -26,7 +26,6 @@ export async function getMapConfig(): Promise<MapConfig> {
 
       // Vercel fallback: If on Vercel and no custom image URL, use demo tiles
       if (process.env.VERCEL && !config.customImageUrl) {
-        console.log('[Vercel] Using demo tiles fallback');
         return {
           ...config,
           customImageUrl: '/uploads/tiles/demo/{z}/{x}/{y}.png',

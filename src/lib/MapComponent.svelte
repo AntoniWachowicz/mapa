@@ -9,13 +9,15 @@
     focusCoordinates?: {lat: number, lng: number} | null;
     mapConfig: MapConfig;  // NEW: Add map config prop
     onPinClick?: (obj: MapObject) => void; // NEW: Pin click callback
-    selectedObjectId?: string | null; // NEW: Track selected pin
+    selectedObjectId?: string | null; // NEW: Track selected pin for detail view
+    editingObjectId?: string | null; // NEW: Track pin being edited
+    originalEditLocation?: {lat: number, lng: number} | null; // NEW: Original location when editing
     onPinPositionUpdate?: (x: number, y: number) => void; // NEW: Pin position callback
     panToPinCallback?: (() => void) | null; // NEW: Callback to trigger pan after panel renders
     tags?: Tag[]; // NEW: Pass tags to get category colors
   }
 
-  let { objects, onMapClick, selectedCoordinates, focusCoordinates = null, mapConfig, onPinClick, selectedObjectId = null, onPinPositionUpdate, panToPinCallback = $bindable(null), tags = [] }: Props = $props();
+  let { objects, onMapClick, selectedCoordinates, focusCoordinates = null, mapConfig, onPinClick, selectedObjectId = null, editingObjectId = null, originalEditLocation = null, onPinPositionUpdate, panToPinCallback = $bindable(null), tags = [] }: Props = $props();
   
   let mapContainer: HTMLDivElement;
   let map: any;
@@ -30,6 +32,7 @@
   let isZooming = false;
   let animationFrameId: number | null = null;
   let mapInitialized = $state(false);
+  let movementLine = $state({ path: '', show: false, duration: 2 });
   
   onMount(async () => {
     await loadLeaflet();
@@ -222,11 +225,12 @@
     // Initialize map with calculated zoom
     map = L.map(mapContainer).setView(center, calculatedDefaultZoom);
 
-    // Expand bounds by 5% margin to match the custom tiles
+    // Expand bounds by 100% margin to allow maximum panning flexibility
+    // This allows the boundary edge to be positioned in the middle of the viewport
     const latRange = mapConfig.neLat - mapConfig.swLat;
     const lngRange = mapConfig.neLng - mapConfig.swLng;
-    const marginLat = latRange * 0.05;
-    const marginLng = lngRange * 0.05;
+    const marginLat = latRange * 1.0;
+    const marginLng = lngRange * 1.0;
 
     const bounds = [
       [mapConfig.swLat - marginLat, mapConfig.swLng - marginLng], // SW with margin
@@ -378,6 +382,81 @@
     }
   }
 
+  function updateMovementLine() {
+    if (!map || !L || !originalEditLocation || !selectedCoordinates) {
+      movementLine = { path: '', show: false, duration: 2 };
+      return;
+    }
+
+    // Check if locations are different (moved at least 5 pixels)
+    const startPoint = map.latLngToContainerPoint([originalEditLocation.lat, originalEditLocation.lng]);
+    const endPoint = map.latLngToContainerPoint([selectedCoordinates.lat, selectedCoordinates.lng]);
+    const distance = Math.sqrt(Math.pow(endPoint.x - startPoint.x, 2) + Math.pow(endPoint.y - startPoint.y, 2));
+
+    if (distance < 5) {
+      // Locations are too close, don't show line
+      movementLine = { path: '', show: false, duration: 2 };
+      return;
+    }
+
+    // Calculate control point for the curve - always bend above (negative Y direction)
+    const midX = (startPoint.x + endPoint.x) / 2;
+    const midY = (startPoint.y + endPoint.y) / 2;
+
+    // Find the higher point (lower Y value = higher on screen)
+    const higherY = Math.min(startPoint.y, endPoint.y);
+
+    // Use 30% of the distance as the bend offset, always curve upward from the higher point
+    const bendOffset = distance * 0.3;
+    const controlX = midX;
+    const controlY = higherY - bendOffset;
+
+    // Create quadratic bezier curve path
+    const path = `M ${startPoint.x} ${startPoint.y} Q ${controlX} ${controlY} ${endPoint.x} ${endPoint.y}`;
+
+    // Calculate approximate curve length using numerical integration
+    // For a quadratic Bezier curve, we can approximate the arc length
+    const curveLength = approximateBezierLength(
+      startPoint.x, startPoint.y,
+      controlX, controlY,
+      endPoint.x, endPoint.y
+    );
+
+    // Set velocity to 100 pixels per second for consistent speed
+    const pixelsPerSecond = 100;
+    const duration = curveLength / pixelsPerSecond;
+
+    // SVG animateMotion handles the animation with a steeper ease-in curve
+    // Using keySplines="0.65 0 1 1" for faster acceleration
+    movementLine = { path, show: true, duration };
+  }
+
+  // Approximate the length of a quadratic Bezier curve
+  function approximateBezierLength(x0: number, y0: number, x1: number, y1: number, x2: number, y2: number): number {
+    // Use 10 segments for approximation
+    const segments = 10;
+    let length = 0;
+    let prevX = x0;
+    let prevY = y0;
+
+    for (let i = 1; i <= segments; i++) {
+      const t = i / segments;
+      const oneMinusT = 1 - t;
+
+      // Quadratic Bezier formula
+      const x = oneMinusT * oneMinusT * x0 + 2 * oneMinusT * t * x1 + t * t * x2;
+      const y = oneMinusT * oneMinusT * y0 + 2 * oneMinusT * t * y1 + t * t * y2;
+
+      // Add distance from previous point
+      length += Math.sqrt(Math.pow(x - prevX, 2) + Math.pow(y - prevY, 2));
+
+      prevX = x;
+      prevY = y;
+    }
+
+    return length;
+  }
+
   function updateLayerBasedOnZoom() {
     if (!map || !L) return;
 
@@ -441,22 +520,28 @@
 
         const titleField = obj.data.title || obj.data.name || Object.values(obj.data)[0];
 
-        // Check if this pin is selected
-        const isSelected = selectedObjectId === obj.id;
+        // Check if this pin is being edited
+        const isEditing = editingObjectId === obj.id;
 
         // Get pin color from category
         const pinColor = getPinColor(obj);
 
-        // Create SVG with dynamic color
-        const pinSvg = `
+        // Create SVG with dynamic color - keep original color, add glow wrapper when editing
+        const pinSvg = isEditing ? `
+          <div class="glow-wrapper">
+            <svg width="23" height="33" viewBox="0 0 23 33" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <path d="M13.134 23.6579C13.134 22.6631 13.8739 21.8397 14.8213 21.5361C16.3387 21.05 17.766 20.2047 18.9702 19.0005C23.0095 14.9613 23.0095 8.4124 18.9702 4.37317C14.931 0.333943 8.38212 0.333943 4.3429 4.37317C0.30367 8.4124 0.30367 14.9613 4.3429 19.0005C5.54714 20.2047 6.97446 21.05 8.49184 21.5361C9.4392 21.8397 10.1791 22.6631 10.1791 23.6579V30.4934C10.1791 31.3095 10.8405 31.9708 11.6566 31.9708C12.4726 31.9708 13.134 31.3095 13.134 30.4934V23.6579Z" fill="${pinColor}" stroke="black" stroke-linecap="round"/>
+            </svg>
+          </div>
+        ` : `
           <svg width="23" height="33" viewBox="0 0 23 33" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <path d="M13.134 23.6579C13.134 22.6631 13.8739 21.8397 14.8213 21.5361C16.3387 21.05 17.766 20.2047 18.9702 19.0005C23.0095 14.9613 23.0095 8.4124 18.9702 4.37317C14.931 0.333943 8.38212 0.333943 4.3429 4.37317C0.30367 8.4124 0.30367 14.9613 4.3429 19.0005C5.54714 20.2047 6.97446 21.05 8.49184 21.5361C9.4392 21.8397 10.1791 22.6631 10.1791 23.6579V30.4934C10.1791 31.3095 10.8405 31.9708 11.6566 31.9708C12.4726 31.9708 13.134 31.3095 13.134 30.4934V23.6579Z" fill="${isSelected ? '#00FF00' : pinColor}" stroke="black" stroke-linecap="round"/>
+            <path d="M13.134 23.6579C13.134 22.6631 13.8739 21.8397 14.8213 21.5361C16.3387 21.05 17.766 20.2047 18.9702 19.0005C23.0095 14.9613 23.0095 8.4124 18.9702 4.37317C14.931 0.333943 8.38212 0.333943 4.3429 4.37317C0.30367 8.4124 0.30367 14.9613 4.3429 19.0005C5.54714 20.2047 6.97446 21.05 8.49184 21.5361C9.4392 21.8397 10.1791 22.6631 10.1791 23.6579V30.4934C10.1791 31.3095 10.8405 31.9708 11.6566 31.9708C12.4726 31.9708 13.134 31.3095 13.134 30.4934V23.6579Z" fill="${pinColor}" stroke="black" stroke-linecap="round"/>
           </svg>
         `;
 
         const marker = L.marker([lat, lng], {
           icon: L.divIcon({
-            className: isSelected ? 'object-marker selected-pin' : 'object-marker',
+            className: isEditing ? 'object-marker editing-pin' : 'object-marker',
             html: pinSvg,
             iconSize: [23, 33],
             iconAnchor: [11, 33]
@@ -506,10 +591,11 @@
     // Don't auto-fit bounds when updating markers - this causes unwanted zoom/pan
   }
   
-  // Update markers when objects or selection changes
+  // Update markers when objects or editing state changes
   $effect(() => {
     // Track dependencies
     objects;
+    editingObjectId;
     selectedObjectId;
     if (map && L) {
       updateMarkers();
@@ -527,16 +613,18 @@
         map.removeLayer(selectedMarker);
       }
 
-      // Create new marker at selected coordinates (green for new placement)
+      // Create new marker at selected coordinates with glow wrapper
       const selectedPinSvg = `
-        <svg width="23" height="33" viewBox="0 0 23 33" fill="none" xmlns="http://www.w3.org/2000/svg">
-          <path d="M13.134 23.6579C13.134 22.6631 13.8739 21.8397 14.8213 21.5361C16.3387 21.05 17.766 20.2047 18.9702 19.0005C23.0095 14.9613 23.0095 8.4124 18.9702 4.37317C14.931 0.333943 8.38212 0.333943 4.3429 4.37317C0.30367 8.4124 0.30367 14.9613 4.3429 19.0005C5.54714 20.2047 6.97446 21.05 8.49184 21.5361C9.4392 21.8397 10.1791 22.6631 10.1791 23.6579V30.4934C10.1791 31.3095 10.8405 31.9708 11.6566 31.9708C12.4726 31.9708 13.134 31.3095 13.134 30.4934V23.6579Z" fill="#00FF00" stroke="black" stroke-linecap="round"/>
-        </svg>
+        <div class="glow-wrapper">
+          <svg width="23" height="33" viewBox="0 0 23 33" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M13.134 23.6579C13.134 22.6631 13.8739 21.8397 14.8213 21.5361C16.3387 21.05 17.766 20.2047 18.9702 19.0005C23.0095 14.9613 23.0095 8.4124 18.9702 4.37317C14.931 0.333943 8.38212 0.333943 4.3429 4.37317C0.30367 8.4124 0.30367 14.9613 4.3429 19.0005C5.54714 20.2047 6.97446 21.05 8.49184 21.5361C9.4392 21.8397 10.1791 22.6631 10.1791 23.6579V30.4934C10.1791 31.3095 10.8405 31.9708 11.6566 31.9708C12.4726 31.9708 13.134 31.3095 13.134 30.4934V23.6579Z" fill="#FF0000" stroke="black" stroke-linecap="round"/>
+          </svg>
+        </div>
       `;
 
       selectedMarker = L.marker([selectedCoordinates.lat, selectedCoordinates.lng], {
         icon: L.divIcon({
-          className: 'selected-marker',
+          className: 'selected-marker editing-pin',
           html: selectedPinSvg,
           iconSize: [23, 33],
           iconAnchor: [11, 33]
@@ -553,16 +641,67 @@
   $effect(() => {
     if (focusCoordinates && map && L) {
       map.setView([focusCoordinates.lat, focusCoordinates.lng], 15);
-      
+
       L.popup()
         .setLatLng([focusCoordinates.lat, focusCoordinates.lng])
         .setContent('Focused Pin')
         .openOn(map);
     }
   });
+
+  // Handle movement line when editing
+  $effect(() => {
+    if (originalEditLocation && selectedCoordinates && map && L) {
+      updateMovementLine();
+
+      // Update on map move
+      const updateHandler = () => updateMovementLine();
+      map.on('move', updateHandler);
+      map.on('zoom', updateHandler);
+
+      return () => {
+        map.off('move', updateHandler);
+        map.off('zoom', updateHandler);
+      };
+    } else {
+      movementLine = { path: '', show: false, duration: 2 };
+    }
+  });
 </script>
 
 <div bind:this={mapContainer} class="map-container"></div>
+
+<!-- Movement line overlay when editing a pin -->
+{#if originalEditLocation && selectedCoordinates && movementLine.path}
+  <svg class="movement-line-overlay">
+    <!-- Curved path (solid) with ID for animation reference -->
+    <path
+      id="movement-path"
+      d={movementLine.path}
+      stroke="var(--color-accent)"
+      stroke-width="2"
+      fill="none"
+      opacity="0.7"
+    />
+    <!-- Animated arrow triangle using animateMotion -->
+    <g>
+      <polygon
+        points="0,-6 10,0 0,6"
+        fill="var(--color-accent)"
+      >
+        <animateMotion
+          dur="{movementLine.duration}s"
+          repeatCount="indefinite"
+          rotate="auto"
+          path={movementLine.path}
+          calcMode="spline"
+          keyTimes="0; 1"
+          keySplines="0.65 0 1 1"
+        />
+      </polygon>
+    </g>
+  </svg>
+{/if}
 
 <style>
   .map-container {
@@ -570,31 +709,47 @@
     height: 100%;
     min-height: 400px;
   }
-  
+
   :global(.object-marker) {
-    background: none;
-    border: none;
-    font-size: 20px;
+    background: none !important;
+    border: none !important;
   }
-  
+
   :global(.selected-marker) {
-    background: none;
-    border: none;
-    font-size: 20px;
-    filter: hue-rotate(120deg);
+    background: none !important;
+    border: none !important;
   }
 
-  :global(.selected-pin) {
-    animation: pin-pulse 1s ease-in-out infinite;
+  :global(.editing-pin) {
+    background: none !important;
+    border: none !important;
   }
 
-  @keyframes :global(pin-pulse) {
+  :global(.glow-wrapper) {
+    animation: glow-pulse 1s ease-in-out infinite !important;
+  }
+
+  @keyframes glow-pulse {
     0%, 100% {
-      transform: translateY(0) scale(1);
+      filter: drop-shadow(0 0 2px rgba(255, 255, 255, 0.4));
     }
     50% {
-      transform: translateY(-5px) scale(1.1);
+      filter: drop-shadow(0 0 8px white) drop-shadow(0 0 16px white) drop-shadow(0 0 24px white);
     }
+  }
+
+  :global(.glow-wrapper) {
+    animation: glow-pulse 1s ease-in-out infinite !important;
+  }
+
+  .movement-line-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    z-index: 400;
   }
 
 </style>

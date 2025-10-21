@@ -35,27 +35,31 @@
 <div class="links-input-container">
   {#each value as link, i}
     <div class="link-row">
-      <input
-        type="text"
-        value={link.text}
-        oninput={(e) => updateLink(i, 'text', e.currentTarget.value)}
-        placeholder="Tekst linku"
-        class="link-text"
-      />
-      <input
-        type="url"
-        value={link.url}
-        oninput={(e) => updateLink(i, 'url', e.currentTarget.value)}
-        placeholder="URL"
-        class="link-url"
-      />
-      <button
-        type="button"
-        onclick={() => removeLink(i)}
-        class="remove-btn"
-      >
-        ✕
-      </button>
+      <div class="link-inputs">
+        <input
+          type="text"
+          value={link.text}
+          oninput={(e) => updateLink(i, 'text', e.currentTarget.value)}
+          placeholder="Tekst linku"
+          class="link-text"
+        />
+        <input
+          type="url"
+          value={link.url}
+          oninput={(e) => updateLink(i, 'url', e.currentTarget.value)}
+          placeholder="URL"
+          class="link-url"
+        />
+      </div>
+      <div class="link-actions">
+        <button
+          type="button"
+          onclick={() => removeLink(i)}
+          class="remove-btn"
+        >
+          ✕
+        </button>
+      </div>
     </div>
   {/each}
 
@@ -78,10 +82,24 @@
   }
 
   .link-row {
-    display: grid;
-    grid-template-columns: 1fr 1fr auto;
+    display: flex;
+    flex-direction: column;
     gap: 8px;
-    align-items: center;
+    padding: 12px;
+    background: #f9f9f9;
+    border-radius: 4px;
+    border: 1px solid #e5e5e5;
+  }
+
+  .link-inputs {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .link-actions {
+    display: flex;
+    justify-content: flex-end;
   }
 
   .link-text,
@@ -90,6 +108,8 @@
     border: 1px solid #ccc;
     border-radius: 4px;
     font-family: inherit;
+    width: 100%;
+    box-sizing: border-box;
   }
 
   .link-text:focus,

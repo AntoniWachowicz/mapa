@@ -33,7 +33,20 @@ export type FieldType =
   | 'links'      // Hyperlinks with labels
   | 'tags'       // Tag selection (existing system)
   | 'price'      // Funding breakdown with percentages
-  | 'category';  // Category selection (existing system)
+  | 'category'   // Category selection (existing system)
+  // Legacy field types for backward compatibility
+  | 'text'
+  | 'number'
+  | 'checkbox'
+  | 'textarea'
+  | 'date'
+  | 'email'
+  | 'url'
+  | 'select'
+  | 'image'
+  | 'youtube'
+  | 'currency'
+  | 'percentage';
 
 // ============================================================================
 // Field Configuration Interfaces
@@ -185,7 +198,7 @@ export interface Field {
   config?: FieldConfig;   // Type-specific configuration
 
   // Legacy fields (keep for compatibility during transition)
-  key?: string;
+  key: string;            // Made required for backward compatibility
   displayLabel?: string;
   type?: string;
   visible?: boolean;

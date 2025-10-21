@@ -2,6 +2,8 @@
 // Source: PRG (Państwowy Rejestr Granic) via gis-support.pl
 // TERYT: 2417042, Updated: 2022-12-22
 // Coordinate count: 2765
+import type { GeoJSON } from '$lib/types.js';
+
 export const ZYWIECKI_RAJ_BOUNDARY: GeoJSON.Polygon = {
   type: 'Polygon',
   coordinates: [[
