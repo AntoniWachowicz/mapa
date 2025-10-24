@@ -72,6 +72,41 @@
     return '#FF0000';
   }
 
+  // Calculate bounds from polygon coordinates
+  function calculatePolygonBoundsLocal(polygon: GeoJSON.Polygon | GeoJSON.MultiPolygon): { swLat: number, swLng: number, neLat: number, neLng: number } {
+    let minLat = Infinity;
+    let maxLat = -Infinity;
+    let minLng = Infinity;
+    let maxLng = -Infinity;
+
+    if (polygon.type === 'Polygon') {
+      const coordinates = polygon.coordinates[0]; // First ring (outer boundary)
+      coordinates.forEach(([lng, lat]: number[]) => {
+        minLat = Math.min(minLat, lat);
+        maxLat = Math.max(maxLat, lat);
+        minLng = Math.min(minLng, lng);
+        maxLng = Math.max(maxLng, lng);
+      });
+    } else if (polygon.type === 'MultiPolygon') {
+      polygon.coordinates.forEach(polygonCoords => {
+        const ring = polygonCoords[0]; // First ring of each polygon
+        ring.forEach(([lng, lat]: number[]) => {
+          minLat = Math.min(minLat, lat);
+          maxLat = Math.max(maxLat, lat);
+          minLng = Math.min(minLng, lng);
+          maxLng = Math.max(maxLng, lng);
+        });
+      });
+    }
+
+    return {
+      swLat: minLat,
+      swLng: minLng,
+      neLat: maxLat,
+      neLng: maxLng
+    };
+  }
+
   // Check if coordinates are within the configured bounds
   function isWithinBounds(lat: number, lng: number): boolean {
     if (mapConfig.boundaryType === 'polygon' && mapConfig.polygonBoundary) {
@@ -210,20 +245,26 @@
   }
   
   function initializeMap() {
-    // Calculate center from config
-    const center = [
-      (mapConfig.swLat + mapConfig.neLat) / 2,
-      (mapConfig.swLng + mapConfig.neLng) / 2
-    ];
+    // Calculate bounds to fit from config
+    let fitBounds;
+    if (mapConfig.boundaryType === 'polygon' && mapConfig.polygonBoundary) {
+      // Calculate bounds from polygon using helper function
+      const polygonBounds = calculatePolygonBoundsLocal(mapConfig.polygonBoundary);
+      fitBounds = [
+        [polygonBounds.swLat, polygonBounds.swLng],
+        [polygonBounds.neLat, polygonBounds.neLng]
+      ];
+    } else {
+      // Use rectangle bounds
+      fitBounds = [
+        [mapConfig.swLat, mapConfig.swLng],
+        [mapConfig.neLat, mapConfig.neLng]
+      ];
+    }
 
-    // Use breakpoint - 3 as default zoom (close but can see the custom map)
-    const calculatedDefaultZoom = Math.max(
-      mapConfig.defaultZoom,
-      Math.min(mapConfig.maxCustomZoom - 3, 14) // 3 zoom levels below breakpoint for good view
-    );
-
-    // Initialize map with calculated zoom
-    map = L.map(mapContainer).setView(center, calculatedDefaultZoom);
+    // Initialize map and fit to bounds automatically
+    map = L.map(mapContainer);
+    map.fitBounds(fitBounds, { padding: [50, 50] }); // Add padding for better view
 
     // Expand bounds by 100% margin to allow maximum panning flexibility
     // This allows the boundary edge to be positioned in the middle of the viewport

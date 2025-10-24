@@ -213,7 +213,7 @@
       onclick={() => showAddForm = true}
       class="add-category-btn"
     >
-      <img src="/icons/Action/Plus.svg" alt="Add" style="width: 16px; height: 16px; margin-right: 6px;" />
+      <img src="/icons/Circle/Add.svg" alt="Add" style="width: 24px; height: 24px; margin-right: 6px;" />
       Dodaj Kategorię
     </button>
   {:else}
