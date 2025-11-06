@@ -284,6 +284,7 @@ export interface MapConfig {
   overlayEnabled?: boolean;
   boundaryType: 'rectangle' | 'polygon';
   polygonBoundary?: GeoJSON.Polygon | GeoJSON.MultiPolygon;
+  baseLayerStyle?: 'osm' | 'watercolor' | 'satellite' | 'terrain'; // Base map tile style
 }
 
 export interface User {

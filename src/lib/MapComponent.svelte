@@ -33,6 +33,27 @@
   let animationFrameId: number | null = null;
   let mapInitialized = $state(false);
   let movementLine = $state({ path: '', show: false, duration: 2 });
+
+  // Tile provider configurations
+  const tileProviders: Record<string, { url: string; attribution: string; maxZoom?: number }> = {
+    osm: {
+      url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+      attribution: '© OpenStreetMap contributors'
+    },
+    watercolor: {
+      url: 'https://tiles.stadiamaps.com/tiles/stamen_watercolor/{z}/{x}/{y}.jpg',
+      attribution: '© Stamen Design, © OpenStreetMap contributors'
+    },
+    satellite: {
+      url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+      attribution: '© Esri, Maxar, Earthstar Geographics, and the GIS User Community',
+      maxZoom: 19
+    },
+    terrain: {
+      url: 'https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png',
+      attribution: '© OpenTopoMap contributors, © OpenStreetMap contributors'
+    }
+  };
   
   onMount(async () => {
     await loadLeaflet();
@@ -283,9 +304,11 @@
     map.setMinZoom(Math.max(10, mapConfig.maxCustomZoom - 6));  // Can zoom out to see custom map
     map.setMaxZoom(18); // Allow maximum detail zoom
 
-    // Create OpenStreetMap tile layer (but don't add it yet)
-    osmTileLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      attribution: '© OpenStreetMap contributors'
+    // Create base tile layer using selected style (default to OSM)
+    const selectedProvider = tileProviders[mapConfig.baseLayerStyle || 'osm'];
+    osmTileLayer = L.tileLayer(selectedProvider.url, {
+      attribution: selectedProvider.attribution,
+      maxZoom: selectedProvider.maxZoom || 18
     });
 
     // Create custom layer if URL provided and overlay is enabled

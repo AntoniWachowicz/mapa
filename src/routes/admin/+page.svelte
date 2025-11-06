@@ -116,13 +116,36 @@
     });
   }
   
+  // Tile provider configurations (same as MapComponent)
+  const tileProviders: Record<string, { url: string; attribution: string; maxZoom?: number }> = {
+    osm: {
+      url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+      attribution: '© OpenStreetMap contributors'
+    },
+    watercolor: {
+      url: 'https://tiles.stadiamaps.com/tiles/stamen_watercolor/{z}/{x}/{y}.jpg',
+      attribution: '© Stamen Design, © OpenStreetMap contributors'
+    },
+    satellite: {
+      url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+      attribution: '© Esri, Maxar, Earthstar Geographics, and the GIS User Community',
+      maxZoom: 19
+    },
+    terrain: {
+      url: 'https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png',
+      attribution: '© OpenTopoMap contributors, © OpenStreetMap contributors'
+    }
+  };
+
   function initializeMap() {
     // Initialize map centered on current bounds
     map = L.map(mapContainer).setView([center.lat, center.lng], config.defaultZoom);
 
-    // Add OpenStreetMap tiles
-    osmTileLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      attribution: '© OpenStreetMap contributors'
+    // Add base tile layer using selected style (default to OSM)
+    const selectedProvider = tileProviders[config.baseLayerStyle || 'osm'];
+    osmTileLayer = L.tileLayer(selectedProvider.url, {
+      attribution: selectedProvider.attribution,
+      maxZoom: selectedProvider.maxZoom || 18
     }).addTo(map);
 
     // Add custom tile layer if configured
@@ -566,6 +589,22 @@
     }
   });
 
+  // Update tile layer when base style changes
+  $effect(() => {
+    if (map && osmTileLayer && config.baseLayerStyle) {
+      const selectedProvider = tileProviders[config.baseLayerStyle];
+
+      // Remove old tile layer
+      map.removeLayer(osmTileLayer);
+
+      // Create and add new tile layer with selected style
+      osmTileLayer = L.tileLayer(selectedProvider.url, {
+        attribution: selectedProvider.attribution,
+        maxZoom: selectedProvider.maxZoom || 18
+      }).addTo(map);
+    }
+  });
+
   // Template export function
   async function exportMapTemplate() {
     exportingTemplate = true;
@@ -953,6 +992,21 @@
               <option value={boundary.id}>{boundary.name}</option>
             {/each}
           </optgroup>
+        </select>
+      </div>
+
+      <div class="boundary-controls">
+        <label for="map-style-select">Map Style:</label>
+        <select
+          id="map-style-select"
+          bind:value={config.baseLayerStyle}
+          class="boundary-select"
+          disabled={saving}
+        >
+          <option value="osm">Standard (OpenStreetMap)</option>
+          <option value="watercolor">Watercolor (Artistic)</option>
+          <option value="satellite">Satellite View</option>
+          <option value="terrain">Terrain/Topographic</option>
         </select>
       </div>
 
