@@ -1,7 +1,15 @@
+<svelte:head>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="anonymous">
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,wght@0,400;0,500;1,400&display=swap" rel="stylesheet">
+</svelte:head>
+
 <script lang="ts">
   import type { SavedObject, Template, CategoryFieldData, TagsFieldData, Tag } from './types.js';
   import Icon from './Icon.svelte';
-  
+
   interface Props {
     objects: SavedObject[];
     template: Template;
@@ -89,166 +97,89 @@
   {:else}
     <div class="pins-grid">
       {#each objects as obj}
-        <div class="pin-card" class:incomplete={obj.hasIncompleteData}>
-          <div class="pin-header">
-            {#if obj.hasIncompleteData}
-              <span class="incomplete-badge" title="Pinezka ma niekompletne dane - wymaga uzupełnienia">
-                <img src="/icons/Triangle.svg" alt="Warning" style="width: 16px; height: 16px; filter: invert(65%) sepia(100%) saturate(3000%) hue-rotate(5deg);" />
-              </span>
-            {/if}
-            <h5 class="pin-title">{obj.data.title || 'Bez tytułu'}</h5>
-            {#if onFocus}
-              <button 
-                class="focus-btn" 
-                onclick={() => handlePinClick(obj)}
-                title="Pokaż na mapie"
-              >
-<Icon name="Eye" size={14} />
-              </button>
-            {/if}
-          </div>
+        {@const categoryField = template.fields.find(f => f.type === 'category')}
+        {@const categoryData = categoryField?.key ? obj.data[categoryField.key] as CategoryFieldData : null}
+        {@const majorTag = categoryData?.majorTag ? availableTags.find(t => t.id === categoryData.majorTag || t.name === categoryData.majorTag) : null}
+        {@const categoryColor = majorTag?.color || '#E57373'}
+        {@const categoryLabel = majorTag?.displayName || majorTag?.name || 'Kategoria'}
 
-          <!-- Display category if category field exists -->
-          {#each template.fields.filter(f => f.type === 'category') as categoryField}
-            {#if categoryField.key && obj.data[categoryField.key]}
-              {@const categoryData = obj.data[categoryField.key] as CategoryFieldData}
-            <div class="pin-tags">
-              {#if categoryData.majorTag}
-                {@const majorTag = availableTags.find(t => t.id === categoryData.majorTag)}
-                {#if majorTag}
-                  <span class="pin-tag major" style="background-color: {majorTag.color}">
-                    {majorTag.displayName || majorTag.name}
-                  </span>
-                {/if}
+        <div class="list-card" class:incomplete={obj.hasIncompleteData}>
+          <!-- Main content -->
+          <div class="card-main">
+            <div class="card-header">
+              {#if obj.hasIncompleteData}
+                <span class="incomplete-icon" title="Niekompletne dane">⚠️</span>
               {/if}
-
-              {#if categoryData.minorTags && categoryData.minorTags.length > 0}
-                {#each categoryData.minorTags as minorTagId}
-                  {@const minorTag = availableTags.find(t => t.id === minorTagId)}
-                  {#if minorTag}
-                    <span class="pin-tag minor" style="background-color: {minorTag.color}; opacity: 0.8">
-                      {minorTag.displayName || minorTag.name}
-                    </span>
-                  {/if}
-                {/each}
-              {/if}
+              <h3 class="card-title">{obj.data.title || 'Bez tytułu'}</h3>
             </div>
-            {/if}
-          {/each}
 
-          <!-- Display tags if tags field exists (simple list without visual styling) -->
-          {#each template.fields.filter(f => f.type === 'tags') as tagsField}
-            {#if tagsField.key && obj.data[tagsField.key]}
-              {@const tagsData = obj.data[tagsField.key] as TagsFieldData}
-            <div class="pin-tags simple-tags">
-              {#if tagsField.tagConfig?.allowMultiple !== false}
-                <!-- Multiple selection mode -->
-                {#if tagsData.selectedTags && tagsData.selectedTags.length > 0}
-                  {#each tagsData.selectedTags as tagId}
-                    {@const tag = availableTags.find(t => t.id === tagId)}
-                    {#if tag}
-                      <span class="pin-tag simple">
-                        {tag.displayName || tag.name}
-                      </span>
-                    {:else}
-                      <span class="pin-tag simple">
-                        {tagId}
-                      </span>
-                    {/if}
-                  {/each}
-                {/if}
-              {:else}
-                <!-- Single selection mode -->
-                {#if tagsData.selectedTag}
-                  {@const tag = availableTags.find(t => t.id === tagsData.selectedTag)}
-                  {#if tag}
-                    <span class="pin-tag simple">
-                      {tag.displayName || tag.name}
-                    </span>
-                  {:else}
-                    <span class="pin-tag simple">
-                      {tagsData.selectedTag}
-                    </span>
-                  {/if}
-                {/if}
-              {/if}
-            </div>
+            <!-- Location -->
+            {#if obj.location && obj.location.coordinates}
+              <div class="card-location">
+                {obj.location.coordinates[1].toFixed(6)}, {obj.location.coordinates[0].toFixed(6)}
+              </div>
             {/if}
-          {/each}
-          
-          <!-- Display key fields including location -->
-          <div class="pin-details">
-            {#each template.fields.filter(f => f.visible && f.key !== 'title' && f.type !== 'category' && f.type !== 'tags') as field}
-              {#if field.key === 'location'}
-                <!-- Special display for location field (GeoJSON) -->
-                <div class="pin-field">
-                  <span class="field-label">{field.displayLabel || field.label}:</span>
-                  {#if obj.location && obj.location.coordinates}
-                    <span class="field-value location-value">{obj.location.coordinates[1].toFixed(6)}, {obj.location.coordinates[0].toFixed(6)}</span>
-                  {:else}
-                    <span class="field-value no-location">Brak lokalizacji</span>
-                  {/if}
-                </div>
-              {:else}
+
+            <!-- Data fields as simple text -->
+            <div class="card-fields">
+              {#each template.fields.filter(f => f.visible && f.key !== 'title' && f.type !== 'category' && f.type !== 'tags' && f.key !== 'location') as field}
                 {@const value = field.key ? obj.data[field.key] : undefined}
-                {#if value && value !== ''}
-                  <div class="pin-field" class:media-field={field.type === 'image' || field.type === 'youtube'}>
+                {#if value && value !== '' && field.type !== 'image' && field.type !== 'youtube' && field.type !== 'gallery'}
+                  <div class="field-row">
                     <span class="field-label">{field.displayLabel || field.label}:</span>
                     {#if field.type === 'url'}
-                      <a href={String(value)} target="_blank" class="field-link">{value}</a>
+                      <a href={String(value)} target="_blank" class="field-value link">{value}</a>
                     {:else if field.type === 'email'}
-                      <a href="mailto:{String(value)}" class="field-link">{value}</a>
-                    {:else if field.type === 'image'}
-                      <div class="image-display">
-                        <img src={String(value)} alt={field.displayLabel || field.label} loading="lazy" />
-                      </div>
-                    {:else if field.type === 'youtube'}
-                      {@const videoId = getYouTubeVideoId(String(value))}
-                      {#if videoId}
-                        <div class="youtube-display">
-                          <iframe
-                            src="https://www.youtube.com/embed/{videoId}"
-                            title="YouTube video"
-                            frameborder="0"
-                            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-                            allowfullscreen
-                          ></iframe>
-                        </div>
-                      {:else}
-                        <a href={String(value)} target="_blank" class="field-link">{value}</a>
-                      {/if}
+                      <a href="mailto:{String(value)}" class="field-value link">{value}</a>
                     {:else}
                       <span class="field-value">{formatFieldValue(field, value)}</span>
                     {/if}
                   </div>
                 {/if}
-              {/if}
-            {/each}
-          </div>
-          
-          <!-- Actions -->
-          {#if showActions && (onEdit || onDelete)}
-            <div class="pin-actions">
-              {#if onEdit}
-                <button 
-                  class="action-btn edit-btn" 
-                  onclick={(e) => { e.stopPropagation(); onEdit(obj); }}
-                  title="Edytuj pinezkę"
-                >
-<Icon name="Pen" size={14} />
-                </button>
-              {/if}
-              {#if onDelete}
-                <button 
-                  class="action-btn delete-btn" 
-                  onclick={(e) => { e.stopPropagation(); onDelete(obj.id); }}
-                  title="Usuń pinezkę"
-                >
-<Icon name="Trash" size={14} />
-                </button>
-              {/if}
+              {/each}
             </div>
-          {/if}
+
+            <!-- Minor tags -->
+            {#if categoryData?.minorTags && categoryData.minorTags.length > 0}
+              <div class="card-tags">
+                {#each categoryData.minorTags.slice(0, 3) as minorTagId}
+                  {@const minorTag = availableTags.find(t => t.id === minorTagId)}
+                  {#if minorTag}
+                    <span class="tag" style="background-color: {minorTag.color};">
+                      {minorTag.displayName || minorTag.name}
+                    </span>
+                  {/if}
+                {/each}
+                {#if categoryData.minorTags.length > 3}
+                  <span class="tag-more">+{categoryData.minorTags.length - 3}</span>
+                {/if}
+              </div>
+            {/if}
+          </div>
+
+          <!-- Category bar on right -->
+          <div class="category-bar" style="background-color: {categoryColor};">
+            {categoryLabel}
+          </div>
+
+          <!-- Action buttons at bottom right -->
+          <div class="card-actions">
+            {#if onFocus}
+              <button class="action-btn" onclick={() => handlePinClick(obj)} title="Pokaż na mapie" type="button">
+                <Icon name="Eye" size={16} />
+              </button>
+            {/if}
+            {#if showActions && onEdit}
+              <button class="action-btn edit" onclick={(e) => { e.stopPropagation(); onEdit(obj); }} title="Edytuj" type="button">
+                <Icon name="Pen" size={16} />
+              </button>
+            {/if}
+            {#if showActions && onDelete}
+              <button class="action-btn delete" onclick={(e) => { e.stopPropagation(); onDelete(obj.id); }} title="Usuń" type="button">
+                <Icon name="Trash" size={16} />
+              </button>
+            {/if}
+          </div>
         </div>
       {/each}
     </div>
@@ -261,12 +192,9 @@
     height: 100%;
     display: flex;
     flex-direction: column;
+    font-family: 'DM Sans', sans-serif;
   }
-  
-  .pin-list.compact {
-    font-size: 14px;
-  }
-  
+
   .empty-state {
     display: flex;
     flex-direction: column;
@@ -274,294 +202,215 @@
     justify-content: center;
     padding: 40px 20px;
     text-align: center;
-    color: #6b7280;
-    background: #f9fafb;
-    border-radius: 12px;
-    border: 2px dashed #d1d5db;
+    color: #666;
+    background: #FAFAFA;
+    border: 2px solid #000000;
     margin-top: 16px;
   }
-  
+
   .empty-icon {
     font-size: 32px;
     margin-bottom: 12px;
     opacity: 0.5;
   }
-  
+
   .empty-text {
     margin: 0 0 8px 0;
-    font-weight: 500;
-    color: #374151;
+    font-family: 'Space Grotesk', sans-serif;
+    font-weight: 600;
+    color: #000000;
+    font-size: 16px;
   }
-  
+
   .empty-subtitle {
-    color: #9ca3af;
+    font-family: 'DM Sans', sans-serif;
+    color: #666;
     font-style: italic;
+    font-size: 13px;
   }
-  
+
   .pins-grid {
     display: flex;
     flex-direction: column;
     gap: 12px;
     flex: 1;
     overflow-y: auto;
-  }
-  
-  .pin-card {
-    background: #ffffff;
-    border: 1px solid #e5e7eb;
-    border-radius: 12px;
-    padding: 16px;
-    transition: all 0.2s ease;
-    box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.1);
-  }
-  
-  .pin-card:hover {
-    border-color: #d1d5db;
-    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
-    transform: translateY(-1px);
+    -ms-overflow-style: none;
+    scrollbar-width: none;
   }
 
-  .pin-card.incomplete {
-    background: #fef3c7;
-    border-color: #f59e0b;
+  .pins-grid::-webkit-scrollbar {
+    display: none;
+  }
+
+  /* List card - simplified structure matching detail panel */
+  .list-card {
     position: relative;
+    background: #FFFFFF;
+    border: 1px solid #000000;
+    display: flex;
+    transition: all 0.2s ease;
   }
 
-  .pin-card.incomplete:hover {
-    background: #fde68a;
-    border-color: #d97706;
+  .list-card:hover {
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
   }
-  
-  .pin-header {
+
+  .list-card.incomplete {
+    border-color: #f59e0b;
+    border-width: 2px;
+  }
+
+  /* Category bar on right - like detail panel */
+  .category-bar {
+    width: 22px;
+    writing-mode: vertical-rl;
+    text-orientation: mixed;
+    transform: rotate(180deg);
+    font-family: 'Space Grotesk', sans-serif;
+    font-style: italic;
+    font-size: 11px;
+    color: white;
     display: flex;
     align-items: center;
-    justify-content: space-between;
-    margin-bottom: 12px;
-  }
-  
-  .pin-title {
-    margin: 0;
-    color: #1f2937;
-    font-size: 16px;
-    font-weight: 600;
-    flex: 1;
-  }
-  
-  .focus-btn {
-    background: #3b82f6;
-    color: white;
-    border: none;
-    border-radius: 6px;
-    padding: 6px 10px;
-    cursor: pointer;
-    font-size: 14px;
-    transition: all 0.2s ease;
-  }
-  
-  .focus-btn:hover {
-    background: #2563eb;
-    transform: translateY(-1px);
-  }
-  
-  .pin-details {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-    margin-bottom: 12px;
-  }
-  
-  .pin-field {
-    display: flex;
-    align-items: start;
-    gap: 8px;
-  }
-
-  .pin-field.media-field {
-    flex-direction: column;
-    align-items: stretch;
-    gap: 8px;
-  }
-
-  .pin-field.media-field .field-label {
-    min-width: auto;
-    margin-bottom: 4px;
-  }
-  
-  .field-label {
-    color: #6b7280;
-    font-size: 13px;
-    font-weight: 500;
-    min-width: 80px;
+    justify-content: center;
+    padding: 8px 0;
     flex-shrink: 0;
   }
-  
-  .field-value {
-    color: #374151;
-    font-size: 13px;
+
+  /* Main content area */
+  .card-main {
     flex: 1;
-    word-break: break-word;
+    padding: 12px 14px 44px 8px;
+    min-width: 0;
   }
 
-  .location-value {
-    font-family: monospace;
-    background: #ecfdf5;
-    padding: 2px 6px;
-    border-radius: 4px;
-    color: #065f46;
-    font-size: 12px;
-  }
-
-  .no-location {
-    color: #9ca3af;
-    font-style: italic;
-  }
-
-  .field-link {
-    color: #3b82f6;
-    font-size: 13px;
-    flex: 1;
-    word-break: break-word;
-    text-decoration: none;
-    border-bottom: 1px dotted #3b82f6;
-  }
-
-  .field-link:hover {
-    color: #2563eb;
-    border-bottom-style: solid;
-  }
-
-  .image-display {
-    border-radius: 8px;
-    overflow: hidden;
-    max-width: 100%;
-    border: 1px solid #e5e7eb;
-    background: #f9fafb;
-  }
-
-  .image-display img {
-    width: 100%;
-    height: auto;
-    max-height: 300px;
-    object-fit: cover;
-    display: block;
-  }
-
-  .youtube-display {
-    position: relative;
-    width: 100%;
-    height: 0;
-    padding-bottom: 56.25%; /* 16:9 aspect ratio */
-    border-radius: 8px;
-    overflow: hidden;
-    border: 1px solid #e5e7eb;
-    background: #f9fafb;
-  }
-
-  .youtube-display iframe {
-    position: absolute;
-    top: 0;
-    left: 0;
-    width: 100%;
-    height: 100%;
-  }
-  
-  .pin-tags {
+  /* Header with title */
+  .card-header {
     display: flex;
-    flex-wrap: wrap;
+    align-items: flex-start;
     gap: 6px;
-    margin-bottom: 16px;
-    margin-top: 4px;
+    margin-bottom: 8px;
   }
-  
-  .pin-tag {
-    display: inline-block;
-    color: white;
-    padding: 4px 8px;
-    border-radius: 12px;
+
+  .incomplete-icon {
+    font-size: 14px;
+    flex-shrink: 0;
+  }
+
+  .card-title {
+    margin: 0;
+    font-family: 'Space Grotesk', sans-serif;
+    font-weight: 700;
+    font-size: 16px;
+    line-height: 1.2;
+    color: #000000;
+    word-break: break-word;
+  }
+
+  /* Location */
+  .card-location {
+    font-family: 'Space Mono', monospace;
+    font-size: 11px;
+    color: #666;
+    margin-bottom: 8px;
+  }
+
+  /* Data fields */
+  .card-fields {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin-bottom: 8px;
+  }
+
+  .field-row {
+    display: flex;
+    gap: 6px;
+    align-items: baseline;
+  }
+
+  .field-label {
+    font-family: 'DM Sans', sans-serif;
     font-size: 11px;
     font-weight: 500;
-    text-shadow: 0 1px 1px rgba(0, 0, 0, 0.2);
-  }
-  
-  .pin-tag.major {
-    border: 2px solid rgba(255, 255, 255, 0.3);
-  }
-  
-  .pin-tag.minor {
-    font-size: 10px;
-    padding: 2px 6px;
+    color: #666;
+    flex-shrink: 0;
   }
 
-  .pin-tag.simple {
-    background: #f3f4f6;
-    color: #374151;
-    border: 1px solid #d1d5db;
-    font-size: 10px;
-    padding: 2px 6px;
-  }
-
-  .simple-tags {
-    margin-bottom: 12px;
-  }
-  
-  .pin-actions {
-    display: flex;
-    gap: 8px;
-    justify-content: flex-end;
-    border-top: 1px solid #f3f4f6;
-    padding-top: 12px;
-    margin-top: 12px;
-  }
-  
-  .action-btn {
-    padding: 6px 10px;
-    border: 1px solid #d1d5db;
-    background: #ffffff;
-    border-radius: 6px;
-    cursor: pointer;
-    font-size: 14px;
-    transition: all 0.2s ease;
-  }
-  
-  .action-btn:hover {
-    transform: translateY(-1px);
-    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
-  }
-  
-  .edit-btn {
-    border-color: #3b82f6;
-    color: #3b82f6;
-  }
-  
-  .edit-btn:hover {
-    background: #3b82f6;
-    color: white;
-  }
-  
-  .delete-btn {
-    border-color: #ef4444;
-    color: #ef4444;
-  }
-  
-  .delete-btn:hover {
-    background: #ef4444;
-    color: white;
-  }
-
-  .incomplete-badge {
-    background: #f59e0b;
-    color: white;
+  .field-value {
+    font-family: 'DM Sans', sans-serif;
     font-size: 12px;
-    padding: 2px 6px;
-    border-radius: 50%;
-    margin-right: 8px;
-    font-weight: bold;
-    line-height: 1;
+    color: #000000;
+    word-break: break-word;
+  }
+
+  .field-value.link {
+    color: #2563EB;
+    text-decoration: underline;
+  }
+
+  .field-value.link:hover {
+    text-decoration: none;
+  }
+
+  /* Tags */
+  .card-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    align-items: center;
+  }
+
+  .tag {
+    font-family: 'DM Sans', sans-serif;
+    font-size: 10px;
+    font-weight: 600;
+    padding: 3px 8px;
+    color: white;
+    white-space: nowrap;
+  }
+
+  .tag-more {
+    font-family: 'DM Sans', sans-serif;
+    font-size: 10px;
+    color: #666;
+  }
+
+  /* Action buttons - positioned at bottom left */
+  .card-actions {
+    position: absolute;
+    bottom: 8px;
+    left: 14px;
+    display: flex;
+    gap: 6px;
+  }
+
+  .action-btn {
+    width: 30px;
+    height: 30px;
+    padding: 0;
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    min-width: 20px;
-    height: 20px;
-    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+    border: 1px solid #000000;
+    background: #FFFFFF;
+    cursor: pointer;
+    transition: all 0.15s ease;
+  }
+
+  .action-btn:hover {
+    background: #000000;
+    color: white;
+  }
+
+  .action-btn.edit:hover {
+    background: #059669;
+    border-color: #059669;
+  }
+
+  .action-btn.delete:hover {
+    background: #ef4444;
+    border-color: #ef4444;
   }
 </style>

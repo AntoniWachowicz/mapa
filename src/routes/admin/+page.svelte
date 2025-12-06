@@ -847,7 +847,7 @@
       </div> -->
 
       <!-- Custom overlay toggle -->
-      <!-- {#if config.customImageUrl}
+      {#if config.customImageUrl}
         <div class="overlay-toggle">
           <label class="toggle-switch">
             <input type="checkbox" bind:checked={showCustomOverlay} onchange={toggleCustomOverlay} />
@@ -855,7 +855,7 @@
           </label>
           <span class="toggle-label">Custom Overlay</span>
         </div>
-      {/if} -->
+      {/if}
 
       <!-- Dynamic coordinate displays that follow corners - only in rectangle mode -->
       {#if config.boundaryType !== 'polygon'}
@@ -1014,7 +1014,7 @@
         Dopasuj widok do granic
       </button>
 
-      <!-- <div class="custom-map-section">
+      <div class="custom-map-section">
         <div class="custom-map-status">
           {#if config.customImageUrl}
             <span class="status-indicator active">
@@ -1069,14 +1069,14 @@
         onchange={handleCustomMapUpload}
         accept="image/png,image/jpeg,image/jpg"
         style="display: none;"
-      /> -->
+      />
 
       <button onclick={saveConfig} class="btn btn-primary" disabled={saving}>
         {saving ? 'Zapisywanie...' : 'Zapisz konfigurację'}
       </button>
     </div>
 
-    <!-- {#if message}
+    {#if message}
       <div class="message" class:error={message.includes('Error')}>
         {message}
       </div>
@@ -1110,7 +1110,7 @@
       <div class="message" class:error={seedMessage.includes('Błąd')}>
         {seedMessage}
       </div>
-    {/if} -->
+    {/if}
   </div>
 </div>
 

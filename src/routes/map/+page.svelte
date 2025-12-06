@@ -2,6 +2,7 @@
   import MapComponent from '$lib/MapComponent.svelte';
   import PinManager from '$lib/PinManager.svelte';
   import PinList from '$lib/PinList.svelte';
+  import PinDetailPanel from '$lib/PinDetailPanel.svelte';
   import Icon from '$lib/Icon.svelte';
   import type { Template, SavedObject, MapObject, MapConfig, CategoryFieldData, ProjectData, PriceData, TagsFieldData, AddressData, LinkData, FileData, GalleryData, MultiDateData, GeoJSON } from '$lib/types.js';
 
@@ -564,78 +565,18 @@
 
     <!-- Detail Panel Container -->
     {#if selectedObject}
-      {@const categoryField = template.fields.find(f => f.fieldType === 'category' || f.type === 'category')}
-      {@const categoryData = categoryField ? selectedObject.data[categoryField.key || categoryField.fieldName] : null}
-      {@const categoryTag = categoryData && typeof categoryData === 'object' && 'majorTag' in categoryData ? template.tags.find(t => t.id === categoryData.majorTag || t.name === categoryData.majorTag) : null}
-      {@const categoryColor = categoryTag?.color || '#666666'}
-      {@const titleField = template.fields.find(f => f.fieldType === 'title' || f.key === 'title')}
-      {@const titleValue = titleField ? selectedObject.data[titleField.key || titleField.fieldName] : ''}
+      <div class="detail-container" bind:this={detailPanelEl}>
+        <PinDetailPanel
+          object={selectedObject}
+          {template}
+          onClose={closeDetailPanel}
+          onEdit={handleEditPin}
+          onImageClick={openImageLightbox}
+        />
 
-      <div class="detail-container">
-        <div class="detail-panel" bind:this={detailPanelEl} style="--category-color: {categoryColor}">
-          <div class="detail-header-new">
-            <h3 class="detail-title">{titleValue || 'Bez tytułu'}</h3>
-            {#if categoryTag}
-              <div class="category-badge" style="background-color: {categoryColor}">
-                {categoryTag.displayName || categoryTag.name}
-              </div>
-            {/if}
-            <button class="close-btn-new" onclick={closeDetailPanel}>
-              <Icon name="Close" size={16} />
-            </button>
-          </div>
-          <div class="detail-content-new">
-            <!-- Show fields excluding title and category (already in header) -->
-            {#each template.fields.filter(f => f.visible && f.fieldType !== 'title' && f.key !== 'title' && f.fieldType !== 'category' && f.type !== 'category') as field}
-              <div class="detail-field">
-                <label>{field.displayLabel || field.label}:</label>
-                <div class="detail-value" class:location-value={field.key === 'location'}>
-                  {#if field.key === 'location'}
-                    <!-- Special display for location field -->
-                    {#if selectedObject.location && selectedObject.location.coordinates}
-                      {selectedObject.location.coordinates[1].toFixed(6)}, {selectedObject.location.coordinates[0].toFixed(6)}
-                    {:else}
-                      <span class="no-location">Brak lokalizacji</span>
-                    {/if}
-                  {:else if (field.fieldType || field.type) === 'gallery'}
-                    <!-- Special display for gallery field -->
-                    {@const galleryData = selectedObject.data[field.key || field.fieldName] as GalleryData}
-                    {#if galleryData && galleryData.items && galleryData.items.length > 0}
-                      <div class="gallery-preview-detail">
-                        {#each galleryData.items as item}
-                          {#if item.type === 'image'}
-                            <button
-                              class="gallery-thumbnail"
-                              onclick={() => openImageLightbox(item.url)}
-                              type="button"
-                            >
-                              <img src={item.url} alt={item.caption || ''} />
-                            </button>
-                          {/if}
-                        {/each}
-                      </div>
-                    {:else}
-                      <span class="no-data">Brak zdjęć</span>
-                    {/if}
-                  {:else}
-                    {formatFieldValue(field, field.key ? selectedObject.data[field.key] : undefined)}
-                  {/if}
-                </div>
-              </div>
-            {/each}
-          </div>
-          <div class="gradient-overlay"></div>
-        </div>
-
-        <!-- Edit Button -->
-        <button
-          class="floating-edit-btn"
-          onclick={() => selectedObject && handleEditPin(selectedObject)}
-        >
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <path fill-rule="evenodd" clip-rule="evenodd" d="M4 5C4 3.34315 5.34315 2 7 2H12.7574C13.553 2 14.3161 2.31607 14.8787 2.87868L19.1213 7.12132C19.6839 7.68393 20 8.44699 20 9.24264V19C20 20.6569 18.6569 22 17 22H7C5.34315 22 4 20.6569 4 19V5ZM14 9C13.4477 9 13 8.55228 13 8V5.20711C13 4.76165 13.5386 4.53857 13.8536 4.85355L17.1464 8.14645C17.4614 8.46143 17.2383 9 16.7929 9H14ZM8.29289 15.7071C8.10536 15.8946 8 16.149 8 16.4142V18.5C8 18.7761 8.22386 19 8.5 19H10.5858C10.851 19 11.1054 18.8946 11.2929 18.7071L15.2929 14.7071C15.6834 14.3166 15.6834 13.6834 15.2929 13.2929L13.7071 11.7071C13.3166 11.3166 12.6834 11.3166 12.2929 11.7071L8.29289 15.7071Z" fill="white"/>
-          </svg>
-          <span>Edytuj</span>
+        <!-- External close button rectangle -->
+        <button class="external-close-btn" onclick={closeDetailPanel} type="button">
+          <Icon name="Close" size={16} />
         </button>
       </div>
 
@@ -851,173 +792,30 @@
     left: 20px;
     top: 20px;
     z-index: 1000;
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
   }
 
-  /* Detail Panel */
-  .detail-panel {
-    position: relative;
-    width: 420px;
-    max-height: calc(100vh - 120px);
-    background: var(--color-surface);
-    border: 1px solid #000000;
-    border-radius: 5px 5px 0px 5px;
-    overflow: hidden;
-  }
-
-  .detail-header-new {
-    position: relative;
-    padding: var(--space-4);
-    padding-right: 40px;
-    display: grid;
-    grid-template-columns: 1fr auto;
-    grid-template-rows: auto auto;
-    gap: var(--space-3);
-    align-items: start;
-  }
-
-  .detail-title {
-    grid-column: 1;
-    grid-row: 1;
-    margin: 0;
-    font-family: var(--font-ui);
-    font-size: 20px;
-    font-weight: var(--font-weight-bold);
-    color: var(--color-text-primary);
-    line-height: 1.3;
-    word-break: break-word;
-  }
-
-  .category-badge {
-    grid-column: 2;
-    grid-row: 1;
-    padding: 6px 12px;
-    border-radius: 8px;
-    font-family: var(--font-ui);
-    font-size: 13px;
-    font-weight: var(--font-weight-medium);
-    color: white;
-    white-space: nowrap;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-  }
-
-  .close-btn-new {
+  /* External close button */
+  .external-close-btn {
     position: absolute;
-    top: 8px;
-    right: 8px;
-    background: rgba(255, 255, 255, 0.9);
-    border: 1px solid rgba(0, 0, 0, 0.1);
-    padding: 6px;
-    border-radius: 6px;
+    top: 0;
+    right: -40px;
+    width: 40px;
+    height: 40px;
+    background: #FFFFFF;
+    border: 1px solid #000000;
+    border-radius: 0;
     cursor: pointer;
-    color: var(--color-text-secondary);
-    transition: all var(--transition-fast);
+    color: #666;
+    transition: all 0.2s;
     display: flex;
     align-items: center;
     justify-content: center;
-    z-index: 10;
+    padding: 0;
   }
 
-  .close-btn-new:hover {
-    background: rgba(255, 255, 255, 1);
-    color: var(--color-text-primary);
-    border-color: rgba(0, 0, 0, 0.2);
-  }
-
-  .detail-content-new {
-    padding: 0 var(--space-4) var(--space-4) var(--space-4);
-    max-height: calc(100vh - 200px);
-    overflow-y: auto;
-  }
-
-  .gradient-overlay {
-    position: absolute;
-    bottom: 0;
-    right: 0;
-    width: 180px;
-    height: 180px;
-    background: radial-gradient(
-      circle at bottom right,
-      var(--category-color) 0%,
-      rgba(255, 255, 255, 0) 70%
-    );
-    opacity: 0.25;
-    pointer-events: none;
-    border-radius: 0 0 0 0;
-  }
-
-  .detail-field {
-    margin-bottom: var(--space-3);
-  }
-
-  .detail-field:last-child {
-    margin-bottom: 0;
-  }
-
-  .detail-field label {
-    display: block;
-    font-family: var(--font-ui);
-    font-size: var(--text-sm);
-    font-weight: var(--font-weight-medium);
-    color: var(--color-text-secondary);
-    margin-bottom: var(--space-1);
-  }
-
-  .detail-value {
-    font-family: var(--font-ui);
-    font-size: var(--text-sm);
-    color: var(--color-text-primary);
-    word-break: break-word;
-  }
-
-  .detail-value.location-value {
-    font-family: monospace;
-    background: #ecfdf5;
-    padding: 4px 8px;
-    border-radius: 4px;
-    color: #065f46;
-  }
-
-  .no-location {
-    color: #9ca3af;
-    font-style: italic;
-  }
-
-  /* Floating Edit Button */
-  .floating-edit-btn {
-    background: var(--color-accent);
-    color: white;
-    border: 1px solid #000000;
-    padding: var(--space-2) var(--space-3);
-    border-radius: 5px;
-    cursor: pointer;
-    transition: all var(--transition-fast);
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    gap: var(--space-2);
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
-    font-family: var(--font-ui);
-    font-size: var(--text-sm);
-    font-weight: var(--font-weight-medium);
-    align-self: flex-start;
-  }
-
-  .floating-edit-btn:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 6px 16px rgba(0, 0, 0, 0.2);
-  }
-
-  .floating-edit-btn:active {
-    transform: translateY(0px);
-  }
-
-  .floating-edit-btn svg {
-    flex-shrink: 0;
+  .external-close-btn:hover {
+    background: #F5F5F5;
+    color: #000;
   }
 
   /* Connection Line */
@@ -1122,44 +920,6 @@
     }
   }
 
-  /* Gallery Preview in Detail Panel */
-  .gallery-preview-detail {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
-    margin-top: 4px;
-  }
-
-  .gallery-thumbnail {
-    width: auto;
-    height: 100px;
-    border: 2px solid #e5e7eb;
-    border-radius: 4px;
-    overflow: hidden;
-    cursor: pointer;
-    transition: all 0.2s;
-    background: none;
-    padding: 0;
-  }
-
-  .gallery-thumbnail:hover {
-    border-color: var(--color-accent);
-    transform: scale(1.05);
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
-  }
-
-  .gallery-thumbnail img {
-    height: 100%;
-    width: auto;
-    display: block;
-    object-fit: cover;
-  }
-
-  .no-data {
-    color: #9ca3af;
-    font-style: italic;
-    font-size: var(--text-sm);
-  }
 
   /* Image Lightbox */
   .lightbox-overlay {
