@@ -257,10 +257,11 @@ export interface ProjectData {
 export interface SavedObject {
   id: string;
   schemaVersion?: number;           // Which schema version created this pin
-  location: GeoJSON.Point;
+  location?: GeoJSON.Point | null;  // Optional - null for incomplete imports without coordinates
   locationAddressSync?: 'synced' | 'unverified' | 'mismatch'; // Sync status
   data: ProjectData;
-  hasIncompleteData?: boolean;      // Legacy flag for incomplete imports
+  hasIncompleteData?: boolean;      // Flag for incomplete imports (missing coordinates, etc.)
+  missingFields?: string[];         // List of field names that are missing/incomplete (e.g., ['location'])
   createdAt?: Date;
   updatedAt?: Date;
 }

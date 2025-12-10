@@ -168,12 +168,20 @@ export async function getObjects(): Promise<SavedObject[]> {
     const mapped = results.map(doc => {
       const obj: SavedObject = {
         id: doc._id.toString(),
-        location: doc.location || { type: 'Point', coordinates: [0, 0] }, // Fallback for legacy data
         data: doc.data
       };
 
+      // Handle location - can be null for incomplete imports
+      if (doc.location) {
+        obj.location = doc.location;
+      }
+
       if (doc.hasIncompleteData) {
         obj.hasIncompleteData = doc.hasIncompleteData;
+      }
+
+      if (doc.missingFields && doc.missingFields.length > 0) {
+        obj.missingFields = doc.missingFields;
       }
 
       return obj;
@@ -216,28 +224,50 @@ export async function getObjectById(objectId: string): Promise<SavedObject | nul
   }
 }
 
-export async function createObject(location: GeoJSON.Point, data: ProjectData, hasIncompleteData?: boolean): Promise<SavedObject> {
+export async function createObject(
+  location: GeoJSON.Point | null,
+  data: ProjectData,
+  hasIncompleteData?: boolean,
+  missingFields?: string[]
+): Promise<SavedObject> {
   try {
     const db = await connectToDatabase();
     const collection = db.collection('objects');
 
-    const objectData: any = { location, data };
+    const objectData: any = { data };
+
+    // Only add location if it's not null
+    if (location) {
+      objectData.location = location;
+    }
+
     if (hasIncompleteData) {
       objectData.hasIncompleteData = hasIncompleteData;
+    }
+
+    if (missingFields && missingFields.length > 0) {
+      objectData.missingFields = missingFields;
     }
 
     const result = await collection.insertOne(objectData);
 
     const savedObject: SavedObject = {
       id: result.insertedId.toString(),
-      location,
       data
     };
+
+    if (location) {
+      savedObject.location = location;
+    }
 
     if (hasIncompleteData) {
       savedObject.hasIncompleteData = hasIncompleteData;
     }
-    
+
+    if (missingFields && missingFields.length > 0) {
+      savedObject.missingFields = missingFields;
+    }
+
     return savedObject;
   } catch (error) {
     console.error('Error creating object:', error);

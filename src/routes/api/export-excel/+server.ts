@@ -36,9 +36,9 @@ export const POST: RequestHandler = async ({ request }) => {
     objects.forEach(obj => {
       const row: any[] = [];
 
-      // Add coordinates - extract from GeoJSON Point
-      const lat = obj.location.coordinates[1];
-      const lng = obj.location.coordinates[0];
+      // Add coordinates - extract from GeoJSON Point (handle missing location)
+      const lat = obj.location?.coordinates?.[1] ?? '';
+      const lng = obj.location?.coordinates?.[0] ?? '';
       row.push(lat, lng);
 
       // Add field data

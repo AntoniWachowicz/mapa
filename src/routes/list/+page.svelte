@@ -38,6 +38,23 @@
   let bulkEditField = $state<string>('');
   let bulkEditValue = $state<any>('');
 
+  // Excel import mapping state
+  let showMappingModal = $state(false);
+  let excelHeaders = $state<string[]>([]);
+  let excelSampleData = $state<Record<string, any>[]>([]);
+  let excelAllData = $state<any[]>([]);
+  let columnMapping = $state<Record<string, string>>({}); // Excel column -> schema field key
+  let importInProgress = $state(false);
+
+  // Location editing modal state
+  let showLocationModal = $state(false);
+  let locationEditObjectId = $state<string | null>(null);
+  let locationEditLat = $state<string>('');
+  let locationEditLng = $state<string>('');
+  let locationEditAddress = $state<string>('');
+  let locationEditMode = $state<'manual' | 'geocode'>('manual');
+  let locationEditLoading = $state(false);
+
   // Initialize data
   $effect(() => {
     if (data.objects) {
@@ -92,22 +109,74 @@
     formData.append('file', file);
 
     try {
+      // Step 1: Parse the Excel file
       const response = await fetch('/api/import-excel', {
         method: 'POST',
         body: formData
       });
 
-      if (response.ok) {
-        const result = await response.json();
-        if (result.success) {
-          // Refresh the page to show new data
-          window.location.reload();
-        } else {
-          alert(`Błąd importu: ${result.error || 'Nieznany błąd'}`);
-        }
-      } else {
+      if (!response.ok) {
         alert('Błąd podczas importu pliku Excel');
+        input.value = '';
+        return;
       }
+
+      const result = await response.json();
+      if (!result.success) {
+        alert(`Błąd importu: ${result.error || 'Nieznany błąd'}`);
+        input.value = '';
+        return;
+      }
+
+      const importedRows = result.data || [];
+      if (importedRows.length === 0) {
+        alert('Plik Excel nie zawiera danych do importu');
+        input.value = '';
+        return;
+      }
+
+      // Step 2: Store data and show mapping modal
+      excelHeaders = result.headers || [];
+      excelAllData = importedRows;
+
+      // Create sample data for preview (first 3 rows)
+      excelSampleData = importedRows.slice(0, 3).map((row: any) => row.originalData);
+
+      // Auto-detect mappings based on column name similarity
+      const autoMapping: Record<string, string> = {};
+      if (data.template?.fields) {
+        for (const header of excelHeaders) {
+          const headerLower = header.toLowerCase().trim();
+
+          // Try to find a matching field
+          for (const field of data.template.fields) {
+            const fieldNameLower = field.fieldName.toLowerCase().trim();
+            const fieldKeyLower = field.key.toLowerCase().trim();
+
+            // Match by exact name, key, or partial match
+            if (headerLower === fieldNameLower ||
+                headerLower === fieldKeyLower ||
+                fieldNameLower.includes(headerLower) ||
+                headerLower.includes(fieldNameLower)) {
+              autoMapping[header] = field.key;
+              break;
+            }
+          }
+
+          // Special handling for coordinates
+          if (!autoMapping[header]) {
+            if (headerLower.includes('lat') || headerLower.includes('szerokość') || headerLower.includes('szerokosc')) {
+              autoMapping[header] = '_latitude';
+            } else if (headerLower.includes('lng') || headerLower.includes('lon') || headerLower.includes('długość') || headerLower.includes('dlugosc')) {
+              autoMapping[header] = '_longitude';
+            }
+          }
+        }
+      }
+
+      columnMapping = autoMapping;
+      showMappingModal = true;
+
     } catch (error) {
       console.error('Excel import error:', error);
       alert('Błąd podczas importu pliku Excel');
@@ -115,6 +184,115 @@
 
     // Reset input
     input.value = '';
+  }
+
+  function closeMappingModal() {
+    showMappingModal = false;
+    excelHeaders = [];
+    excelSampleData = [];
+    excelAllData = [];
+    columnMapping = {};
+  }
+
+  async function executeImportWithMapping() {
+    if (!data.template) return;
+
+    importInProgress = true;
+
+    let savedCount = 0;
+    let incompleteCount = 0;
+    let errorCount = 0;
+
+    // Find latitude and longitude mappings
+    let latColumn: string | null = null;
+    let lngColumn: string | null = null;
+
+    for (const [excelCol, schemaField] of Object.entries(columnMapping)) {
+      if (schemaField === '_latitude') latColumn = excelCol;
+      if (schemaField === '_longitude') lngColumn = excelCol;
+    }
+
+    for (const row of excelAllData) {
+      try {
+        const originalData = row.originalData || {};
+
+        // Map Excel columns to schema fields
+        const mappedData: Record<string, any> = {};
+
+        for (const [excelCol, schemaField] of Object.entries(columnMapping)) {
+          // Skip special coordinate mappings
+          if (schemaField === '_latitude' || schemaField === '_longitude' || schemaField === '_skip') {
+            continue;
+          }
+
+          // Get the value from the original Excel data
+          const value = originalData[excelCol];
+          if (value !== undefined && value !== null && value !== '') {
+            mappedData[schemaField] = value;
+          }
+        }
+
+        // Parse coordinates
+        let coordinates: { lat: number; lng: number } | null = null;
+        if (latColumn && lngColumn && originalData[latColumn] && originalData[lngColumn]) {
+          const lat = parseFloat(originalData[latColumn]);
+          const lng = parseFloat(originalData[lngColumn]);
+          if (!isNaN(lat) && !isNaN(lng)) {
+            coordinates = { lat, lng };
+          }
+        }
+
+        // Build the save payload
+        const hasCoordinates = coordinates !== null;
+        const payload: any = {
+          data: mappedData,
+          hasIncompleteData: !hasCoordinates,
+          missingFields: hasCoordinates ? [] : ['location']
+        };
+
+        if (hasCoordinates) {
+          payload.location = {
+            type: 'Point',
+            coordinates: [coordinates!.lng, coordinates!.lat]
+          };
+        }
+
+        const saveResponse = await fetch('/api/objects', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+
+        if (saveResponse.ok) {
+          savedCount++;
+          if (!hasCoordinates) {
+            incompleteCount++;
+          }
+        } else {
+          errorCount++;
+        }
+      } catch {
+        errorCount++;
+      }
+    }
+
+    importInProgress = false;
+    closeMappingModal();
+
+    // Show result and refresh
+    if (savedCount > 0) {
+      let message = `Zaimportowano ${savedCount} rekordów`;
+      if (incompleteCount > 0) {
+        message += ` (${incompleteCount} bez współrzędnych - oznaczone jako niekompletne)`;
+      }
+      if (errorCount > 0) {
+        message += ` (${errorCount} błędów)`;
+      }
+      alert(message);
+      window.location.reload();
+    } else {
+      alert(`Nie udało się zaimportować żadnych rekordów. ${errorCount} błędów.`);
+    }
   }
 
   async function handleExcelExport() {
@@ -642,6 +820,132 @@
     }
   }
 
+  // Location editing functions
+  function openLocationModal(objectId: string) {
+    const obj = filteredObjects.find(o => o.id === objectId);
+    if (obj && obj.location) {
+      // Pre-fill with existing coordinates
+      locationEditLat = String(obj.location.coordinates[1]);
+      locationEditLng = String(obj.location.coordinates[0]);
+    } else {
+      locationEditLat = '';
+      locationEditLng = '';
+    }
+    locationEditAddress = '';
+    locationEditObjectId = objectId;
+    locationEditMode = 'manual';
+    showLocationModal = true;
+  }
+
+  function closeLocationModal() {
+    showLocationModal = false;
+    locationEditObjectId = null;
+    locationEditLat = '';
+    locationEditLng = '';
+    locationEditAddress = '';
+    locationEditMode = 'manual';
+    locationEditLoading = false;
+  }
+
+  async function geocodeAddress() {
+    if (!locationEditAddress.trim()) {
+      alert('Wprowadź adres do wyszukania');
+      return;
+    }
+
+    locationEditLoading = true;
+
+    try {
+      const response = await fetch('/api/geocode', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ address: locationEditAddress })
+      });
+
+      const result = await response.json();
+
+      if (result.success && result.coordinates) {
+        locationEditLat = String(result.coordinates.lat);
+        locationEditLng = String(result.coordinates.lng);
+        // Switch to manual mode to show the found coordinates
+        locationEditMode = 'manual';
+      } else {
+        alert(result.error || 'Nie udało się znaleźć adresu');
+      }
+    } catch (error) {
+      console.error('Geocode error:', error);
+      alert('Błąd podczas wyszukiwania adresu');
+    } finally {
+      locationEditLoading = false;
+    }
+  }
+
+  async function saveLocation() {
+    if (!locationEditObjectId) return;
+
+    const lat = parseFloat(locationEditLat);
+    const lng = parseFloat(locationEditLng);
+
+    if (isNaN(lat) || isNaN(lng)) {
+      alert('Wprowadź prawidłowe współrzędne');
+      return;
+    }
+
+    if (lat < -90 || lat > 90) {
+      alert('Szerokość geograficzna musi być między -90 a 90');
+      return;
+    }
+
+    if (lng < -180 || lng > 180) {
+      alert('Długość geograficzna musi być między -180 a 180');
+      return;
+    }
+
+    locationEditLoading = true;
+
+    try {
+      const response = await fetch(`/api/objects/${locationEditObjectId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          location: {
+            type: 'Point',
+            coordinates: [lng, lat]
+          },
+          clearIncomplete: true // Signal to clear incomplete flags
+        })
+      });
+
+      if (response.ok) {
+        // Update local state
+        const objIndex = filteredObjects.findIndex(o => o.id === locationEditObjectId);
+        if (objIndex !== -1) {
+          filteredObjects[objIndex].location = {
+            type: 'Point',
+            coordinates: [lng, lat]
+          };
+          // Clear incomplete data flags if they were only for location
+          if (filteredObjects[objIndex].missingFields?.includes('location')) {
+            filteredObjects[objIndex].missingFields = filteredObjects[objIndex].missingFields?.filter(f => f !== 'location');
+            if (filteredObjects[objIndex].missingFields?.length === 0) {
+              filteredObjects[objIndex].hasIncompleteData = false;
+            }
+          }
+          filteredObjects = [...filteredObjects];
+        }
+        closeLocationModal();
+        alert('Lokalizacja została zapisana');
+      } else {
+        alert('Błąd podczas zapisywania lokalizacji');
+      }
+    } catch (error) {
+      console.error('Save location error:', error);
+      alert('Błąd podczas zapisywania lokalizacji');
+    } finally {
+      locationEditLoading = false;
+    }
+  }
+
 </script>
 
 <svelte:head>
@@ -749,14 +1053,25 @@
               </tr>
             {:else}
               {#each filteredObjects as obj, rowIndex}
-                <tr class:incomplete={obj.hasIncompleteData}>
+                {@const isMissingLocation = !obj.location || obj.missingFields?.includes('location')}
+                <tr class:incomplete={obj.hasIncompleteData} class:missing-location={isMissingLocation}>
                   <!-- Checkbox column -->
-                  <td class="checkbox-column">
+                  <td class="checkbox-column" class:missing-location-cell={isMissingLocation}>
                     <input
                       type="checkbox"
                       checked={selectedRows.has(obj.id)}
                       onchange={(e) => handleRowSelection(obj.id, rowIndex, e)}
                     />
+                    {#if isMissingLocation}
+                      <button
+                        class="missing-location-badge"
+                        title="Kliknij aby dodać współrzędne"
+                        onclick={(e) => {
+                          e.stopPropagation();
+                          openLocationModal(obj.id);
+                        }}
+                      >!</button>
+                    {/if}
                   </td>
                   {#each data.template.fields.filter(f => f.visible) as field}
                     {@const cellId = `${obj.id}-${field.key}`}
@@ -1124,6 +1439,186 @@
         </div>
       </div>
     {/if}
+
+    <!-- Column Mapping Modal for Excel Import -->
+    {#if showMappingModal}
+      <div class="mapping-modal-overlay" onclick={closeMappingModal}>
+        <div class="mapping-modal" onclick={(e) => e.stopPropagation()}>
+          <h2>Mapowanie kolumn Excel</h2>
+          <p class="mapping-modal-info">
+            Przypisz kolumny z pliku Excel do pól w schemacie.
+            Znaleziono {excelAllData.length} wierszy do importu.
+          </p>
+
+          {#if importInProgress}
+            <div class="import-progress">
+              <div class="spinner"></div>
+              <p>Importowanie danych...</p>
+            </div>
+          {:else}
+            <!-- Column mapping table -->
+            <div class="mapping-table-container">
+              <table class="mapping-table">
+                <thead>
+                  <tr>
+                    <th>Kolumna Excel</th>
+                    <th>Przykładowe dane</th>
+                    <th>Pole w schemacie</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {#each excelHeaders as header}
+                    <tr>
+                      <td class="mapping-excel-col">{header}</td>
+                      <td class="mapping-sample">
+                        {#if excelSampleData.length > 0}
+                          <span class="sample-value">{excelSampleData[0]?.[header] || '—'}</span>
+                          {#if excelSampleData.length > 1}
+                            <span class="sample-value">{excelSampleData[1]?.[header] || '—'}</span>
+                          {/if}
+                        {:else}
+                          <span class="sample-value">—</span>
+                        {/if}
+                      </td>
+                      <td class="mapping-field-select">
+                        <select bind:value={columnMapping[header]}>
+                          <option value="">— Pomiń —</option>
+                          <option value="_skip">— Pomiń —</option>
+                          <optgroup label="Współrzędne">
+                            <option value="_latitude">Szerokość (latitude)</option>
+                            <option value="_longitude">Długość (longitude)</option>
+                          </optgroup>
+                          <optgroup label="Pola schematu">
+                            {#each data.template?.fields || [] as field}
+                              <option value={field.key}>{getFieldDisplayName(field)}</option>
+                            {/each}
+                          </optgroup>
+                        </select>
+                      </td>
+                    </tr>
+                  {/each}
+                </tbody>
+              </table>
+            </div>
+
+            <!-- Import info -->
+            <div class="mapping-info">
+              <p>
+                <strong>Uwaga:</strong> Rekordy bez współrzędnych zostaną zaimportowane jako niekompletne
+                i nie będą widoczne na mapie (tylko w widoku listy).
+              </p>
+            </div>
+
+            <div class="mapping-modal-actions">
+              <button class="btn btn-primary" onclick={executeImportWithMapping} disabled={importInProgress}>
+                Importuj {excelAllData.length} rekordów
+              </button>
+              <button class="btn btn-secondary" onclick={closeMappingModal} disabled={importInProgress}>
+                Anuluj
+              </button>
+            </div>
+          {/if}
+        </div>
+      </div>
+    {/if}
+
+    <!-- Location Edit Modal -->
+    {#if showLocationModal}
+      <div class="location-modal-overlay" onclick={closeLocationModal}>
+        <div class="location-modal" onclick={(e) => e.stopPropagation()}>
+          <h2>Ustaw lokalizację</h2>
+          <p class="location-modal-info">
+            Wprowadź współrzędne ręcznie lub wyszukaj adres.
+          </p>
+
+          <!-- Mode tabs -->
+          <div class="location-mode-tabs">
+            <button
+              class="mode-tab"
+              class:active={locationEditMode === 'manual'}
+              onclick={() => locationEditMode = 'manual'}
+            >
+              Wprowadź współrzędne
+            </button>
+            <button
+              class="mode-tab"
+              class:active={locationEditMode === 'geocode'}
+              onclick={() => locationEditMode = 'geocode'}
+            >
+              Wyszukaj adres
+            </button>
+          </div>
+
+          {#if locationEditLoading}
+            <div class="location-loading">
+              <div class="spinner"></div>
+              <p>Wyszukiwanie...</p>
+            </div>
+          {:else}
+            {#if locationEditMode === 'manual'}
+              <div class="location-form">
+                <div class="form-group">
+                  <label for="locationLat">Szerokość geograficzna (latitude):</label>
+                  <input
+                    id="locationLat"
+                    type="number"
+                    step="any"
+                    bind:value={locationEditLat}
+                    placeholder="np. 49.5123"
+                  />
+                </div>
+                <div class="form-group">
+                  <label for="locationLng">Długość geograficzna (longitude):</label>
+                  <input
+                    id="locationLng"
+                    type="number"
+                    step="any"
+                    bind:value={locationEditLng}
+                    placeholder="np. 19.1234"
+                  />
+                </div>
+              </div>
+            {:else}
+              <div class="location-form">
+                <div class="form-group">
+                  <label for="locationAddress">Adres do wyszukania:</label>
+                  <input
+                    id="locationAddress"
+                    type="text"
+                    bind:value={locationEditAddress}
+                    placeholder="np. Jeleśnia, ul. Główna 1"
+                  />
+                </div>
+                <button class="btn btn-geocode" onclick={geocodeAddress}>
+                  Wyszukaj
+                </button>
+
+                {#if locationEditLat && locationEditLng}
+                  <div class="geocode-result">
+                    <p>Znaleziono współrzędne:</p>
+                    <p><strong>Lat:</strong> {locationEditLat}</p>
+                    <p><strong>Lng:</strong> {locationEditLng}</p>
+                  </div>
+                {/if}
+              </div>
+            {/if}
+          {/if}
+
+          <div class="location-modal-actions">
+            <button
+              class="btn btn-primary"
+              onclick={saveLocation}
+              disabled={locationEditLoading || !locationEditLat || !locationEditLng}
+            >
+              Zapisz lokalizację
+            </button>
+            <button class="btn btn-secondary" onclick={closeLocationModal} disabled={locationEditLoading}>
+              Anuluj
+            </button>
+          </div>
+        </div>
+      </div>
+    {/if}
   </div>
 {/if}
 
@@ -1297,6 +1792,33 @@
 
   .body-table tbody tr.incomplete:hover {
     background: #fde68a !important;
+  }
+
+  /* Missing location indicator */
+  .missing-location-cell {
+    position: relative;
+    background: #fee2e2 !important;
+  }
+
+  .missing-location-badge {
+    position: absolute;
+    top: 2px;
+    right: 2px;
+    width: 16px;
+    height: 16px;
+    background: #dc2626;
+    color: white;
+    border-radius: 50%;
+    font-size: 11px;
+    font-weight: bold;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: help;
+  }
+
+  .body-table tbody tr.missing-location .checkbox-column {
+    background: #fee2e2;
   }
 
   .cell-content {
@@ -1842,6 +2364,335 @@
 
   .sync-address-btn:active {
     transform: scale(0.95);
+  }
+
+  /* Column Mapping Modal styles */
+  .mapping-modal-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.5);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+  }
+
+  .mapping-modal {
+    background: white;
+    border-radius: var(--radius-lg);
+    padding: var(--space-6);
+    max-width: 800px;
+    width: 95%;
+    max-height: 90vh;
+    overflow-y: auto;
+    box-shadow: var(--shadow-lg);
+  }
+
+  .mapping-modal h2 {
+    margin: 0 0 var(--space-2) 0;
+    font-family: var(--font-ui);
+    font-size: var(--text-xl);
+    font-weight: var(--font-weight-bold);
+    color: var(--color-text-primary);
+  }
+
+  .mapping-modal-info {
+    margin: 0 0 var(--space-4) 0;
+    font-family: var(--font-ui);
+    font-size: var(--text-sm);
+    color: var(--color-text-secondary);
+  }
+
+  .mapping-table-container {
+    max-height: 400px;
+    overflow-y: auto;
+    margin-bottom: var(--space-4);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-base);
+  }
+
+  .mapping-table {
+    width: 100%;
+    border-collapse: collapse;
+  }
+
+  .mapping-table th {
+    position: sticky;
+    top: 0;
+    background: var(--color-surface);
+    padding: var(--space-3);
+    text-align: left;
+    font-family: var(--font-ui);
+    font-size: var(--text-sm);
+    font-weight: var(--font-weight-semibold);
+    color: var(--color-text-primary);
+    border-bottom: 2px solid var(--color-border);
+  }
+
+  .mapping-table td {
+    padding: var(--space-2) var(--space-3);
+    font-family: var(--font-ui);
+    font-size: var(--text-sm);
+    border-bottom: 1px solid var(--color-border);
+    vertical-align: middle;
+  }
+
+  .mapping-table tbody tr:nth-child(even) {
+    background: #f8f9fa;
+  }
+
+  .mapping-table tbody tr:hover {
+    background: #e9ecef;
+  }
+
+  .mapping-excel-col {
+    font-weight: var(--font-weight-medium);
+    color: var(--color-text-primary);
+    white-space: nowrap;
+    max-width: 200px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .mapping-sample {
+    max-width: 200px;
+    overflow: hidden;
+  }
+
+  .sample-value {
+    display: block;
+    font-size: var(--text-xs);
+    color: var(--color-text-muted);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    padding: 2px 0;
+  }
+
+  .mapping-field-select select {
+    width: 100%;
+    padding: var(--space-2);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-base);
+    font-family: var(--font-ui);
+    font-size: var(--text-sm);
+    background: white;
+    cursor: pointer;
+  }
+
+  .mapping-field-select select:focus {
+    outline: none;
+    border-color: #0ea5e9;
+  }
+
+  .mapping-info {
+    background: #fef3c7;
+    border: 1px solid #fcd34d;
+    border-radius: var(--radius-base);
+    padding: var(--space-3);
+    margin-bottom: var(--space-4);
+  }
+
+  .mapping-info p {
+    margin: 0;
+    font-family: var(--font-ui);
+    font-size: var(--text-sm);
+    color: #92400e;
+  }
+
+  .mapping-modal-actions {
+    display: flex;
+    gap: var(--space-2);
+    justify-content: flex-end;
+  }
+
+  .import-progress {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: var(--space-8);
+    gap: var(--space-4);
+  }
+
+  .import-progress p {
+    margin: 0;
+    font-family: var(--font-ui);
+    font-size: var(--text-base);
+    color: var(--color-text-secondary);
+  }
+
+  .spinner {
+    width: 40px;
+    height: 40px;
+    border: 4px solid #e5e7eb;
+    border-top-color: #0ea5e9;
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+  }
+
+  @keyframes spin {
+    to {
+      transform: rotate(360deg);
+    }
+  }
+
+  .btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  /* Location Edit Modal styles */
+  .location-modal-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.5);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+  }
+
+  .location-modal {
+    background: white;
+    border-radius: var(--radius-lg);
+    padding: var(--space-6);
+    max-width: 500px;
+    width: 95%;
+    box-shadow: var(--shadow-lg);
+  }
+
+  .location-modal h2 {
+    margin: 0 0 var(--space-2) 0;
+    font-family: var(--font-ui);
+    font-size: var(--text-xl);
+    font-weight: var(--font-weight-bold);
+    color: var(--color-text-primary);
+  }
+
+  .location-modal-info {
+    margin: 0 0 var(--space-4) 0;
+    font-family: var(--font-ui);
+    font-size: var(--text-sm);
+    color: var(--color-text-secondary);
+  }
+
+  .location-mode-tabs {
+    display: flex;
+    gap: var(--space-2);
+    margin-bottom: var(--space-4);
+    border-bottom: 2px solid var(--color-border);
+    padding-bottom: var(--space-2);
+  }
+
+  .mode-tab {
+    background: none;
+    border: none;
+    padding: var(--space-2) var(--space-3);
+    font-family: var(--font-ui);
+    font-size: var(--text-sm);
+    font-weight: var(--font-weight-medium);
+    color: var(--color-text-secondary);
+    cursor: pointer;
+    border-radius: var(--radius-base);
+    transition: all var(--transition-fast);
+  }
+
+  .mode-tab:hover {
+    background: var(--color-surface);
+  }
+
+  .mode-tab.active {
+    background: #0ea5e9;
+    color: white;
+  }
+
+  .location-form {
+    margin-bottom: var(--space-4);
+  }
+
+  .location-loading {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: var(--space-6);
+    gap: var(--space-3);
+  }
+
+  .location-loading p {
+    margin: 0;
+    font-family: var(--font-ui);
+    font-size: var(--text-sm);
+    color: var(--color-text-secondary);
+  }
+
+  .btn-geocode {
+    background: #10b981;
+    color: white;
+    width: 100%;
+    margin-top: var(--space-2);
+  }
+
+  .btn-geocode:hover {
+    background: #059669;
+  }
+
+  .geocode-result {
+    margin-top: var(--space-3);
+    padding: var(--space-3);
+    background: #ecfdf5;
+    border: 1px solid #a7f3d0;
+    border-radius: var(--radius-base);
+  }
+
+  .geocode-result p {
+    margin: 0;
+    font-family: var(--font-ui);
+    font-size: var(--text-sm);
+    color: #065f46;
+  }
+
+  .geocode-result p + p {
+    margin-top: var(--space-1);
+  }
+
+  .location-modal-actions {
+    display: flex;
+    gap: var(--space-2);
+    justify-content: flex-end;
+  }
+
+  /* Update missing location badge to be a button */
+  .missing-location-badge {
+    position: absolute;
+    top: 2px;
+    right: 2px;
+    width: 16px;
+    height: 16px;
+    background: #dc2626;
+    color: white;
+    border: none;
+    border-radius: 50%;
+    font-size: 11px;
+    font-weight: bold;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: all var(--transition-fast);
+    padding: 0;
+  }
+
+  .missing-location-badge:hover {
+    background: #b91c1c;
+    transform: scale(1.1);
   }
 
 </style>

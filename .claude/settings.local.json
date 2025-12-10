@@ -34,7 +34,9 @@
       "Bash(ls:*)",
       "WebFetch(domain:lgd.zywieckiraj.pl)",
       "WebFetch(domain:wykaz.rky.pl)",
-      "Bash(npm run check:types:*)"
+      "Bash(npm run check:types:*)",
+      "Bash(cmd //c \"taskkill /PID 15672 /F\")",
+      "Bash(cmd //c \"taskkill /PID 13056 /F\")"
     ],
     "deny": [],
     "ask": []

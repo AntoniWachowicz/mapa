@@ -65,6 +65,16 @@
   let importProgress = $state({ current: 0, total: 0, message: '' });
   let importController = $state<AbortController | null>(null);
 
+  // Column mapping state
+  let showColumnMappingModal = $state(false);
+  let excelHeaders = $state<string[]>([]);
+  let excelSampleData = $state<Record<string, any>[]>([]);
+  let columnMapping = $state<Record<string, string>>({});  // { "Excel Column": "fieldKey" | "latitude" | "longitude" | "geocode" | "ignore" }
+  // Store temp file ID from server (file is stored server-side)
+  let currentTempId = $state<string | null>(null);
+  let showCreateFieldModal = $state(false);
+  let newFieldData = $state({ name: '', label: '', type: 'text', required: false, forColumn: '' });
+
   // Sync external editingObject to internal state
   $effect(() => {
     if (externalEditingObject) {
@@ -505,45 +515,98 @@
     }
   }
 
-  // Excel import handler with loading state
+  // Excel import handler - now shows mapping modal first
   async function handleExcelImport(event: Event): Promise<void> {
     const input = event.target as HTMLInputElement;
     const file = input.files?.[0];
-    
+
     if (!file) return;
-    
+
     if (!file.name.endsWith('.xlsx') && !file.name.endsWith('.xls')) {
       alert('Proszę wybrać plik Excel (.xlsx lub .xls)');
       return;
     }
-    
+
     isImporting = true;
-    importProgress = { current: 0, total: 0, message: 'Wczytywanie pliku...' };
+    importProgress = { current: 0, total: 0, message: 'Analizowanie pliku Excel...' };
     importController = new AbortController();
-    
+
     try {
       const formData = new FormData();
       formData.append('excel', file);
-      
-      importProgress.message = 'Analizowanie danych...';
-      
-      const response = await fetch('/api/import-excel', {
+
+      // Analyze the Excel file (server stores it temporarily)
+      const response = await fetch('/api/analyze-excel', {
         method: 'POST',
         body: formData,
         signal: importController.signal
       });
-      
+
       if (!response.ok) {
         throw new Error(`HTTP error! status: ${response.status}`);
       }
-      
+
       const result = await response.json();
-      
+
+      if (result.success) {
+        // Store temp ID (file is stored on server)
+        currentTempId = result.tempId;
+        excelHeaders = result.headers;
+        excelSampleData = result.sampleData;
+        columnMapping = {}; // Reset mapping
+
+        // Show column mapping modal
+        showColumnMappingModal = true;
+      } else {
+        alert('Błąd podczas analizy pliku Excel');
+      }
+    } catch (error: any) {
+      if (error.name === 'AbortError') {
+        console.log('Analysis cancelled by user');
+      } else {
+        console.error('Analysis error:', error);
+        alert('Błąd podczas analizy pliku Excel: ' + error.message);
+      }
+    } finally {
+      isImporting = false;
+      importController = null;
+      // Clear input
+      input.value = '';
+    }
+  }
+
+  // Proceed with import after column mapping
+  async function proceedWithImport(): Promise<void> {
+    if (!currentTempId) {
+      alert('Błąd: Brak danych pliku Excel. Proszę wybrać plik ponownie.');
+      return;
+    }
+
+    isImporting = true;
+    importProgress = { current: 0, total: 0, message: 'Importowanie danych...' };
+    importController = new AbortController();
+
+    try {
+      // Send JSON with tempId (file is already on server)
+      const response = await fetch('/api/import-excel', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tempId: currentTempId, columnMapping }),
+        signal: importController.signal
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+
+      const result = await response.json();
+
       if (result.success) {
         importedData = result.data;
         selectedImportRows = new Set();
+        showColumnMappingModal = false;
         showImportModal = true;
-        
+
         if (result.incompleteDataCount > 0) {
           alert(`Uwaga: ${result.incompleteDataCount} pinezek będzie miało niekompletne dane (wymagane dodatkowe uzupełnienie w aplikacji)`);
         }
@@ -560,8 +623,7 @@
     } finally {
       isImporting = false;
       importController = null;
-      // Clear input
-      input.value = '';
+      currentTempId = null;
     }
   }
 
@@ -1139,6 +1201,133 @@
   onFocus={onFocusPin}
   showActions={true}
 />
+{/if}
+
+<!-- Column Mapping Modal -->
+{#if showColumnMappingModal}
+  <div class="modal-overlay">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3>Mapowanie kolumn Excel</h3>
+        <button type="button" onclick={() => {
+          showColumnMappingModal = false;
+          currentTempId = null;
+        }} class="close-btn">
+          <Icon name="Close" size={20} />
+        </button>
+      </div>
+
+      <div class="modal-body">
+        <p>Zmapuj kolumny z pliku Excel do pól w schemacie lub specjalnych celów (współrzędne, geokodowanie).</p>
+        <p class="help-text">Plik zawiera {excelSampleData.length} przykładowych wierszy z {excelHeaders.length} kolumnami.</p>
+
+        <div class="mapping-table">
+          <div class="mapping-header">
+            <div class="mapping-col col-excel">Kolumna Excel</div>
+            <div class="mapping-col col-sample">Przykładowe dane</div>
+            <div class="mapping-col col-map-to">Mapuj do</div>
+          </div>
+
+          <div class="mapping-rows">
+            {#each excelHeaders as header, index}
+              <div class="mapping-row">
+                <div class="mapping-col col-excel">
+                  <strong>{header}</strong>
+                </div>
+                <div class="mapping-col col-sample">
+                  <div class="sample-data">
+                    {#each excelSampleData.slice(0, 3) as sample}
+                      {#if sample[header]}
+                        <div class="sample-item">{String(sample[header]).substring(0, 50)}{String(sample[header]).length > 50 ? '...' : ''}</div>
+                      {:else}
+                        <div class="sample-item empty">—</div>
+                      {/if}
+                    {/each}
+                  </div>
+                </div>
+                <div class="mapping-col col-map-to">
+                  <select
+                    value={columnMapping[header] || 'ignore'}
+                    onchange={(e) => {
+                      const target = e.target as HTMLSelectElement;
+                      if (target.value === 'create_new') {
+                        // Show create field modal
+                        newFieldData = { name: '', label: header, type: 'text', required: false, forColumn: header };
+                        showCreateFieldModal = true;
+                      } else {
+                        columnMapping = {
+                          ...columnMapping,
+                          [header]: target.value
+                        };
+                      }
+                    }}
+                    class="mapping-select"
+                  >
+                    <option value="ignore">⊗ Ignoruj</option>
+                    <optgroup label="Specjalne">
+                      <option value="latitude">📍 Szerokość geograficzna (Latitude)</option>
+                      <option value="longitude">📍 Długość geograficzna (Longitude)</option>
+                      <option value="geocode">🔍 Adres do geokodowania</option>
+                    </optgroup>
+                    <optgroup label="Pola schematu">
+                      {#each template.fields.filter(f => f.visible) as field}
+                        <option value={field.key}>{field.displayLabel || field.label}</option>
+                      {/each}
+                    </optgroup>
+                    <option value="create_new">➕ Utwórz nowe pole</option>
+                  </select>
+
+                  {#if columnMapping[header] && columnMapping[header] !== 'ignore'}
+                    <div class="mapping-preview">
+                      {#if columnMapping[header] === 'latitude'}
+                        → Szerokość geograficzna
+                      {:else if columnMapping[header] === 'longitude'}
+                        → Długość geograficzna
+                      {:else if columnMapping[header] === 'geocode'}
+                        → Adres (geokodowanie)
+                      {:else}
+                        {@const field = template.fields.find(f => f.key === columnMapping[header])}
+                        {#if field}
+                          → {field.displayLabel || field.label}
+                        {/if}
+                      {/if}
+                    </div>
+                  {/if}
+                </div>
+              </div>
+            {/each}
+          </div>
+        </div>
+
+        <div class="mapping-summary">
+          <h4>Podsumowanie mapowania:</h4>
+          <ul>
+            <li><strong>Zmapowane kolumny:</strong> {Object.values(columnMapping).filter(v => v !== 'ignore').length}</li>
+            <li><strong>Ignorowane kolumny:</strong> {Object.values(columnMapping).filter(v => v === 'ignore').length + (excelHeaders.length - Object.keys(columnMapping).length)}</li>
+            {#if Object.values(columnMapping).includes('latitude') && Object.values(columnMapping).includes('longitude')}
+              <li class="success">✓ Współrzędne będą importowane bezpośrednio</li>
+            {:else if Object.values(columnMapping).includes('geocode')}
+              <li class="warning">⚠ Adresy wymagają ręcznego geokodowania po imporcie</li>
+            {:else}
+              <li class="warning">⚠ Brak współrzędnych - wszystkie pinezki będą bez lokalizacji</li>
+            {/if}
+          </ul>
+        </div>
+      </div>
+
+      <div class="modal-footer">
+        <button type="button" onclick={() => {
+          showColumnMappingModal = false;
+          currentTempId = null;
+        }} class="cancel-btn">
+          Anuluj
+        </button>
+        <button type="button" onclick={proceedWithImport} class="import-confirm-btn">
+          Kontynuuj import
+        </button>
+      </div>
+    </div>
+  </div>
 {/if}
 
 <!-- Excel Import Modal -->
@@ -2136,5 +2325,149 @@
     background: #fed7aa;
     border-radius: 0;
     border: 1px solid #f59e0b;
+  }
+
+  /* Column Mapping Modal Styles */
+  .mapping-table {
+    margin-top: 16px;
+    border: 2px solid #000000;
+    border-radius: 0;
+  }
+
+  .mapping-header {
+    display: grid;
+    grid-template-columns: 1fr 1.5fr 1.5fr;
+    gap: 12px;
+    background: #FAFAFA;
+    padding: 12px;
+    border-bottom: 2px solid #000000;
+    font-family: 'Space Grotesk', sans-serif;
+    font-weight: 600;
+    font-size: 13px;
+  }
+
+  .mapping-rows {
+    max-height: 400px;
+    overflow-y: auto;
+  }
+
+  .mapping-row {
+    display: grid;
+    grid-template-columns: 1fr 1.5fr 1.5fr;
+    gap: 12px;
+    padding: 12px;
+    border-bottom: 1px solid #E5E5E5;
+    transition: background-color 0.2s;
+  }
+
+  .mapping-row:hover {
+    background: #F8FAFC;
+  }
+
+  .mapping-row:last-child {
+    border-bottom: none;
+  }
+
+  .mapping-col {
+    font-family: 'DM Sans', sans-serif;
+    font-size: 13px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .col-excel strong {
+    color: #000000;
+    font-weight: 600;
+  }
+
+  .sample-data {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .sample-item {
+    font-family: 'DM Sans', sans-serif;
+    font-size: 12px;
+    padding: 4px 8px;
+    background: #F5F5F5;
+    border: 1px solid #E5E5E5;
+    border-radius: 0;
+    color: #666;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .sample-item.empty {
+    font-style: italic;
+    color: #999;
+  }
+
+  .mapping-select {
+    width: 100%;
+    padding: 8px 12px;
+    border: 1px solid #000000;
+    border-radius: 0;
+    background: #FFFFFF;
+    font-family: 'DM Sans', sans-serif;
+    font-size: 13px;
+    cursor: pointer;
+  }
+
+  .mapping-select:focus {
+    outline: none;
+    border-color: #2563EB;
+    box-shadow: 0 0 0 1px #2563EB;
+  }
+
+  .mapping-preview {
+    font-family: 'DM Sans', sans-serif;
+    font-size: 12px;
+    padding: 6px 8px;
+    background: #EFF6FF;
+    border: 1px solid #2563EB;
+    border-radius: 0;
+    color: #1d4ed8;
+    font-weight: 500;
+  }
+
+  .mapping-summary {
+    margin-top: 24px;
+    padding: 16px;
+    background: #FAFAFA;
+    border: 2px solid #000000;
+    border-radius: 0;
+  }
+
+  .mapping-summary h4 {
+    margin: 0 0 12px 0;
+    font-family: 'Space Grotesk', sans-serif;
+    font-weight: 700;
+    font-size: 15px;
+    color: #000000;
+  }
+
+  .mapping-summary ul {
+    margin: 0;
+    padding-left: 20px;
+  }
+
+  .mapping-summary li {
+    font-family: 'DM Sans', sans-serif;
+    font-size: 13px;
+    margin-bottom: 6px;
+    color: #666;
+  }
+
+  .mapping-summary li.success {
+    color: #059669;
+    font-weight: 600;
+  }
+
+  .mapping-summary li.warning {
+    color: #f59e0b;
+    font-weight: 600;
   }
 </style>
