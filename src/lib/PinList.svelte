@@ -164,9 +164,13 @@
 
           <!-- Action buttons at bottom right -->
           <div class="card-actions">
-            {#if onFocus}
+            {#if onFocus && obj.location && obj.location.coordinates}
               <button class="action-btn" onclick={() => handlePinClick(obj)} title="Pokaż na mapie" type="button">
                 <Icon name="Eye" size={16} />
+              </button>
+            {:else if onFocus && obj.hasIncompleteData}
+              <button class="action-btn incomplete-marker" disabled title="Brak lokalizacji - edytuj aby dodać" type="button">
+                <Icon name="MapPin" size={16} />
               </button>
             {/if}
             {#if showActions && onEdit}
@@ -412,5 +416,17 @@
   .action-btn.delete:hover {
     background: #ef4444;
     border-color: #ef4444;
+  }
+
+  .action-btn.incomplete-marker {
+    background: #FEF3C7;
+    border-color: #F59E0B;
+    cursor: not-allowed;
+    opacity: 0.8;
+  }
+
+  .action-btn.incomplete-marker:hover {
+    background: #FEF3C7;
+    border-color: #F59E0B;
   }
 </style>

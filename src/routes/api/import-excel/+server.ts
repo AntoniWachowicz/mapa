@@ -65,12 +65,41 @@ export const POST: RequestHandler = async ({ request }) => {
     }
 
     // Process the Excel file (same logic for both flows)
-    const workbook = XLSX.read(bytes, { type: bytes instanceof Buffer ? 'buffer' : 'array' });
+    let workbook = XLSX.read(bytes, { type: bytes instanceof Buffer ? 'buffer' : 'array' });
+    let firstSheetName = workbook.SheetNames[0];
+    let worksheet = workbook.Sheets[firstSheetName];
+    let jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: '' });
 
-    const firstSheetName = workbook.SheetNames[0];
-    const worksheet = workbook.Sheets[firstSheetName];
+    // DEBUG: Log initial parse
+    console.log('Initial parse - first row:', jsonData[0]);
+    console.log('Initial parse - column count:', Array.isArray(jsonData[0]) ? jsonData[0].length : 0);
 
-    const jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
+    // Check if we only got 1 column - likely a CSV with wrong delimiter
+    if (jsonData[0] && Array.isArray(jsonData[0]) && jsonData[0].length === 1) {
+      console.log('Only 1 column detected, trying to parse as semicolon-delimited CSV...');
+
+      // Convert bytes to string and manually parse as CSV with semicolon
+      const textDecoder = new TextDecoder('utf-8');
+      const csvText = textDecoder.decode(bytes);
+
+      // Split by line breaks (handle both \n and \r\n)
+      const lines = csvText.split(/\r?\n/).filter(line => line.trim());
+
+      if (lines.length >= 2) {
+        // Parse manually with semicolon delimiter
+        jsonData = lines.map(line => {
+          // Remove carriage returns and split by semicolon
+          return line.replace(/\r/g, '').split(';').map(cell => {
+            // Trim and remove quotes
+            return cell.trim().replace(/^["']|["']$/g, '');
+          });
+        });
+
+        console.log('After semicolon parse - first row:', jsonData[0]);
+        console.log('After semicolon parse - column count:', jsonData[0].length);
+        console.log('After semicolon parse - second row:', jsonData[1]);
+      }
+    }
 
     if (!jsonData || jsonData.length < 2) {
       throw error(400, 'Excel file must contain at least a header row and one data row');
@@ -78,6 +107,10 @@ export const POST: RequestHandler = async ({ request }) => {
 
     const headers = jsonData[0] as string[];
     const rows = jsonData.slice(1) as any[][];
+
+    // DEBUG: Log headers
+    console.log('Final headers:', headers);
+    console.log('Final headers count:', headers.length);
 
     // Filter out instruction rows and empty rows
     const dataRows = rows.filter((row) => {
@@ -102,6 +135,12 @@ export const POST: RequestHandler = async ({ request }) => {
           rowData[cleanHeader] = String(cellValue).trim();
         }
       });
+
+      // DEBUG: Log first row data
+      if (i === 0) {
+        console.log('First row data:', rowData);
+        console.log('First row data keys:', Object.keys(rowData));
+      }
 
       if (Object.keys(rowData).length === 0) {
         continue;
@@ -168,9 +207,16 @@ export const POST: RequestHandler = async ({ request }) => {
       });
     }
 
+    const cleanHeaders = headers.map(h => h.replace(/\s*\([^)]*\)\s*$/g, '').trim());
+
+    // DEBUG: Log final response
+    console.log('Returning headers:', cleanHeaders);
+    console.log('Returning rows count:', processedRows.length);
+
     return json({
       success: true,
-      headers: headers.map(h => h.replace(/\s*\([^)]*\)\s*$/g, '').trim()),
+      rawData: jsonData, // Send raw 2D array so user can select header row
+      headers: cleanHeaders,
       data: processedRows,
       totalRows: processedRows.length,
       incompleteDataCount: processedRows.filter(row => row.hasIncompleteData).length

@@ -39,12 +39,22 @@
   let bulkEditValue = $state<any>('');
 
   // Excel import mapping state
+  let showHeaderSelectionModal = $state(false);
   let showMappingModal = $state(false);
+  let excelRawData = $state<any[][]>([]); // Raw Excel data before processing
+  let selectedHeaderRow = $state(0);
   let excelHeaders = $state<string[]>([]);
   let excelSampleData = $state<Record<string, any>[]>([]);
   let excelAllData = $state<any[]>([]);
   let columnMapping = $state<Record<string, string>>({}); // Excel column -> schema field key
   let importInProgress = $state(false);
+
+  // New field creation state
+  let showNewFieldForm = $state(false);
+  let newFieldForColumn = $state<string>('');
+  let newFieldName = $state<string>('');
+  let newFieldType = $state<string>('richtext');
+  let creatingField = $state(false);
 
   // Location editing modal state
   let showLocationModal = $state(false);
@@ -128,54 +138,16 @@
         return;
       }
 
-      const importedRows = result.data || [];
-      if (importedRows.length === 0) {
+      // Step 2: Store raw data and show header selection modal
+      if (!result.rawData || result.rawData.length === 0) {
         alert('Plik Excel nie zawiera danych do importu');
         input.value = '';
         return;
       }
 
-      // Step 2: Store data and show mapping modal
-      excelHeaders = result.headers || [];
-      excelAllData = importedRows;
-
-      // Create sample data for preview (first 3 rows)
-      excelSampleData = importedRows.slice(0, 3).map((row: any) => row.originalData);
-
-      // Auto-detect mappings based on column name similarity
-      const autoMapping: Record<string, string> = {};
-      if (data.template?.fields) {
-        for (const header of excelHeaders) {
-          const headerLower = header.toLowerCase().trim();
-
-          // Try to find a matching field
-          for (const field of data.template.fields) {
-            const fieldNameLower = field.fieldName.toLowerCase().trim();
-            const fieldKeyLower = field.key.toLowerCase().trim();
-
-            // Match by exact name, key, or partial match
-            if (headerLower === fieldNameLower ||
-                headerLower === fieldKeyLower ||
-                fieldNameLower.includes(headerLower) ||
-                headerLower.includes(fieldNameLower)) {
-              autoMapping[header] = field.key;
-              break;
-            }
-          }
-
-          // Special handling for coordinates
-          if (!autoMapping[header]) {
-            if (headerLower.includes('lat') || headerLower.includes('szerokość') || headerLower.includes('szerokosc')) {
-              autoMapping[header] = '_latitude';
-            } else if (headerLower.includes('lng') || headerLower.includes('lon') || headerLower.includes('długość') || headerLower.includes('dlugosc')) {
-              autoMapping[header] = '_longitude';
-            }
-          }
-        }
-      }
-
-      columnMapping = autoMapping;
-      showMappingModal = true;
+      excelRawData = result.rawData;
+      selectedHeaderRow = 0; // Default to first row
+      showHeaderSelectionModal = true;
 
     } catch (error) {
       console.error('Excel import error:', error);
@@ -184,6 +156,204 @@
 
     // Reset input
     input.value = '';
+  }
+
+  function closeHeaderSelectionModal() {
+    showHeaderSelectionModal = false;
+    excelRawData = [];
+    selectedHeaderRow = 0;
+  }
+
+  function confirmHeaderSelection() {
+    if (excelRawData.length === 0 || selectedHeaderRow >= excelRawData.length) {
+      alert('Nieprawidłowy wybór wiersza nagłówka');
+      return;
+    }
+
+    // Extract headers from selected row
+    excelHeaders = excelRawData[selectedHeaderRow].map((cell: any) =>
+      String(cell || '').trim()
+    ).filter((h: string) => h !== '');
+
+    // Extract data rows (everything after the header row)
+    const dataRows = excelRawData.slice(selectedHeaderRow + 1);
+
+    // Convert to object format - keep as strings for now, will convert during import
+    excelAllData = dataRows.map((row: any[]) => {
+      const rowData: Record<string, any> = {};
+      excelHeaders.forEach((header, index) => {
+        const cellValue = row[index];
+        if (cellValue !== undefined && cellValue !== null && String(cellValue).trim() !== '') {
+          rowData[header] = String(cellValue).trim();
+        }
+      });
+      return { originalData: rowData };
+    }).filter((row: any) => Object.keys(row.originalData).length > 0);
+
+    // Create sample data for preview
+    excelSampleData = excelAllData.slice(0, 3).map((row: any) => row.originalData);
+
+    // Initialize column mapping
+    columnMapping = {};
+
+    // Close header selection and show mapping modal
+    showHeaderSelectionModal = false;
+    showMappingModal = true;
+  }
+
+  function convertValueByFieldType(value: string, fieldType: string): any {
+    if (!value || value === '') return null;
+
+    try {
+      switch (fieldType) {
+        // New field types - most accept text as-is
+        case 'richtext':
+        case 'files':
+        case 'gallery':
+        case 'multidate':
+        case 'address':
+        case 'links':
+        case 'tags':
+        case 'category':
+          return value; // Store as text, will be processed by field editor
+
+        case 'price':
+          // Try to parse as number for price
+          const priceNum = parseFloat(value.replace(/,/g, '.').replace(/[^\d.-]/g, ''));
+          return isNaN(priceNum) ? value : priceNum;
+
+        // Legacy field types (for backward compatibility)
+        case 'number':
+        case 'currency':
+        case 'percentage':
+          const num = parseFloat(value.replace(/,/g, '.').replace(/[^\d.-]/g, ''));
+          return isNaN(num) ? null : num;
+
+        case 'checkbox':
+          const lower = value.toLowerCase().trim();
+          return lower === 'true' || lower === 'tak' || lower === 'yes' || lower === '1';
+
+        case 'date':
+          const date = new Date(value);
+          return isNaN(date.getTime()) ? value : date.toISOString();
+
+        case 'email':
+          if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)) {
+            console.warn(`Invalid email: ${value}`);
+          }
+          return value;
+
+        case 'url':
+        case 'image':
+        case 'youtube':
+          if (!/^https?:\/\/.+/.test(value)) {
+            console.warn(`Invalid URL: ${value}`);
+          }
+          return value;
+
+        case 'text':
+        case 'textarea':
+        case 'select':
+        default:
+          return value;
+      }
+    } catch (error) {
+      console.error(`Error converting value "${value}" for type ${fieldType}:`, error);
+      return value; // Return original value on error
+    }
+  }
+
+  function openNewFieldForm(columnName: string) {
+    newFieldForColumn = columnName;
+    newFieldName = columnName; // Pre-fill with column name
+    newFieldType = 'richtext';
+    showNewFieldForm = true;
+  }
+
+  function closeNewFieldForm() {
+    showNewFieldForm = false;
+    newFieldForColumn = '';
+    newFieldName = '';
+    newFieldType = 'richtext';
+  }
+
+  async function createNewField() {
+    if (!newFieldName.trim() || !data.template) {
+      alert('Nazwa pola jest wymagana');
+      return;
+    }
+
+    creatingField = true;
+
+    try {
+      // Create field key from name
+      const fieldKey = newFieldName
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '_')
+        .replace(/^_+|_+$/g, '');
+
+      // Create new field object
+      const newField = {
+        id: crypto.randomUUID(),
+        key: fieldKey,
+        fieldName: newFieldName,
+        label: newFieldName,
+        displayLabel: newFieldName,
+        type: newFieldType,
+        fieldType: newFieldType,
+        required: false, // Can be toggled later in schema builder
+        visible: true,
+        adminVisible: true, // Required for schema builder to show the field
+        order: (data.template.fields?.length || 0) + 1
+      };
+
+      // Update template via schema-builder form action
+      const updatedTemplate = {
+        ...data.template,
+        fields: [...(data.template.fields || []), newField]
+      };
+
+      const formData = new FormData();
+      formData.set('template', JSON.stringify(updatedTemplate));
+
+      const response = await fetch('/schema-builder?/updateTemplate', {
+        method: 'POST',
+        body: formData
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to create field');
+      }
+
+      // Update local template state immediately
+      if (data.template) {
+        data.template = {
+          ...data.template,
+          fields: [...(data.template.fields || []), newField]
+        };
+      }
+
+      // Map the column to the new field
+      columnMapping = { ...columnMapping, [newFieldForColumn]: fieldKey };
+
+      closeNewFieldForm();
+
+      // Ask if user wants to configure the field in schema builder
+      const configure = confirm(
+        `Pole "${newFieldName}" zostało utworzone i zmapowane do kolumny "${newFieldForColumn}".\n\n` +
+        `Czy chcesz przejść do konstruktora schematu aby skonfigurować to pole?\n` +
+        `(Kliknij "Anuluj" aby kontynuować import)`
+      );
+
+      if (configure) {
+        window.location.href = '/schema-builder';
+      }
+    } catch (error) {
+      console.error('Error creating field:', error);
+      alert('Błąd podczas tworzenia pola');
+    } finally {
+      creatingField = false;
+    }
   }
 
   function closeMappingModal() {
@@ -212,23 +382,37 @@
       if (schemaField === '_longitude') lngColumn = excelCol;
     }
 
+    // Create a map of field key to field type for type conversion
+    const fieldTypeMap: Record<string, string> = {};
+    if (data.template.fields) {
+      for (const field of data.template.fields) {
+        fieldTypeMap[field.key] = field.type || field.fieldType || 'text';
+      }
+    }
+
     for (const row of excelAllData) {
       try {
         const originalData = row.originalData || {};
 
-        // Map Excel columns to schema fields
+        // Map Excel columns to schema fields with type conversion
         const mappedData: Record<string, any> = {};
 
         for (const [excelCol, schemaField] of Object.entries(columnMapping)) {
           // Skip special coordinate mappings
-          if (schemaField === '_latitude' || schemaField === '_longitude' || schemaField === '_skip') {
+          if (schemaField === '_latitude' || schemaField === '_longitude' || schemaField === '_skip' || schemaField === '') {
             continue;
           }
 
           // Get the value from the original Excel data
-          const value = originalData[excelCol];
-          if (value !== undefined && value !== null && value !== '') {
-            mappedData[schemaField] = value;
+          const rawValue = originalData[excelCol];
+          if (rawValue !== undefined && rawValue !== null && rawValue !== '') {
+            // Convert value based on field type
+            const fieldType = fieldTypeMap[schemaField] || 'text';
+            const convertedValue = convertValueByFieldType(rawValue, fieldType);
+
+            if (convertedValue !== null) {
+              mappedData[schemaField] = convertedValue;
+            }
           }
         }
 
@@ -668,6 +852,51 @@
     bulkEditValue = '';
   }
 
+  async function deleteSelected() {
+    if (selectedRows.size === 0) return;
+
+    const count = selectedRows.size;
+    const confirmed = confirm(`Czy na pewno chcesz usunąć ${count} zaznaczonych wierszy? Ta operacja jest nieodwracalna.`);
+
+    if (!confirmed) return;
+
+    try {
+      const selectedIds = Array.from(selectedRows);
+      let successCount = 0;
+      let errorCount = 0;
+
+      // Delete each object
+      for (const id of selectedIds) {
+        try {
+          const response = await fetch(`/api/objects/${id}`, {
+            method: 'DELETE'
+          });
+
+          if (response.ok) {
+            successCount++;
+          } else {
+            errorCount++;
+          }
+        } catch {
+          errorCount++;
+        }
+      }
+
+      // Update the filtered objects list
+      filteredObjects = filteredObjects.filter(obj => !selectedIds.includes(obj.id));
+      selectedRows = new Set();
+
+      if (errorCount > 0) {
+        alert(`Usunięto ${successCount} wierszy. Błędy: ${errorCount}`);
+      } else {
+        alert(`Pomyślnie usunięto ${successCount} wierszy`);
+      }
+    } catch (error) {
+      console.error('Delete error:', error);
+      alert('Wystąpił błąd podczas usuwania wierszy');
+    }
+  }
+
   async function applyBulkEdit() {
     if (!bulkEditField || selectedRows.size === 0) return;
 
@@ -738,7 +967,40 @@
     }
   });
 
-  onMount(() => {
+  onMount(async () => {
+    // Fix any fields missing adminVisible property (one-time migration)
+    if (data.template && data.template.fields) {
+      const needsFix = data.template.fields.some(f => f.adminVisible === undefined);
+
+      if (needsFix) {
+        console.log('Fixing fields missing adminVisible property...');
+        const fixedTemplate = {
+          ...data.template,
+          fields: data.template.fields.map(f => ({
+            ...f,
+            adminVisible: f.adminVisible ?? true // Set to true if undefined
+          }))
+        };
+
+        // Save the fixed template
+        try {
+          const formData = new FormData();
+          formData.set('template', JSON.stringify(fixedTemplate));
+
+          await fetch('/schema-builder?/updateTemplate', {
+            method: 'POST',
+            body: formData
+          });
+
+          // Update local state
+          data.template = fixedTemplate;
+          console.log('Fields fixed successfully');
+        } catch (error) {
+          console.error('Error fixing fields:', error);
+        }
+      }
+    }
+
     const handleResizeWindow = () => {
       calculatePlaceholderRows();
     };
@@ -990,6 +1252,9 @@
         <button class="btn btn-bulk" onclick={openBulkEditModal}>
           Edytuj zaznaczone
         </button>
+        <button class="btn btn-bulk-delete" onclick={deleteSelected}>
+          Usuń zaznaczone
+        </button>
         <button class="btn btn-bulk-clear" onclick={() => selectedRows = new Set()}>
           Wyczyść zaznaczenie
         </button>
@@ -1060,7 +1325,7 @@
                     <input
                       type="checkbox"
                       checked={selectedRows.has(obj.id)}
-                      onchange={(e) => handleRowSelection(obj.id, rowIndex, e)}
+                      onclick={(e) => handleRowSelection(obj.id, rowIndex, e)}
                     />
                     {#if isMissingLocation}
                       <button
@@ -1440,6 +1705,59 @@
       </div>
     {/if}
 
+    <!-- Header Selection Modal -->
+    {#if showHeaderSelectionModal}
+      <div class="mapping-modal-overlay" onclick={closeHeaderSelectionModal}>
+        <div class="mapping-modal" onclick={(e) => e.stopPropagation()}>
+          <h2>Wybierz wiersz z nagłówkami kolumn</h2>
+          <p class="mapping-modal-info">
+            Wskaż, który wiersz w pliku Excel zawiera nazwy kolumn.
+            Poniżej znajduje się podgląd pierwszych {Math.min(5, excelRawData.length)} wierszy.
+          </p>
+
+          <div class="header-selection-preview">
+            <table class="header-preview-table">
+              <tbody>
+                {#each excelRawData.slice(0, 5) as row, rowIndex}
+                  <tr class:selected={selectedHeaderRow === rowIndex}>
+                    <td class="row-selector">
+                      <input
+                        type="radio"
+                        name="headerRow"
+                        value={rowIndex}
+                        checked={selectedHeaderRow === rowIndex}
+                        onchange={() => selectedHeaderRow = rowIndex}
+                      />
+                      <span class="row-number">Wiersz {rowIndex + 1}</span>
+                    </td>
+                    {#each row.slice(0, 10) as cell, cellIndex}
+                      <td class="preview-cell" title={String(cell || '')}>
+                        {String(cell || '—').substring(0, 50)}
+                      </td>
+                    {/each}
+                    {#if row.length > 10}
+                      <td class="preview-cell more-cols">
+                        ... (+{row.length - 10} kolumn)
+                      </td>
+                    {/if}
+                  </tr>
+                {/each}
+              </tbody>
+            </table>
+          </div>
+
+          <div class="mapping-modal-actions">
+            <button class="btn btn-primary" onclick={confirmHeaderSelection}>
+              Dalej
+            </button>
+            <button class="btn btn-secondary" onclick={closeHeaderSelectionModal}>
+              Anuluj
+            </button>
+          </div>
+        </div>
+      </div>
+    {/if}
+
     <!-- Column Mapping Modal for Excel Import -->
     {#if showMappingModal}
       <div class="mapping-modal-overlay" onclick={closeMappingModal}>
@@ -1481,7 +1799,18 @@
                         {/if}
                       </td>
                       <td class="mapping-field-select">
-                        <select bind:value={columnMapping[header]}>
+                        <select
+                          value={columnMapping[header] || ''}
+                          onchange={(e) => {
+                            const target = e.target as HTMLSelectElement;
+                            if (target.value === '_create_new_field') {
+                              openNewFieldForm(header);
+                              target.value = ''; // Reset dropdown
+                            } else {
+                              columnMapping = { ...columnMapping, [header]: target.value };
+                            }
+                          }}
+                        >
                           <option value="">— Pomiń —</option>
                           <option value="_skip">— Pomiń —</option>
                           <optgroup label="Współrzędne">
@@ -1490,9 +1819,26 @@
                           </optgroup>
                           <optgroup label="Pola schematu">
                             {#each data.template?.fields || [] as field}
-                              <option value={field.key}>{getFieldDisplayName(field)}</option>
+                              {@const fieldType = field.type || field.fieldType || 'richtext'}
+                              {@const typeLabel =
+                                fieldType === 'richtext' ? ' [tekst]' :
+                                fieldType === 'files' ? ' [pliki]' :
+                                fieldType === 'gallery' ? ' [galeria]' :
+                                fieldType === 'multidate' ? ' [daty]' :
+                                fieldType === 'address' ? ' [adres]' :
+                                fieldType === 'links' ? ' [linki]' :
+                                fieldType === 'price' ? ' [cena]' :
+                                fieldType === 'category' ? ' [kategoria]' :
+                                fieldType === 'tags' ? ' [tagi]' :
+                                // Legacy types
+                                fieldType === 'number' || fieldType === 'currency' || fieldType === 'percentage' ? ' [liczba]' :
+                                fieldType === 'checkbox' ? ' [tak/nie]' :
+                                fieldType === 'date' ? ' [data]' : ''
+                              }
+                              <option value={field.key}>{getFieldDisplayName(field)}{typeLabel}</option>
                             {/each}
                           </optgroup>
+                          <option value="_create_new_field" style="color: #0ea5e9; font-weight: 500;">+ Utwórz nowe pole...</option>
                         </select>
                       </td>
                     </tr>
@@ -1507,6 +1853,10 @@
                 <strong>Uwaga:</strong> Rekordy bez współrzędnych zostaną zaimportowane jako niekompletne
                 i nie będą widoczne na mapie (tylko w widoku listy).
               </p>
+              <p style="margin-top: 8px;">
+                <strong>Typy danych:</strong> Dane tekstowe zostaną zaimportowane i będą mogły być
+                edytowane za pomocą odpowiednich edytorów (galeria, daty, adres, itp.).
+              </p>
             </div>
 
             <div class="mapping-modal-actions">
@@ -1518,6 +1868,74 @@
               </button>
             </div>
           {/if}
+        </div>
+      </div>
+    {/if}
+
+    <!-- New Field Creation Modal -->
+    {#if showNewFieldForm}
+      <div class="new-field-modal-overlay" onclick={closeNewFieldForm}>
+        <div class="new-field-modal" onclick={(e) => e.stopPropagation()}>
+          <h2>Utwórz nowe pole</h2>
+          <p class="new-field-modal-info">
+            Pole zostanie dodane do schematu i zmapowane do kolumny "<strong>{newFieldForColumn}</strong>"
+          </p>
+
+          <div class="new-field-form">
+            <div class="form-group">
+              <label for="newFieldName">Nazwa pola:</label>
+              <input
+                id="newFieldName"
+                type="text"
+                bind:value={newFieldName}
+                placeholder="np. Data rozpoczęcia"
+                disabled={creatingField}
+              />
+            </div>
+
+            <div class="form-group">
+              <label for="newFieldType">Typ pola:</label>
+              <select
+                id="newFieldType"
+                bind:value={newFieldType}
+                disabled={creatingField}
+              >
+                <option value="richtext">Tekst sformatowany</option>
+                <option value="files">Pliki</option>
+                <option value="gallery">Galeria</option>
+                <option value="multidate">Daty</option>
+                <option value="address">Adres</option>
+                <option value="links">Linki</option>
+                <option value="price">Cena</option>
+                <option value="category">Kategoria</option>
+                <option value="tags">Tagi</option>
+              </select>
+            </div>
+          </div>
+
+          {#if creatingField}
+            <div class="new-field-loading">
+              <div class="spinner"></div>
+              <p>Tworzenie pola...</p>
+            </div>
+          {/if}
+
+          <div class="new-field-modal-actions">
+            <button
+              class="btn btn-primary"
+              onclick={createNewField}
+              disabled={creatingField || !newFieldName.trim()}
+            >
+              Utwórz pole
+            </button>
+            <button
+              class="btn btn-secondary"
+              onclick={closeNewFieldForm}
+              disabled={creatingField}
+            >
+              Anuluj
+            </button>
+          </div>
         </div>
       </div>
     {/if}
@@ -2234,13 +2652,22 @@
     background: #0284c7;
   }
 
+  .btn-bulk-delete {
+    background: #dc2626;
+    color: white;
+  }
+
+  .btn-bulk-delete:hover {
+    background: #b91c1c;
+  }
+
   .btn-bulk-clear {
-    background: #ef4444;
+    background: #6b7280;
     color: white;
   }
 
   .btn-bulk-clear:hover {
-    background: #dc2626;
+    background: #4b5563;
   }
 
   /* Bulk edit modal styles */
@@ -2509,6 +2936,75 @@
     justify-content: flex-end;
   }
 
+  /* Header Selection Modal styles */
+  .header-selection-preview {
+    max-height: 400px;
+    overflow: auto;
+    margin-bottom: var(--space-4);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-base);
+  }
+
+  .header-preview-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: var(--text-sm);
+  }
+
+  .header-preview-table tr {
+    border-bottom: 1px solid var(--color-border);
+    transition: background-color 0.2s;
+  }
+
+  .header-preview-table tr:hover {
+    background-color: #f9fafb;
+  }
+
+  .header-preview-table tr.selected {
+    background-color: #e0f2fe;
+  }
+
+  .header-preview-table td {
+    padding: var(--space-2);
+    border-right: 1px solid #e5e7eb;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 150px;
+  }
+
+  .header-preview-table td:last-child {
+    border-right: none;
+  }
+
+  .row-selector {
+    position: sticky;
+    left: 0;
+    background-color: inherit;
+    font-weight: 500;
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    min-width: 100px;
+    z-index: 1;
+  }
+
+  .row-number {
+    font-family: var(--font-ui);
+    color: var(--color-text-secondary);
+  }
+
+  .preview-cell {
+    font-family: var(--font-mono);
+    color: var(--color-text);
+  }
+
+  .more-cols {
+    font-style: italic;
+    color: var(--color-text-muted);
+    font-family: var(--font-ui);
+  }
+
   .import-progress {
     display: flex;
     flex-direction: column;
@@ -2538,6 +3034,103 @@
     to {
       transform: rotate(360deg);
     }
+  }
+
+  /* New Field Creation Modal styles */
+  .new-field-modal-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.5);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1100;
+  }
+
+  .new-field-modal {
+    background: white;
+    border-radius: var(--radius-lg);
+    padding: var(--space-6);
+    max-width: 500px;
+    width: 90%;
+    max-height: 90vh;
+    overflow-y: auto;
+  }
+
+  .new-field-modal h2 {
+    margin: 0 0 var(--space-2) 0;
+    font-family: var(--font-ui);
+    font-size: var(--text-xl);
+    font-weight: var(--font-weight-bold);
+    color: var(--color-text-primary);
+  }
+
+  .new-field-modal-info {
+    margin: 0 0 var(--space-4) 0;
+    font-family: var(--font-ui);
+    font-size: var(--text-sm);
+    color: var(--color-text-secondary);
+  }
+
+  .new-field-form {
+    margin-bottom: var(--space-4);
+  }
+
+  .new-field-form .form-group {
+    margin-bottom: var(--space-4);
+  }
+
+  .new-field-form label {
+    display: block;
+    margin-bottom: var(--space-2);
+    font-family: var(--font-ui);
+    font-size: var(--text-sm);
+    font-weight: var(--font-weight-medium);
+    color: var(--color-text-primary);
+  }
+
+  .new-field-form input[type="text"],
+  .new-field-form select {
+    width: 100%;
+    padding: var(--space-2);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-base);
+    font-family: var(--font-ui);
+    font-size: var(--text-sm);
+  }
+
+  .new-field-form input[type="text"]:focus,
+  .new-field-form select:focus {
+    outline: none;
+    border-color: #0ea5e9;
+  }
+
+  .new-field-form input[type="checkbox"] {
+    margin-right: var(--space-2);
+  }
+
+  .new-field-loading {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--space-3);
+    padding: var(--space-4) 0;
+  }
+
+  .new-field-loading p {
+    margin: 0;
+    font-family: var(--font-ui);
+    font-size: var(--text-sm);
+    color: var(--color-text-secondary);
+  }
+
+  .new-field-modal-actions {
+    display: flex;
+    gap: var(--space-2);
+    justify-content: flex-end;
   }
 
   .btn:disabled {

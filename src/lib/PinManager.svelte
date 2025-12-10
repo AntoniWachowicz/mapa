@@ -196,7 +196,8 @@
 
         // Special handling for location field
         if (fieldType === 'location' || field.key === 'location') {
-          if (!selectedCoordinates) {
+          // Only require location for new objects, not when editing incomplete ones
+          if (!selectedCoordinates && !editingObject) {
             emptyRequiredFields.push(field.label || field.displayLabel);
           }
           continue;
@@ -269,14 +270,28 @@
       alert(`Proszę wypełnić: ${emptyRequiredFields.join(', ')}`);
       return;
     }
-    
+
+    // Check if saving without location (will be marked as incomplete)
+    const hasLocation = !!selectedCoordinates;
+    const hasIncompleteData = !hasLocation;
+
+    // Warn user if saving without location
+    if (!hasLocation && editingObject) {
+      const proceed = confirm(
+        'Ta pinezka nie ma przypisanej lokalizacji i zostanie oznaczona jako niekompletna.\n\n' +
+        'Nie będzie widoczna na mapie - tylko w widoku listy.\n\n' +
+        'Czy chcesz kontynuować?'
+      );
+      if (!proceed) return;
+    }
+
     if (editingObject && onUpdate) {
       // Update existing object
       await onUpdate(editingObject.id, formData);
       editingObject = null;
     } else {
       // Create new object
-      await onSave(formData);
+      await onSave(formData, hasIncompleteData);
     }
     
     // Reset form

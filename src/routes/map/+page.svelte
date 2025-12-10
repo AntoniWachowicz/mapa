@@ -122,6 +122,10 @@
       const [lng, lat] = obj.location.coordinates;
       selectedCoordinates = { lat, lng };
       originalEditLocation = { lat, lng }; // Store original location
+    } else {
+      // For objects without location, set null so user can place it
+      selectedCoordinates = null;
+      originalEditLocation = null;
     }
 
     // Open the addition panel for editing
