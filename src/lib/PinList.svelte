@@ -41,28 +41,8 @@
   }
   
   function formatFieldValue(field: any, value: any): string {
-    if (field.type === 'checkbox') {
-      return value ? 'Tak' : 'Nie';
-    } else if (field.type === 'category' || field.type === 'tags') {
+    if (field.type === 'category' || field.type === 'tags') {
       return ''; // Category and tags are handled separately
-    } else if (field.type === 'currency') {
-      return value ? `${Number(value).toLocaleString('pl-PL', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} zł` : '';
-    } else if (field.type === 'percentage') {
-      return value ? `${value}%` : '';
-    } else if (field.type === 'url') {
-      return value ? value : '';
-    } else if (field.type === 'email') {
-      return value ? value : '';
-    } else if (field.type === 'date') {
-      if (!value) return '';
-      try {
-        const date = new Date(value);
-        return date.toLocaleDateString('pl-PL');
-      } catch {
-        return value?.toString() || '';
-      }
-    } else if (field.type === 'number') {
-      return value?.toString() || '';
     } else {
       return value?.toString() || '';
     }
@@ -124,16 +104,10 @@
             <div class="card-fields">
               {#each template.fields.filter(f => f.visible && f.key !== 'title' && f.type !== 'category' && f.type !== 'tags' && f.key !== 'location') as field}
                 {@const value = field.key ? obj.data[field.key] : undefined}
-                {#if value && value !== '' && field.type !== 'image' && field.type !== 'youtube' && field.type !== 'gallery'}
+                {#if value && value !== '' && field.type !== 'gallery'}
                   <div class="field-row">
                     <span class="field-label">{field.displayLabel || field.label}:</span>
-                    {#if field.type === 'url'}
-                      <a href={String(value)} target="_blank" class="field-value link">{value}</a>
-                    {:else if field.type === 'email'}
-                      <a href="mailto:{String(value)}" class="field-value link">{value}</a>
-                    {:else}
-                      <span class="field-value">{formatFieldValue(field, value)}</span>
-                    {/if}
+                    <span class="field-value">{formatFieldValue(field, value)}</span>
                   </div>
                 {/if}
               {/each}

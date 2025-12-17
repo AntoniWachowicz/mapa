@@ -100,34 +100,8 @@ export const POST: RequestHandler = async ({ request }) => {
           headers.push(`${columnName} (zostanie puste - uzupełnij w aplikacji)`);
           currentColumn++;
         }
-        // TIER 1: Direct support (legacy fields)
-        else if (field.type === 'image') {
-          headers.push(`${columnName} (wklej URL obrazu)`);
-          currentColumn++;
-        } else if (field.type === 'youtube') {
-          headers.push(`${columnName} (wklej URL YouTube)`);
-          currentColumn++;
-        } else if (field.type === 'select' && field.selectConfig) {
-          const options = field.selectConfig.options.join('/');
-          headers.push(`${columnName} (opcje: ${options})`);
-          validationRules.push({ column: currentColumn, type: 'list', options: field.selectConfig.options, fieldRequired: field.required });
-          currentColumn++;
-        } else if (field.type === 'address') {
+        else if (field.type === 'address') {
           headers.push(`${columnName} (pełny adres w Polsce)`);
-          currentColumn++;
-        } else if (field.type === 'currency') {
-          headers.push(`${columnName} (kwota w zł)`);
-          currentColumn++;
-        } else if (field.type === 'percentage') {
-          headers.push(`${columnName} (liczba 0-100)`);
-          currentColumn++;
-        } else if (field.type === 'date') {
-          headers.push(`${columnName} (RRRR-MM-DD)`);
-          validationRules.push({ column: currentColumn, type: 'date', fieldRequired: field.required });
-          currentColumn++;
-        } else if (field.type === 'checkbox') {
-          headers.push(`${columnName} (wpisz: tak/nie)`);
-          validationRules.push({ column: currentColumn, type: 'checkbox', options: ['tak', 'nie'], fieldRequired: field.required });
           currentColumn++;
         } else {
           headers.push(`${columnName}${field.required ? ' *' : ''}`);
@@ -214,31 +188,8 @@ export const POST: RequestHandler = async ({ request }) => {
         } else if (fieldType === 'category') {
           exampleRow.push('(zostanie puste)');
         }
-        // TIER 1: Direct support (legacy fields)
-        else if (field.type === 'text' || field.type === 'textarea') {
-          exampleRow.push('Przykładowy tekst');
-        } else if (field.type === 'number') {
-          exampleRow.push('123');
-        } else if (field.type === 'currency') {
-          exampleRow.push('1000.50');
-        } else if (field.type === 'percentage') {
-          exampleRow.push('75');
-        } else if (field.type === 'email') {
-          exampleRow.push('przykład@email.pl');
-        } else if (field.type === 'url') {
-          exampleRow.push('https://example.com');
-        } else if (field.type === 'date') {
-          exampleRow.push('2024-12-31');
-        } else if (field.type === 'address') {
+        else if (field.type === 'address') {
           exampleRow.push('ul. Marszałkowska 1, Warszawa');
-        } else if (field.type === 'checkbox') {
-          exampleRow.push('tak');
-        } else if (field.type === 'select' && field.selectConfig) {
-          exampleRow.push(field.selectConfig.options[0] || 'opcja1');
-        } else if (field.type === 'image') {
-          exampleRow.push('https://example.com/obraz.jpg');
-        } else if (field.type === 'youtube') {
-          exampleRow.push('https://www.youtube.com/watch?v=dQw4w9WgXcQ');
         } else {
           exampleRow.push('przykład');
         }
@@ -296,13 +247,10 @@ export const POST: RequestHandler = async ({ request }) => {
         } else if (fieldType === 'richtext' || fieldType === 'files' || fieldType === 'tags' || fieldType === 'category') {
           addressExampleRow.push('');
         }
-        // Legacy fields
         else if (field.type === 'address') {
           addressExampleRow.push('Plac Zamkowy 4, Kraków');
         } else if (field.type === 'tags') {
           addressExampleRow.push('(zostanie puste)');
-        } else if (field.type === 'text' || field.type === 'textarea') {
-          addressExampleRow.push('Inny przykład');
         } else {
           addressExampleRow.push(''); // Empty for other fields in this example
         }

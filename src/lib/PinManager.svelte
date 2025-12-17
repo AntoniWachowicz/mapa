@@ -149,11 +149,6 @@
             newFormData[fieldName] = { selectedTags: [], majorTag: null, minorTags: [] } as any;
             break;
 
-          // Legacy field types
-          case 'checkbox':
-            newFormData[fieldName] = false;
-            break;
-
           default:
             newFormData[fieldName] = '';
         }
@@ -246,18 +241,7 @@
             emptyRequiredFields.push(field.label);
           }
         }
-        // LEGACY FIELD TYPES VALIDATION
-        else if (field.type === 'checkbox') {
-          continue; // Checkboxes don't need validation
-        } else if (['text', 'textarea', 'email', 'url', 'date', 'select', 'image', 'youtube', 'address'].includes(field.type || '')) {
-          if (!value || (typeof value === 'string' && value.trim() === '')) {
-            emptyRequiredFields.push(field.displayLabel || field.label);
-          }
-        } else if (['number', 'currency', 'percentage'].includes(field.type || '')) {
-          if (value === undefined || value === null || value === '' || (typeof value === 'string' && value.trim() === '')) {
-            emptyRequiredFields.push(field.displayLabel || field.label);
-          }
-        } else if (field.type === 'tags' || field.type === 'category') {
+        else if (field.type === 'tags' || field.type === 'category') {
           const tagData = value as CategoryFieldData;
           if (!tagData || !tagData.majorTag) {
             emptyRequiredFields.push(field.displayLabel || field.label);
@@ -297,7 +281,7 @@
     // Reset form
     const resetData: ProjectData = {};
     template.fields.forEach((field) => {
-      resetData[field.key] = field.type === 'checkbox' ? false : '';
+      resetData[field.key] = '';
     });
     formData = resetData;
 
@@ -359,9 +343,7 @@
     editingObject = null;
     const resetData: ProjectData = {};
     template.fields.forEach((field) => {
-      if (field.type === 'checkbox') {
-        resetData[field.key] = false;
-      } else if (field.type === 'tags') {
+      if (field.type === 'tags') {
         resetData[field.key] = { majorTag: null, minorTags: [] } as CategoryFieldData;
       } else {
         resetData[field.key] = '';
@@ -713,21 +695,7 @@
           // Map original data to template fields
           // Note: coordinates are no longer stored in form data, they're in GeoJSON location
           template.fields.forEach(field => {
-            if (field.type === 'checkbox') {
-              // Try to map checkbox values
-              const matchingKey = Object.keys(rowData.originalData).find(key => 
-                key.toLowerCase().includes(field.key.toLowerCase()) ||
-                field.key.toLowerCase().includes(key.toLowerCase()) ||
-                key.toLowerCase() === (field.displayLabel || field.label).toLowerCase()
-              );
-              
-              if (matchingKey && rowData.originalData[matchingKey]) {
-                const value = String(rowData.originalData[matchingKey]).toLowerCase();
-                newData[field.key] = value === 'tak' || value === 'true' || value === '1' || value === 'yes';
-              } else {
-                newData[field.key] = false;
-              }
-            } else if (field.type === 'tags') {
+            if (field.type === 'tags') {
               // Tags can't be imported from Excel - mark as incomplete
               newData[field.key] = { majorTag: null, minorTags: [] };
               if (field.required) {
@@ -743,22 +711,9 @@
               
               if (matchingKey && rowData.originalData[matchingKey] !== undefined && rowData.originalData[matchingKey] !== '') {
                 let value = rowData.originalData[matchingKey];
-                
-                // Type conversion based on field type
-                if (field.type === 'number' || field.type === 'currency' || field.type === 'percentage') {
-                  const numValue = parseFloat(String(value));
-                  value = isNaN(numValue) ? 0 : numValue;
-                } else {
-                  value = String(value);
-                }
-                
-                newData[field.key] = value;
+                newData[field.key] = String(value);
               } else {
-                if (field.type === 'number' || field.type === 'currency' || field.type === 'percentage') {
-                  newData[field.key] = 0;
-                } else {
-                  newData[field.key] = '';
-                }
+                newData[field.key] = '';
                 
                 if (field.required) {
                   hasIncompleteData = true;
@@ -941,128 +896,6 @@
                 oninput={(val) => formData[field.fieldName || field.key] = val}
               />
 
-            <!-- LEGACY FIELD TYPES -->
-            {:else if field.type === 'text'}
-              <input
-                value={getFieldValue(field.key)}
-                oninput={(e) => handleTextInput(field.key, e)}
-                required={field.required}
-              >
-            {:else if field.type === 'number'}
-              <input 
-                type="number" 
-                value={getFieldValue(field.key)}
-                oninput={(e) => handleNumberInput(field.key, e)}
-                required={field.required}
-              >
-            {:else if field.type === 'currency'}
-              <div class="currency-field">
-                <input 
-                  type="number" 
-                  step="0.01"
-                  value={getFieldValue(field.key)}
-                  oninput={(e) => handleNumberInput(field.key, e)}
-                  required={field.required}
-                  placeholder="0.00"
-                >
-                <span class="currency-symbol">zł</span>
-              </div>
-            {:else if field.type === 'percentage'}
-              <div class="percentage-field">
-                <input 
-                  type="number" 
-                  min="0"
-                  max="100"
-                  value={getFieldValue(field.key)}
-                  oninput={(e) => handleNumberInput(field.key, e)}
-                  required={field.required}
-                  placeholder="0"
-                >
-                <span class="percentage-symbol">%</span>
-              </div>
-            {:else if field.type === 'email'}
-              <input 
-                type="email" 
-                value={getFieldValue(field.key)}
-                oninput={(e) => handleTextInput(field.key, e)}
-                required={field.required}
-                placeholder="nazwa@example.com"
-              >
-            {:else if field.type === 'url'}
-              <input 
-                type="url" 
-                value={getFieldValue(field.key)}
-                oninput={(e) => handleTextInput(field.key, e)}
-                required={field.required}
-                placeholder="https://example.com"
-              >
-            {:else if field.type === 'date'}
-              <input 
-                type="date" 
-                value={getFieldValue(field.key)}
-                oninput={(e) => handleTextInput(field.key, e)}
-                required={field.required}
-              >
-            {:else if field.type === 'textarea'}
-              <textarea 
-                value={getFieldValue(field.key)}
-                oninput={(e) => handleTextInput(field.key, e)}
-                required={field.required}
-                placeholder="Wprowadź dłuższy tekst..."
-                rows="4"
-              ></textarea>
-            {:else if field.type === 'select'}
-              <select 
-                value={getFieldValue(field.key)}
-                onchange={(e) => handleTextInput(field.key, e)}
-                required={field.required}
-              >
-                <option value="">Wybierz opcję...</option>
-                {#each field.selectConfig?.options || [] as option}
-                  <option value={option}>{option}</option>
-                {/each}
-              </select>
-            {:else if field.type === 'image'}
-              <div class="image-field">
-                <div class="image-input-options">
-                  <input 
-                    type="url" 
-                    value={getFieldValue(field.key)}
-                    oninput={(e) => handleTextInput(field.key, e)}
-                    required={field.required}
-                    placeholder="https://example.com/obraz.jpg lub przesłij plik"
-                  >
-                  <span class="input-separator">lub</span>
-                  <input 
-                    type="file" 
-                    accept="image/*" 
-                    onchange={(e) => handleImageUpload(field.key, e)}
-                    class="file-input"
-                    id="image-upload-{field.key}"
-                  >
-                  <label for="image-upload-{field.key}" class="file-upload-btn">
-                    <Icon name="Document" size={16} /> Prześlij plik
-                  </label>
-                </div>
-                {#if getFieldValue(field.key)}
-                  <div class="image-preview">
-                    <img src={String(getFieldValue(field.key))} alt="Podgląd" loading="lazy" />
-                  </div>
-                {/if}
-              </div>
-            {:else if field.type === 'youtube'}
-              <input 
-                type="url" 
-                value={getFieldValue(field.key)}
-                oninput={(e) => handleTextInput(field.key, e)}
-                required={field.required}
-                placeholder="https://www.youtube.com/watch?v=VIDEO_ID lub https://youtu.be/VIDEO_ID"
-              >
-              {#if getFieldValue(field.key)}
-                <div class="youtube-preview">
-                  <small class="help-text">Film YouTube zostanie wyświetlony na liście pinezek</small>
-                </div>
-              {/if}
             {:else if field.type === 'address'}
               <div class="address-field">
                 <div class="address-input-with-button">
@@ -1092,12 +925,6 @@
                   </div>
                 {/if}
               </div>
-            {:else if field.type === 'checkbox'}
-              <input 
-                type="checkbox" 
-                checked={getCheckboxValue(field.key)}
-                onchange={(e) => handleCheckboxChange(field.key, e)}
-              >
             {:else if field.type === 'tags' || (field.fieldType || field.type) === 'category'}
               <!-- Tag/Category Selection UI -->
               {@const tagData = getTagValue(field.fieldName || field.key)}

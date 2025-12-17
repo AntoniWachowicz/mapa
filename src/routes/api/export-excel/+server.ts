@@ -47,9 +47,7 @@ export const POST: RequestHandler = async ({ request }) => {
           let value = obj.data[field.key];
           
           // Format value based on field type
-          if (field.type === 'checkbox') {
-            value = value ? 'Tak' : 'Nie';
-          } else if (field.type === 'tags') {
+          if (field.type === 'tags') {
             const tagData = value as any;
             if (tagData && tagData.majorTag) {
               const majorTag = template.tags.find(t => t.id === tagData.majorTag);
@@ -73,10 +71,6 @@ export const POST: RequestHandler = async ({ request }) => {
             } else {
               value = '';
             }
-          } else if (field.type === 'currency') {
-            value = typeof value === 'number' ? `${value.toLocaleString('pl-PL', { minimumFractionDigits: 2 })} zł` : '';
-          } else if (field.type === 'percentage') {
-            value = typeof value === 'number' ? `${value}%` : '';
           } else if (value === null || value === undefined) {
             value = '';
           }

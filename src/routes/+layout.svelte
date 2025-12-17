@@ -50,6 +50,7 @@
     <li><a href="/list" class="nav-tab" class:active={$page.url.pathname === '/list'}>Lista</a></li>
     <li><a href="/admin" class="nav-tab" class:active={$page.url.pathname === '/admin'}>Konfiguracja</a></li>
     <li><a href="/schema-builder" class="nav-tab" class:active={$page.url.pathname === '/schema-builder'}>Schemat</a></li>
+    <li><a href="/admin/embed-code" class="nav-tab" class:active={$page.url.pathname === '/admin/embed-code'}>Osadź</a></li>
     <div class="nav-indicator" bind:this={indicator}></div>
   </ul>
 </nav>

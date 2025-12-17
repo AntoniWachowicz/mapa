@@ -17,32 +17,8 @@
 
     const fieldType = field.fieldType || field.type;
 
-    switch (fieldType) {
-      case 'currency':
-        return `${value.toLocaleString('pl-PL')} PLN`;
-      case 'percentage':
-        return `${value}%`;
-      case 'checkbox':
-        return value ? 'Tak' : 'Nie';
-      case 'date':
-        try {
-          return new Date(value).toLocaleDateString('pl-PL');
-        } catch {
-          return value;
-        }
-      case 'email':
-        return value;
-      case 'url':
-        return value;
-      case 'youtube':
-        return 'Film YouTube';
-      case 'image':
-        return 'Obrazek';
-      case 'number':
-        return value.toLocaleString('pl-PL');
-      default:
-        return String(value);
-    }
+    // Modern field types only - legacy types removed
+    return String(value);
   }
 
   // Check if field is a complex type that needs special rendering
@@ -192,16 +168,6 @@
                     </div>
                   {/each}
                 </div>
-              {:else if field.type === 'image'}
-                <div class="image-preview">
-                  <Icon name="Picture" size={16} />
-                  <span>Obrazek: {field.displayLabel || field.label}</span>
-                </div>
-              {:else if field.type === 'youtube'}
-                <div class="youtube-preview">
-                  <Icon name="Video" size={16} />
-                  <span>Film YouTube</span>
-                </div>
               {:else if field.type === 'category'}
                 {@const categoryValue = fieldValue}
                 <div class="tags-preview">
@@ -230,15 +196,6 @@
                       <span class="tag simple-tag">{tagsValue.selectedTag}</span>
                     {/if}
                   {/if}
-                </div>
-              {:else if field.type === 'textarea'}
-                <div class="textarea-preview">
-                  {formatFieldValue(field, fieldValue)}
-                </div>
-              {:else if field.type === 'checkbox'}
-                <div class="checkbox-preview">
-                  <Icon name={fieldValue ? 'Star' : 'Close'} size={14} />
-                  <span>{formatFieldValue(field, fieldValue)}</span>
                 </div>
               {:else}
                 <span class="text-value">

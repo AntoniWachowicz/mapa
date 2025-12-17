@@ -3,6 +3,9 @@ import type { GeoJSON } from '../types.js';
 // Note: ZYWIECKI_RAJ_BOUNDARY is actually Jeleśnia's boundary (kept for backward compatibility)
 import { ZYWIECKI_RAJ_BOUNDARY as JELESNIA_BOUNDARY } from './regions/zywiecki-raj.js';
 
+// Import LGD Buduj Razem boundary
+import { LGD_BUDUJ_RAZEM_MULTIPOLYGON } from './regions/buduj-razem.js';
+
 // Import all LGD Żywiecki Raj gmina boundaries
 import { CZERNICHOW_BOUNDARY } from './regions/czernichow.js';
 import { GILOWICE_BOUNDARY } from './regions/gilowice.js';
@@ -57,6 +60,14 @@ export const BOUNDARY_REGISTRY: BoundaryRegion[] = [
     name: 'LGD Żywiecki Raj',
     description: 'Lokalna Grupa Działania Żywiecki Raj - all 14 gminas with visible borders',
     polygon: LGD_ZYWIECKI_RAJ_MULTIPOLYGON,
+    category: 'lgd'
+  },
+  // LGD Buduj Razem - 19/20 gminas (Ujazd/TERYT 1016105 missing from shapefile)
+  {
+    id: 'buduj-razem',
+    name: 'LGD Buduj Razem',
+    description: 'Lokalna Grupa Działania Buduj Razem - 19 gminas in Łódź region (Ujazd pending)',
+    polygon: LGD_BUDUJ_RAZEM_MULTIPOLYGON,
     category: 'lgd'
   },
   // Individual gminas in LGD Żywiecki Raj (alphabetical order)
@@ -208,5 +219,6 @@ export function calculatePolygonBounds(polygon: GeoJSON.Polygon | GeoJSON.MultiP
 // Export for backward compatibility (note: this is actually Jeleśnia's boundary)
 export { ZYWIECKI_RAJ_BOUNDARY } from './regions/zywiecki-raj.js';
 
-// Export the actual LGD MultiPolygon
+// Export the actual LGD MultiPolygons
 export { LGD_ZYWIECKI_RAJ_MULTIPOLYGON };
+export { LGD_BUDUJ_RAZEM_MULTIPOLYGON };

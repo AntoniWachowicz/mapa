@@ -65,6 +65,9 @@
   let locationEditMode = $state<'manual' | 'geocode'>('manual');
   let locationEditLoading = $state(false);
 
+  // Quick geocoding state
+  let quickGeocodingIds = $state<Set<string>>(new Set());
+
   // Initialize data
   $effect(() => {
     if (data.objects) {
@@ -572,22 +575,8 @@
       }
     }
 
-    if (field.type === 'checkbox') {
-      return value ? 'Tak' : 'Nie';
-    } else if (field.type === 'currency') {
-      return `${Number(value).toLocaleString('pl-PL', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} zł`;
-    } else if (field.type === 'percentage') {
-      return `${value}%`;
-    } else if (field.type === 'date') {
-      try {
-        const date = new Date(value);
-        return date.toLocaleDateString('pl-PL');
-      } catch {
-        return String(value);
-      }
-    } else {
-      return String(value);
-    }
+    // All legacy field type handlers removed - using modern field types only
+    return String(value);
   }
 
   function getFieldDisplayName(field: any): string {
@@ -595,25 +584,19 @@
   }
 
   function getFieldType(field: any): string {
+    // Modern field types only
     const typeMap: Record<string, string> = {
-      'text': 'tekst',
-      'number': 'liczba',
-      'checkbox': 'tak/nie',
-      'date': 'data',
-      'email': 'email',
-      'url': 'url',
-      'currency': 'waluta',
-      'percentage': 'procent',
-      'textarea': 'tekst',
-      'select': 'wybór',
-      'tags': 'tagi',
-      'image': 'obraz',
-      'youtube': 'youtube',
-      'address': 'adres',
-      'price': 'cena',
+      'title': 'tytuł',
+      'location': 'lokalizacja',
+      'richtext': 'tekst sformatowany',
+      'files': 'pliki',
+      'gallery': 'galeria',
       'multidate': 'wielodata',
+      'address': 'adres',
       'links': 'linki',
-      'richtext': 'tekst sformatowany'
+      'tags': 'tagi',
+      'price': 'cena',
+      'category': 'kategoria'
     };
     return typeMap[field.type] || field.type;
   }
@@ -1109,6 +1092,213 @@
     locationEditLoading = false;
   }
 
+  // Extract address from object's data (looks for address-type fields or text fields that might contain addresses)
+  function extractAddressFromObject(obj: SavedObject): string | null {
+    if (!data.template) return null;
+
+    // Priority 1: Look for 'address' type fields
+    const addressFields = data.template.fields.filter(f => f.type === 'address' || f.fieldType === 'address');
+    for (const field of addressFields) {
+      const addressData = obj.data[field.key];
+
+      // Handle structured address object
+      if (addressData && typeof addressData === 'object') {
+        const parts = [];
+        if (addressData.street) parts.push(addressData.street);
+        if (addressData.number) parts.push(addressData.number);
+        if (addressData.city) parts.push(addressData.city);
+        if (addressData.gmina) parts.push(addressData.gmina);
+        if (addressData.postalCode) parts.push(addressData.postalCode);
+
+        // Even if we only have gmina or postal code, return it
+        if (parts.length > 0) return parts.join(', ');
+      }
+
+      // Handle string dumped into address field (Excel import case)
+      if (addressData && typeof addressData === 'string') {
+        const trimmed = addressData.trim();
+        if (trimmed.length > 2) return trimmed; // Lowered threshold
+      }
+    }
+
+    // Priority 2: Look for fields with 'adres' in the name
+    const addressLikeFields = data.template.fields.filter(f =>
+      f.key?.toLowerCase().includes('adres') ||
+      f.displayLabel?.toLowerCase().includes('adres') ||
+      f.label?.toLowerCase().includes('adres')
+    );
+    for (const field of addressLikeFields) {
+      const value = obj.data[field.key];
+
+      // Handle string addresses
+      if (value && typeof value === 'string' && value.trim().length > 5) {
+        return value.trim();
+      }
+
+      // Handle address object that might be in a field with "adres" in name
+      if (value && typeof value === 'object') {
+        const parts = [];
+        if (value.street) parts.push(value.street);
+        if (value.number) parts.push(value.number);
+        if (value.city) parts.push(value.city);
+        if (value.postalCode) parts.push(value.postalCode);
+        if (value.gmina) parts.push(value.gmina);
+        if (parts.length > 0) return parts.join(' ');
+      }
+    }
+
+    // Priority 3: Look for gmina + postal code fields separately and combine them
+    const gminaFields = data.template.fields.filter(f =>
+      f.key?.toLowerCase().includes('gmina') ||
+      f.label?.toLowerCase().includes('gmina')
+    );
+    const postalCodeFields = data.template.fields.filter(f =>
+      f.key?.toLowerCase().includes('kod') ||
+      f.key?.toLowerCase().includes('postal') ||
+      f.label?.toLowerCase().includes('kod pocztowy')
+    );
+
+    let gminaValue = '';
+    let postalValue = '';
+
+    for (const field of gminaFields) {
+      const value = obj.data[field.key];
+      if (value && typeof value === 'string' && value.trim().length > 2) {
+        gminaValue = value.trim();
+        break;
+      }
+    }
+
+    for (const field of postalCodeFields) {
+      const value = obj.data[field.key];
+      if (value && typeof value === 'string' && value.trim().length > 0) {
+        postalValue = value.trim();
+        break;
+      }
+    }
+
+    // If we have gmina or postal code, combine them
+    if (gminaValue || postalValue) {
+      const parts = [];
+      if (gminaValue) parts.push(gminaValue);
+      if (postalValue) parts.push(postalValue);
+      return parts.join(', ');
+    }
+
+    // Priority 4: Look for fields with location/miejsce/lokalizacja in name
+    const locationFields = data.template.fields.filter(f =>
+      f.key?.toLowerCase().includes('miejsce') ||
+      f.key?.toLowerCase().includes('lokalizacja') ||
+      f.key?.toLowerCase().includes('location') ||
+      f.label?.toLowerCase().includes('miejsce') ||
+      f.label?.toLowerCase().includes('lokalizacja')
+    );
+    for (const field of locationFields) {
+      const value = obj.data[field.key];
+      if (value && typeof value === 'string' && value.trim().length > 3) {
+        return value.trim();
+      }
+    }
+
+    // Priority 5: Look for text fields that might contain addresses
+    const textFields = data.template.fields.filter(f =>
+      (f.type === 'richtext' || f.type === 'textarea' || f.type === 'text') &&
+      !f.key?.toLowerCase().includes('opis') && // Exclude description fields
+      !f.key?.toLowerCase().includes('uwag') && // Exclude notes
+      !f.key?.toLowerCase().includes('description')
+    );
+    for (const field of textFields) {
+      const value = obj.data[field.key];
+      if (value && typeof value === 'string') {
+        const trimmed = value.trim();
+        // Check if it looks like an address (has at least one digit or comma, and multiple words)
+        if (trimmed.length > 5 && (/\d/.test(trimmed) || /,/.test(trimmed)) && trimmed.split(/[\s,]+/).length >= 2) {
+          return trimmed;
+        }
+      }
+    }
+
+    return null;
+  }
+
+  // Quick geocode function - geocodes directly from address field without opening modal
+  async function quickGeocodePin(objectId: string) {
+    const obj = filteredObjects.find(o => o.id === objectId);
+    if (!obj) return;
+
+    const address = extractAddressFromObject(obj);
+    if (!address) {
+      alert('Nie znaleziono pola z adresem dla tego obiektu. Użyj przycisku "!" aby wprowadzić lokalizację ręcznie.');
+      return;
+    }
+
+    console.log('Attempting to geocode:', address);
+
+    // Add to loading set
+    quickGeocodingIds.add(objectId);
+    quickGeocodingIds = new Set(quickGeocodingIds);
+
+    try {
+      const response = await fetch('/api/geocode', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ address })
+      });
+
+      if (!response.ok) {
+        throw new Error('Geocoding failed');
+      }
+
+      const result = await response.json();
+      if (!result.success || !result.data) {
+        alert(`Nie znaleziono współrzędnych dla adresu: "${address}"\n\nSpróbuj:\n- Dodać więcej szczegółów (ulica, miasto)\n- Użyć przycisku "!" do ręcznego wprowadzenia lokalizacji\n- Sprawdzić poprawność danych w adresie`);
+        return;
+      }
+
+      // Save coordinates
+      const { lat, lng } = result.data;
+      const locationResponse = await fetch(`/api/objects/${objectId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          location: {
+            type: 'Point',
+            coordinates: [lng, lat]
+          },
+          clearIncomplete: true
+        })
+      });
+
+      if (locationResponse.ok) {
+        const locationResult = await locationResponse.json();
+        if (locationResult.success && locationResult.object) {
+          // Update object in list
+          const objIndex = filteredObjects.findIndex(o => o.id === objectId);
+          if (objIndex !== -1) {
+            filteredObjects[objIndex] = locationResult.object;
+            if (filteredObjects[objIndex].missingFields?.includes('location')) {
+              filteredObjects[objIndex].missingFields = filteredObjects[objIndex].missingFields?.filter(f => f !== 'location');
+              if (filteredObjects[objIndex].missingFields?.length === 0) {
+                filteredObjects[objIndex].hasIncompleteData = false;
+              }
+            }
+            filteredObjects = [...filteredObjects];
+          }
+        }
+        alert(`✓ Geokodowanie zakończone!\nAdres: ${address}\nWspółrzędne: ${lat.toFixed(6)}, ${lng.toFixed(6)}`);
+      } else {
+        alert('Błąd podczas zapisywania lokalizacji');
+      }
+    } catch (error) {
+      console.error('Quick geocode error:', error);
+      alert(`Błąd geokodowania dla adresu: ${address}`);
+    } finally {
+      // Remove from loading set
+      quickGeocodingIds.delete(objectId);
+      quickGeocodingIds = new Set(quickGeocodingIds);
+    }
+  }
+
   async function geocodeAddress() {
     if (!locationEditAddress.trim()) {
       alert('Wprowadź adres do wyszukania');
@@ -1275,6 +1465,13 @@
                   onchange={toggleSelectAll}
                 />
               </th>
+              <!-- Location column (always visible) -->
+              <th class="location-column" style="width: 250px;">
+                <div class="header-content">
+                  <span class="field-name">Lokalizacja</span>
+                  <span class="field-type">(współrzędne)</span>
+                </div>
+              </th>
               {#each data.template.fields.filter(f => f.visible) as field, index}
                 <th
                   onclick={() => handleSort(field.key)}
@@ -1337,6 +1534,56 @@
                         }}
                       >!</button>
                     {/if}
+                  </td>
+                  <!-- Location column -->
+                  <td class="location-column" class:missing-location-cell={isMissingLocation} style="width: 250px;">
+                    <div class="location-cell-content">
+                      {#if obj.location && obj.location.coordinates}
+                        <div class="coordinates-display">
+                          <div class="coord-row">
+                            <span class="coord-label">Lat:</span>
+                            <span class="coord-value">{obj.location.coordinates[1].toFixed(6)}</span>
+                          </div>
+                          <div class="coord-row">
+                            <span class="coord-label">Lng:</span>
+                            <span class="coord-value">{obj.location.coordinates[0].toFixed(6)}</span>
+                          </div>
+                        </div>
+                      {:else}
+                        {@const hasAddress = extractAddressFromObject(obj) !== null}
+                        {@const isGeocoding = quickGeocodingIds.has(obj.id)}
+                        <div class="missing-coordinates">
+                          <span class="missing-text">Brak współrzędnych</span>
+                          {#if hasAddress && !isGeocoding}
+                            <button
+                              class="quick-geocode-location-btn"
+                              title="Automatyczne geokodowanie z adresu"
+                              onclick={(e) => {
+                                e.stopPropagation();
+                                quickGeocodePin(obj.id);
+                              }}
+                            >
+                              📍 Geokoduj
+                            </button>
+                          {/if}
+                          {#if isGeocoding}
+                            <span class="geocoding-status-small">⏳ Geokodowanie...</span>
+                          {/if}
+                          {#if !hasAddress && !isGeocoding}
+                            <button
+                              class="manual-location-btn"
+                              title="Ręczne wprowadzenie współrzędnych"
+                              onclick={(e) => {
+                                e.stopPropagation();
+                                openLocationModal(obj.id);
+                              }}
+                            >
+                              Dodaj ręcznie
+                            </button>
+                          {/if}
+                        </div>
+                      {/if}
+                    </div>
                   </td>
                   {#each data.template.fields.filter(f => f.visible) as field}
                     {@const cellId = `${obj.id}-${field.key}`}
@@ -1451,46 +1698,8 @@
                               onkeydown={handleKeydown}
                               use:focus
                             ></textarea>
-                          {:else if field.type === 'text' || field.type === 'email' || field.type === 'url'}
-                            <input
-                              type="text"
-                              bind:value={editingValue}
-                              class="edit-field-input"
-                              onkeydown={handleKeydown}
-                              use:focus
-                            />
-                          {:else if field.type === 'number' || field.type === 'currency' || field.type === 'percentage'}
-                            <input
-                              type="number"
-                              bind:value={editingValue}
-                              class="edit-field-input"
-                              onkeydown={handleKeydown}
-                              use:focus
-                            />
-                          {:else if field.type === 'textarea'}
-                            <textarea
-                              bind:value={editingValue}
-                              class="edit-field-textarea"
-                              onkeydown={handleKeydown}
-                              use:focus
-                            ></textarea>
-                          {:else if field.type === 'checkbox'}
-                            <input
-                              type="checkbox"
-                              bind:checked={editingValue}
-                              class="edit-field-checkbox"
-                              onkeydown={handleKeydown}
-                              use:focus
-                            />
-                          {:else if field.type === 'date'}
-                            <input
-                              type="date"
-                              bind:value={editingValue}
-                              class="edit-field-input"
-                              onkeydown={handleKeydown}
-                              use:focus
-                            />
                           {:else}
+                            <!-- Default text input for other modern field types -->
                             <input
                               type="text"
                               bind:value={editingValue}
@@ -1554,6 +1763,9 @@
                             </div>
                           {:else if field.type === 'address' && typeof fieldValue === 'object' && fieldValue !== null}
                             {@const addressData = fieldValue}
+                            {@const isMissingLocation = !obj.location || obj.missingFields?.includes('location')}
+                            {@const hasAddress = extractAddressFromObject(obj) !== null}
+                            {@const isGeocoding = quickGeocodingIds.has(obj.id)}
                             <div class="address-display-container">
                               <div class="sub-fields">
                                 {#if addressData.street}
@@ -1581,16 +1793,35 @@
                                   </div>
                                 {/if}
                               </div>
-                              <button
-                                class="sync-address-btn"
-                                onclick={(e) => {
-                                  e.stopPropagation();
-                                  syncAddressWithLocation(obj.id);
-                                }}
-                                title="Synchronizuj adres z lokalizacją"
-                              >
-                                {@html SyncIcon()}
-                              </button>
+                              <div class="address-actions">
+                                {#if isMissingLocation && hasAddress && !isGeocoding}
+                                  <button
+                                    class="quick-geocode-address-btn"
+                                    title="Automatyczne geokodowanie z adresu"
+                                    onclick={(e) => {
+                                      e.stopPropagation();
+                                      quickGeocodePin(obj.id);
+                                    }}
+                                  >
+                                    📍 Geokoduj
+                                  </button>
+                                {/if}
+                                {#if isGeocoding}
+                                  <span class="geocoding-status">⏳ Geokodowanie...</span>
+                                {/if}
+                                {#if !isMissingLocation}
+                                  <button
+                                    class="sync-address-btn"
+                                    onclick={(e) => {
+                                      e.stopPropagation();
+                                      syncAddressWithLocation(obj.id);
+                                    }}
+                                    title="Synchronizuj adres z lokalizacją"
+                                  >
+                                    {@html SyncIcon()}
+                                  </button>
+                                {/if}
+                              </div>
                             </div>
                           {:else if field.type === 'links' && Array.isArray(fieldValue) && fieldValue.length > 0}
                             <div class="sub-fields">
@@ -2767,6 +2998,53 @@
     width: 100%;
   }
 
+  .address-actions {
+    flex-shrink: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    align-items: flex-start;
+    margin-top: 2px;
+  }
+
+  .quick-geocode-address-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 8px;
+    background: #10b981;
+    color: white;
+    border: none;
+    border-radius: var(--radius-base);
+    cursor: pointer;
+    transition: all var(--transition-fast);
+    font-size: 12px;
+    font-weight: 500;
+    white-space: nowrap;
+  }
+
+  .quick-geocode-address-btn:hover {
+    background: #059669;
+    transform: scale(1.05);
+  }
+
+  .quick-geocode-address-btn:active {
+    transform: scale(0.95);
+  }
+
+  .geocoding-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 8px;
+    background: #f59e0b;
+    color: white;
+    border-radius: var(--radius-base);
+    font-size: 12px;
+    font-weight: 500;
+    white-space: nowrap;
+  }
+
   .sync-address-btn {
     flex-shrink: 0;
     display: inline-flex;
@@ -2781,7 +3059,6 @@
     transition: all var(--transition-fast);
     width: 24px;
     height: 24px;
-    margin-top: 2px;
   }
 
   .sync-address-btn:hover {
@@ -3286,6 +3563,120 @@
   .missing-location-badge:hover {
     background: #b91c1c;
     transform: scale(1.1);
+  }
+
+  /* Location column styles */
+  .location-column {
+    min-width: 250px;
+    max-width: 250px;
+  }
+
+  .location-cell-content {
+    padding: var(--space-2);
+    min-height: 40px;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+  }
+
+  .coordinates-display {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+    font-size: 12px;
+  }
+
+  .coord-row {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+  }
+
+  .coord-label {
+    font-weight: 600;
+    color: var(--color-text-secondary);
+    min-width: 32px;
+  }
+
+  .coord-value {
+    color: var(--color-text-primary);
+    font-weight: 500;
+  }
+
+  .missing-coordinates {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    align-items: flex-start;
+  }
+
+  .missing-text {
+    font-size: var(--text-sm);
+    color: var(--color-text-secondary);
+    font-style: italic;
+  }
+
+  .quick-geocode-location-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 8px;
+    background: #10b981;
+    color: white;
+    border: none;
+    border-radius: var(--radius-base);
+    cursor: pointer;
+    transition: all var(--transition-fast);
+    font-size: 11px;
+    font-weight: 500;
+    white-space: nowrap;
+  }
+
+  .quick-geocode-location-btn:hover {
+    background: #059669;
+    transform: scale(1.05);
+  }
+
+  .quick-geocode-location-btn:active {
+    transform: scale(0.95);
+  }
+
+  .geocoding-status-small {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 8px;
+    background: #f59e0b;
+    color: white;
+    border-radius: var(--radius-base);
+    font-size: 11px;
+    font-weight: 500;
+    white-space: nowrap;
+  }
+
+  .manual-location-btn {
+    display: inline-flex;
+    align-items: center;
+    padding: 4px 8px;
+    background: #6b7280;
+    color: white;
+    border: none;
+    border-radius: var(--radius-base);
+    cursor: pointer;
+    transition: all var(--transition-fast);
+    font-size: 11px;
+    font-weight: 500;
+    white-space: nowrap;
+  }
+
+  .manual-location-btn:hover {
+    background: #4b5563;
+    transform: scale(1.05);
+  }
+
+  .manual-location-btn:active {
+    transform: scale(0.95);
   }
 
 </style>

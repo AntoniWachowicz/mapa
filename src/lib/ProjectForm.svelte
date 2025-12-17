@@ -37,17 +37,8 @@
         const value = formData[field.key];
         
         // Check if field is actually empty
-        if (field.type === 'checkbox') {
-          // Checkboxes are always valid (can be true or false)
-          continue;
-        } else if (field.type === 'text') {
-          if (!value || (typeof value === 'string' && value.trim() === '')) {
-            emptyRequiredFields.push(field.label);
-          }
-        } else if (field.type === 'number') {
-          if (!value || value === '') {
-            emptyRequiredFields.push(field.label);
-          }
+        if (!value || (typeof value === 'string' && value.trim() === '')) {
+          emptyRequiredFields.push(field.label);
         }
       }
     }
@@ -64,7 +55,7 @@
     // Reset form after successful save
     const resetData: ProjectData = {};
     template.fields.forEach((field) => {
-      resetData[field.key] = field.type === 'checkbox' ? false : '';
+      resetData[field.key] = '';
     });
     formData = resetData;
   }
@@ -113,27 +104,13 @@
       <div>
         <label>
           {field.label} {field.required ? '*' : ''}
-          
-          {#if field.type === 'text'}
-            <input 
-              value={getFieldValue(field.key)} 
-              oninput={(e) => handleTextInput(field.key, e)}
-              required={field.required}
-            >
-          {:else if field.type === 'number'}
-            <input 
-              type="number" 
-              value={getFieldValue(field.key)}
-              oninput={(e) => handleNumberInput(field.key, e)}
-              required={field.required}
-            >
-          {:else if field.type === 'checkbox'}
-            <input 
-              type="checkbox" 
-              checked={getCheckboxValue(field.key)}
-              onchange={(e) => handleCheckboxChange(field.key, e)}
-            >
-          {/if}
+
+          <!-- Modern field types only - legacy types removed -->
+          <input
+            value={getFieldValue(field.key)}
+            oninput={(e) => handleTextInput(field.key, e)}
+            required={field.required}
+          >
         </label>
       </div>
     {/each}
