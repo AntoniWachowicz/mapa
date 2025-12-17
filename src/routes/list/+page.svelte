@@ -26,7 +26,10 @@
   let resizeInitialRightWidth = $state(0);
   let expandedCells = $state<Set<string>>(new Set());
   let tableBodyElement = $state<HTMLElement | null>(null);
+  let tableHeaderElement = $state<HTMLElement | null>(null);
   let placeholderRowCount = $state(0);
+  let hoverCell = $state<{objectId: string, fieldKey: string} | null>(null);
+  let hoverTooltip = $state<{content: any, x: number, y: number, width: number} | null>(null);
   let editingCell = $state<{objectId: string, fieldKey: string} | null>(null);
   let editingValue = $state<any>(null);
   let originalValue = $state<any>(null);
@@ -56,15 +59,6 @@
   let newFieldType = $state<string>('richtext');
   let creatingField = $state(false);
 
-  // Location editing modal state
-  let showLocationModal = $state(false);
-  let locationEditObjectId = $state<string | null>(null);
-  let locationEditLat = $state<string>('');
-  let locationEditLng = $state<string>('');
-  let locationEditAddress = $state<string>('');
-  let locationEditMode = $state<'manual' | 'geocode'>('manual');
-  let locationEditLoading = $state(false);
-
   // Quick geocoding state
   let quickGeocodingIds = $state<Set<string>>(new Set());
 
@@ -76,7 +70,7 @@
     // Initialize column widths
     if (data.template) {
       const initialWidths: Record<string, number> = {};
-      data.template.fields.filter(f => f.visible).forEach(field => {
+      data.template.fields.filter(f => f.visible && f.type !== 'location' && f.fieldType !== 'location').forEach(field => {
         initialWidths[field.key] = 200; // Default width
       });
       columnWidths = initialWidths;
@@ -550,6 +544,29 @@
         return aString > bString ? -1 : aString < bString ? 1 : 0;
       }
     });
+  }
+
+  // Sync horizontal scroll between header and body
+  function syncHeaderScroll() {
+    if (tableBodyElement && tableHeaderElement) {
+      tableHeaderElement.scrollLeft = tableBodyElement.scrollLeft;
+    }
+  }
+
+  // Hover tooltip functions
+  function showTooltip(event: MouseEvent, content: any) {
+    const target = event.currentTarget as HTMLElement;
+    const rect = target.getBoundingClientRect();
+    hoverTooltip = {
+      content,
+      x: rect.left,
+      y: rect.bottom + 4,
+      width: rect.width
+    };
+  }
+
+  function hideTooltip() {
+    hoverTooltip = null;
   }
 
   // Price formatting function
@@ -1065,33 +1082,6 @@
     }
   }
 
-  // Location editing functions
-  function openLocationModal(objectId: string) {
-    const obj = filteredObjects.find(o => o.id === objectId);
-    if (obj && obj.location) {
-      // Pre-fill with existing coordinates
-      locationEditLat = String(obj.location.coordinates[1]);
-      locationEditLng = String(obj.location.coordinates[0]);
-    } else {
-      locationEditLat = '';
-      locationEditLng = '';
-    }
-    locationEditAddress = '';
-    locationEditObjectId = objectId;
-    locationEditMode = 'manual';
-    showLocationModal = true;
-  }
-
-  function closeLocationModal() {
-    showLocationModal = false;
-    locationEditObjectId = null;
-    locationEditLat = '';
-    locationEditLng = '';
-    locationEditAddress = '';
-    locationEditMode = 'manual';
-    locationEditLoading = false;
-  }
-
   // Extract address from object's data (looks for address-type fields or text fields that might contain addresses)
   function extractAddressFromObject(obj: SavedObject): string | null {
     if (!data.template) return null;
@@ -1117,7 +1107,7 @@
       // Handle string dumped into address field (Excel import case)
       if (addressData && typeof addressData === 'string') {
         const trimmed = addressData.trim();
-        if (trimmed.length > 2) return trimmed; // Lowered threshold
+        if (trimmed.length > 2) return trimmed;
       }
     }
 
@@ -1228,7 +1218,7 @@
 
     const address = extractAddressFromObject(obj);
     if (!address) {
-      alert('Nie znaleziono pola z adresem dla tego obiektu. Użyj przycisku "!" aby wprowadzić lokalizację ręcznie.');
+      alert('Nie znaleziono pola z adresem dla tego obiektu.');
       return;
     }
 
@@ -1251,7 +1241,7 @@
 
       const result = await response.json();
       if (!result.success || !result.data) {
-        alert(`Nie znaleziono współrzędnych dla adresu: "${address}"\n\nSpróbuj:\n- Dodać więcej szczegółów (ulica, miasto)\n- Użyć przycisku "!" do ręcznego wprowadzenia lokalizacji\n- Sprawdzić poprawność danych w adresie`);
+        alert(`Nie znaleziono współrzędnych dla adresu: "${address}"\n\nSpróbuj:\n- Dodać więcej szczegółów (ulica, miasto)\n- Sprawdzić poprawność danych w adresie`);
         return;
       }
 
@@ -1296,105 +1286,6 @@
       // Remove from loading set
       quickGeocodingIds.delete(objectId);
       quickGeocodingIds = new Set(quickGeocodingIds);
-    }
-  }
-
-  async function geocodeAddress() {
-    if (!locationEditAddress.trim()) {
-      alert('Wprowadź adres do wyszukania');
-      return;
-    }
-
-    locationEditLoading = true;
-
-    try {
-      const response = await fetch('/api/geocode', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ address: locationEditAddress })
-      });
-
-      const result = await response.json();
-
-      if (result.success && result.coordinates) {
-        locationEditLat = String(result.coordinates.lat);
-        locationEditLng = String(result.coordinates.lng);
-        // Switch to manual mode to show the found coordinates
-        locationEditMode = 'manual';
-      } else {
-        alert(result.error || 'Nie udało się znaleźć adresu');
-      }
-    } catch (error) {
-      console.error('Geocode error:', error);
-      alert('Błąd podczas wyszukiwania adresu');
-    } finally {
-      locationEditLoading = false;
-    }
-  }
-
-  async function saveLocation() {
-    if (!locationEditObjectId) return;
-
-    const lat = parseFloat(locationEditLat);
-    const lng = parseFloat(locationEditLng);
-
-    if (isNaN(lat) || isNaN(lng)) {
-      alert('Wprowadź prawidłowe współrzędne');
-      return;
-    }
-
-    if (lat < -90 || lat > 90) {
-      alert('Szerokość geograficzna musi być między -90 a 90');
-      return;
-    }
-
-    if (lng < -180 || lng > 180) {
-      alert('Długość geograficzna musi być między -180 a 180');
-      return;
-    }
-
-    locationEditLoading = true;
-
-    try {
-      const response = await fetch(`/api/objects/${locationEditObjectId}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          location: {
-            type: 'Point',
-            coordinates: [lng, lat]
-          },
-          clearIncomplete: true // Signal to clear incomplete flags
-        })
-      });
-
-      if (response.ok) {
-        // Update local state
-        const objIndex = filteredObjects.findIndex(o => o.id === locationEditObjectId);
-        if (objIndex !== -1) {
-          filteredObjects[objIndex].location = {
-            type: 'Point',
-            coordinates: [lng, lat]
-          };
-          // Clear incomplete data flags if they were only for location
-          if (filteredObjects[objIndex].missingFields?.includes('location')) {
-            filteredObjects[objIndex].missingFields = filteredObjects[objIndex].missingFields?.filter(f => f !== 'location');
-            if (filteredObjects[objIndex].missingFields?.length === 0) {
-              filteredObjects[objIndex].hasIncompleteData = false;
-            }
-          }
-          filteredObjects = [...filteredObjects];
-        }
-        closeLocationModal();
-        alert('Lokalizacja została zapisana');
-      } else {
-        alert('Błąd podczas zapisywania lokalizacji');
-      }
-    } catch (error) {
-      console.error('Save location error:', error);
-      alert('Błąd podczas zapisywania lokalizacji');
-    } finally {
-      locationEditLoading = false;
     }
   }
 
@@ -1453,7 +1344,7 @@
 
     <div class="table-container">
       <!-- Sticky Header -->
-      <div class="table-header">
+      <div class="table-header" bind:this={tableHeaderElement}>
         <table class="header-table">
           <thead>
             <tr>
@@ -1468,11 +1359,13 @@
               <!-- Location column (always visible) -->
               <th class="location-column" style="width: 250px;">
                 <div class="header-content">
-                  <span class="field-name">Lokalizacja</span>
-                  <span class="field-type">(współrzędne)</span>
+                  <div class="header-text">
+                    <span class="field-name">Lokalizacja</span>
+                    <span class="field-type">(współrzędne)</span>
+                  </div>
                 </div>
               </th>
-              {#each data.template.fields.filter(f => f.visible) as field, index}
+              {#each data.template.fields.filter(f => f.visible && f.type !== 'location' && f.fieldType !== 'location') as field, index}
                 <th
                   onclick={() => handleSort(field.key)}
                   class:sorted-asc={sortField === field.key && sortDirection === 'asc'}
@@ -1480,16 +1373,18 @@
                   style="width: {columnWidths[field.key] || 200}px; position: relative;"
                 >
                   <div class="header-content">
-                    <span class="field-name">{getFieldDisplayName(field)}</span>
-                    <span class="field-type">({getFieldType(field)})</span>
-                    <span class="sort-icon">
-                      {#if sortField === field.key}
+                    <div class="header-text">
+                      <span class="field-name">{getFieldDisplayName(field)}</span>
+                      <span class="field-type">({getFieldType(field)})</span>
+                    </div>
+                    {#if sortField === field.key}
+                      <span class="sort-icon">
                         {@html sortDirection === 'asc' ? ChevronUpIcon() : ChevronDownIcon()}
-                      {/if}
-                    </span>
+                      </span>
+                    {/if}
                   </div>
-                  {#if index < data.template.fields.filter(f => f.visible).length - 1}
-                    {@const visibleFields = data.template.fields.filter(f => f.visible)}
+                  {#if index < data.template.fields.filter(f => f.visible && f.type !== 'location' && f.fieldType !== 'location').length - 1}
+                    {@const visibleFields = data.template.fields.filter(f => f.visible && f.type !== 'location' && f.fieldType !== 'location')}
                     {@const nextField = visibleFields[index + 1]}
                     <div
                       class="column-resizer"
@@ -1504,12 +1399,12 @@
       </div>
 
       <!-- Scrollable Body -->
-      <div class="table-body" bind:this={tableBodyElement}>
+      <div class="table-body" bind:this={tableBodyElement} onscroll={syncHeaderScroll}>
         <table class="body-table">
           <tbody>
             {#if filteredObjects.length === 0}
               <tr>
-                <td colspan={data.template.fields.filter(f => f.visible).length} class="empty-row">
+                <td colspan={data.template.fields.filter(f => f.visible && f.type !== 'location' && f.fieldType !== 'location').length + 2} class="empty-row">
                   Brak danych do wyświetlenia
                 </td>
               </tr>
@@ -1524,68 +1419,37 @@
                       checked={selectedRows.has(obj.id)}
                       onclick={(e) => handleRowSelection(obj.id, rowIndex, e)}
                     />
-                    {#if isMissingLocation}
-                      <button
-                        class="missing-location-badge"
-                        title="Kliknij aby dodać współrzędne"
-                        onclick={(e) => {
-                          e.stopPropagation();
-                          openLocationModal(obj.id);
-                        }}
-                      >!</button>
-                    {/if}
                   </td>
                   <!-- Location column -->
                   <td class="location-column" class:missing-location-cell={isMissingLocation} style="width: 250px;">
-                    <div class="location-cell-content">
-                      {#if obj.location && obj.location.coordinates}
-                        <div class="coordinates-display">
-                          <div class="coord-row">
-                            <span class="coord-label">Lat:</span>
-                            <span class="coord-value">{obj.location.coordinates[1].toFixed(6)}</span>
-                          </div>
-                          <div class="coord-row">
-                            <span class="coord-label">Lng:</span>
-                            <span class="coord-value">{obj.location.coordinates[0].toFixed(6)}</span>
-                          </div>
-                        </div>
-                      {:else}
-                        {@const hasAddress = extractAddressFromObject(obj) !== null}
-                        {@const isGeocoding = quickGeocodingIds.has(obj.id)}
-                        <div class="missing-coordinates">
-                          <span class="missing-text">Brak współrzędnych</span>
-                          {#if hasAddress && !isGeocoding}
-                            <button
-                              class="quick-geocode-location-btn"
-                              title="Automatyczne geokodowanie z adresu"
-                              onclick={(e) => {
-                                e.stopPropagation();
-                                quickGeocodePin(obj.id);
-                              }}
-                            >
-                              📍 Geokoduj
-                            </button>
-                          {/if}
-                          {#if isGeocoding}
-                            <span class="geocoding-status-small">⏳ Geokodowanie...</span>
-                          {/if}
-                          {#if !hasAddress && !isGeocoding}
-                            <button
-                              class="manual-location-btn"
-                              title="Ręczne wprowadzenie współrzędnych"
-                              onclick={(e) => {
-                                e.stopPropagation();
-                                openLocationModal(obj.id);
-                              }}
-                            >
-                              Dodaj ręcznie
-                            </button>
-                          {/if}
-                        </div>
-                      {/if}
-                    </div>
+                    {#if obj.location && obj.location.coordinates}
+                      <div class="cell-content">
+                        {obj.location.coordinates[1].toFixed(6)}, {obj.location.coordinates[0].toFixed(6)}
+                      </div>
+                    {:else}
+                      {@const hasAddress = extractAddressFromObject(obj) !== null}
+                      {@const isGeocoding = quickGeocodingIds.has(obj.id)}
+                      <div class="cell-content missing-location-row">
+                        <span class="missing-location-text">Brak współrzędnych</span>
+                        {#if hasAddress && !isGeocoding}
+                          <button
+                            class="quick-geocode-btn"
+                            title="Automatyczne geokodowanie z adresu"
+                            onclick={(e) => {
+                              e.stopPropagation();
+                              quickGeocodePin(obj.id);
+                            }}
+                          >
+                            Geokoduj
+                          </button>
+                        {/if}
+                        {#if isGeocoding}
+                          <span class="geocoding-status-inline">⏳</span>
+                        {/if}
+                      </div>
+                    {/if}
                   </td>
-                  {#each data.template.fields.filter(f => f.visible) as field}
+                  {#each data.template.fields.filter(f => f.visible && f.type !== 'location' && f.fieldType !== 'location') as field}
                     {@const cellId = `${obj.id}-${field.key}`}
                     {@const isExpanded = expandedCells.has(cellId)}
                     {@const fieldValue = obj.data[field.key]}
@@ -1723,6 +1587,8 @@
                           class:expanded={isExpanded}
                           onclick={() => toggleCellExpansion(obj.id, field.key)}
                           ondblclick={() => startEditingCell(obj.id, field.key, obj.data[field.key])}
+                          onmouseenter={() => hoverCell = {objectId: obj.id, fieldKey: field.key}}
+                          onmouseleave={() => hoverCell = null}
                         >
                           {#if obj.hasIncompleteData && !fieldValue}
                             <span class="missing-data">—</span>
@@ -1730,109 +1596,178 @@
                             {@const priceData = fieldValue as PriceData}
                             {@const calculatedTotal = priceData.funding?.reduce((sum, f) => sum + (f.amount || 0), 0) || 0}
                             {@const totalStr = formatPrice(calculatedTotal)}
+                            {@const fundingCount = priceData.funding?.length || 0}
                             {@const maxLength = totalStr.length}
-                            <div class="price-container">
-                              <div class="sub-fields">
-                                {#if priceData.funding && Array.isArray(priceData.funding)}
-                                  {#each priceData.funding as fundingItem}
-                                    {@const amountStr = formatPrice(fundingItem.amount)}
-                                    {@const padding = maxLength - amountStr.length}
-                                    <div class="sub-field-row">
-                                      <span class="sub-label">{fundingItem.source}:</span>
-                                      <span class="sub-value" style="padding-left: {padding}ch;">{amountStr} zł</span>
-                                    </div>
-                                  {/each}
-                                  {#if priceData.showTotal !== false && calculatedTotal > 0}
-                                    <div class="sub-field-row total-row">
-                                      <span class="sub-label">Suma:</span>
-                                      <span class="sub-value">{totalStr} zł</span>
-                                    </div>
-                                  {/if}
-                                {/if}
+                            {#if !isExpanded && fundingCount > 2}
+                              <div
+                                class="compact-view"
+                                onmouseenter={(e) => showTooltip(e, {type: 'price', data: priceData, maxLength, totalStr, calculatedTotal})}
+                                onmouseleave={hideTooltip}
+                              >
+                                <div class="compact-line">{fundingCount} źródeł finansowania</div>
+                                <div class="compact-line">
+                                  {priceData.funding[fundingCount - 1].source}: {formatPrice(priceData.funding[fundingCount - 1].amount)} zł
+                                </div>
                               </div>
-                            </div>
+                            {:else}
+                              {@const maxLength = totalStr.length}
+                              <div class="price-container">
+                                <div class="sub-fields">
+                                  {#if priceData.funding && Array.isArray(priceData.funding)}
+                                    {#each priceData.funding as fundingItem}
+                                      {@const amountStr = formatPrice(fundingItem.amount)}
+                                      {@const padding = maxLength - amountStr.length}
+                                      <div class="sub-field-row">
+                                        <span class="sub-label">{fundingItem.source}:</span>
+                                        <span class="sub-value" style="padding-left: {padding}ch;">{amountStr} zł</span>
+                                      </div>
+                                    {/each}
+                                    {#if priceData.showTotal !== false && calculatedTotal > 0}
+                                      <div class="sub-field-row total-row">
+                                        <span class="sub-label">Suma:</span>
+                                        <span class="sub-value">{totalStr} zł</span>
+                                      </div>
+                                    {/if}
+                                  {/if}
+                                </div>
+                              </div>
+                            {/if}
                           {:else if field.type === 'multidate' && typeof fieldValue === 'object' && fieldValue !== null}
                             {@const dateData = fieldValue}
-                            <div class="sub-fields">
-                              {#each Object.entries(dateData) as [label, date]}
-                                <div class="sub-field-row">
-                                  <span class="sub-label">{label}:</span>
-                                  <span class="sub-value">{new Date(date).toLocaleDateString('pl-PL')}</span>
+                            {@const dateEntries = Object.entries(dateData)}
+                            {@const dateCount = dateEntries.length}
+                            {#if !isExpanded && dateCount > 2}
+                              <div
+                                class="compact-view"
+                                onmouseenter={(e) => showTooltip(e, {type: 'multidate', dateEntries})}
+                                onmouseleave={hideTooltip}
+                              >
+                                <div class="compact-line">{dateCount} dat</div>
+                                <div class="compact-line">
+                                  {dateEntries[dateCount - 1][0]}: {new Date(dateEntries[dateCount - 1][1]).toLocaleDateString('pl-PL')}
                                 </div>
-                              {/each}
-                            </div>
+                              </div>
+                            {:else}
+                              <div class="sub-fields">
+                                {#each dateEntries as [label, date]}
+                                  <div class="sub-field-row">
+                                    <span class="sub-label">{label}:</span>
+                                    <span class="sub-value">{new Date(date).toLocaleDateString('pl-PL')}</span>
+                                  </div>
+                                {/each}
+                              </div>
+                            {/if}
                           {:else if field.type === 'address' && typeof fieldValue === 'object' && fieldValue !== null}
                             {@const addressData = fieldValue}
                             {@const isMissingLocation = !obj.location || obj.missingFields?.includes('location')}
                             {@const hasAddress = extractAddressFromObject(obj) !== null}
                             {@const isGeocoding = quickGeocodingIds.has(obj.id)}
-                            <div class="address-display-container">
-                              <div class="sub-fields">
-                                {#if addressData.street}
-                                  <div class="sub-field-row">
-                                    <span class="sub-label">Ulica:</span>
-                                    <span class="sub-value">{addressData.street}{#if addressData.number} {addressData.number}{/if}</span>
-                                  </div>
-                                {/if}
-                                {#if addressData.postalCode}
-                                  <div class="sub-field-row">
-                                    <span class="sub-label">Kod:</span>
-                                    <span class="sub-value">{addressData.postalCode}</span>
-                                  </div>
-                                {/if}
-                                {#if addressData.city}
-                                  <div class="sub-field-row">
-                                    <span class="sub-label">Miasto:</span>
-                                    <span class="sub-value">{addressData.city}</span>
-                                  </div>
-                                {/if}
+                            {#if !isExpanded}
+                              {@const parts = []}
+                              {#if addressData.street}
+                                {parts.push(addressData.street + (addressData.number ? ' ' + addressData.number : ''))}
+                              {/if}
+                              {#if addressData.postalCode}
+                                {parts.push(addressData.postalCode)}
+                              {/if}
+                              {#if addressData.city}
+                                {parts.push(addressData.city)}
+                              {/if}
+                              <div
+                                class="compact-view"
+                                onmouseenter={(e) => showTooltip(e, {type: 'address', addressData})}
+                                onmouseleave={hideTooltip}
+                              >
+                                <div class="compact-line">{parts.join(', ')}</div>
                                 {#if addressData.gmina}
-                                  <div class="sub-field-row">
-                                    <span class="sub-label">Gmina:</span>
-                                    <span class="sub-value">{addressData.gmina}</span>
-                                  </div>
+                                  <div class="compact-line">Gmina: {addressData.gmina}</div>
                                 {/if}
                               </div>
-                              <div class="address-actions">
-                                {#if isMissingLocation && hasAddress && !isGeocoding}
-                                  <button
-                                    class="quick-geocode-address-btn"
-                                    title="Automatyczne geokodowanie z adresu"
-                                    onclick={(e) => {
-                                      e.stopPropagation();
-                                      quickGeocodePin(obj.id);
-                                    }}
-                                  >
-                                    📍 Geokoduj
-                                  </button>
-                                {/if}
-                                {#if isGeocoding}
-                                  <span class="geocoding-status">⏳ Geokodowanie...</span>
-                                {/if}
-                                {#if !isMissingLocation}
-                                  <button
-                                    class="sync-address-btn"
-                                    onclick={(e) => {
-                                      e.stopPropagation();
-                                      syncAddressWithLocation(obj.id);
-                                    }}
-                                    title="Synchronizuj adres z lokalizacją"
-                                  >
-                                    {@html SyncIcon()}
-                                  </button>
-                                {/if}
+                            {:else}
+                              <div class="address-display-container">
+                                <div class="sub-fields">
+                                  {#if addressData.street}
+                                    <div class="sub-field-row">
+                                      <span class="sub-label">Ulica:</span>
+                                      <span class="sub-value">{addressData.street}{#if addressData.number} {addressData.number}{/if}</span>
+                                    </div>
+                                  {/if}
+                                  {#if addressData.postalCode}
+                                    <div class="sub-field-row">
+                                      <span class="sub-label">Kod:</span>
+                                      <span class="sub-value">{addressData.postalCode}</span>
+                                    </div>
+                                  {/if}
+                                  {#if addressData.city}
+                                    <div class="sub-field-row">
+                                      <span class="sub-label">Miasto:</span>
+                                      <span class="sub-value">{addressData.city}</span>
+                                    </div>
+                                  {/if}
+                                  {#if addressData.gmina}
+                                    <div class="sub-field-row">
+                                      <span class="sub-label">Gmina:</span>
+                                      <span class="sub-value">{addressData.gmina}</span>
+                                    </div>
+                                  {/if}
+                                </div>
+                                <div class="address-actions">
+                                  {#if isMissingLocation && hasAddress && !isGeocoding}
+                                    <button
+                                      class="quick-geocode-address-btn"
+                                      title="Automatyczne geokodowanie z adresu"
+                                      onclick={(e) => {
+                                        e.stopPropagation();
+                                        quickGeocodePin(obj.id);
+                                      }}
+                                    >
+                                      📍 Geokoduj
+                                    </button>
+                                  {/if}
+                                  {#if isGeocoding}
+                                    <span class="geocoding-status">⏳ Geokodowanie...</span>
+                                  {/if}
+                                  {#if !isMissingLocation}
+                                    <button
+                                      class="sync-address-btn"
+                                      onclick={(e) => {
+                                        e.stopPropagation();
+                                        syncAddressWithLocation(obj.id);
+                                      }}
+                                      title="Synchronizuj adres z lokalizacją"
+                                    >
+                                      {@html SyncIcon()}
+                                    </button>
+                                  {/if}
+                                </div>
                               </div>
-                            </div>
+                            {/if}
                           {:else if field.type === 'links' && Array.isArray(fieldValue) && fieldValue.length > 0}
-                            <div class="sub-fields">
-                              {#each fieldValue as link}
-                                <div class="sub-field-row">
-                                  <a href={link.url} target="_blank" rel="noopener noreferrer" class="sub-value">
-                                    {link.text || link.url}
+                            {@const linkCount = fieldValue.length}
+                            {#if !isExpanded && linkCount > 2}
+                              <div
+                                class="compact-view"
+                                onmouseenter={(e) => showTooltip(e, {type: 'links', links: fieldValue})}
+                                onmouseleave={hideTooltip}
+                              >
+                                <div class="compact-line">{linkCount} linków</div>
+                                <div class="compact-line">
+                                  <a href={fieldValue[linkCount - 1].url} target="_blank" rel="noopener noreferrer" class="sub-value">
+                                    {fieldValue[linkCount - 1].text || fieldValue[linkCount - 1].url}
                                   </a>
                                 </div>
-                              {/each}
-                            </div>
+                              </div>
+                            {:else}
+                              <div class="sub-fields">
+                                {#each fieldValue as link}
+                                  <div class="sub-field-row">
+                                    <a href={link.url} target="_blank" rel="noopener noreferrer" class="sub-value">
+                                      {link.text || link.url}
+                                    </a>
+                                  </div>
+                                {/each}
+                              </div>
+                            {/if}
                           {:else if field.type === 'tags'}
                             {#if fieldValue && typeof fieldValue === 'object' && fieldValue !== null && 'majorTag' in fieldValue}
                               {@const tagData = fieldValue as CategoryFieldData}
@@ -1846,8 +1781,14 @@
                               <span class="missing-data">—</span>
                             {/if}
                           {:else}
-                            <span class="field-value">
-                              {formatFieldValue(field, fieldValue)}
+                            {@const formattedValue = formatFieldValue(field, fieldValue)}
+                            {@const hasLongText = formattedValue && String(formattedValue).length > 100}
+                            <span
+                              class="field-value"
+                              onmouseenter={(e) => hasLongText && !isExpanded ? showTooltip(e, {type: 'text', text: formattedValue}) : null}
+                              onmouseleave={hideTooltip}
+                            >
+                              {formattedValue}
                             </span>
                           {/if}
                         </div>
@@ -1863,7 +1804,10 @@
                   <td class="checkbox-column">
                     <div class="cell-content placeholder-cell"></div>
                   </td>
-                  {#each data.template.fields.filter(f => f.visible) as field}
+                  <td style="width: 250px;" class="location-column">
+                    <div class="cell-content placeholder-cell"></div>
+                  </td>
+                  {#each data.template.fields.filter(f => f.visible && f.type !== 'location' && f.fieldType !== 'location') as field}
                     <td style="width: {columnWidths[field.key] || 200}px;" class:sorted-column={sortField === field.key}>
                       <div class="cell-content placeholder-cell"></div>
                     </td>
@@ -1887,7 +1831,7 @@
             <div class="form-group">
               <label for="bulkEditField">Pole do edycji:</label>
               <select id="bulkEditField" bind:value={bulkEditField}>
-                {#each data.template.fields.filter(f => f.visible) as field}
+                {#each data.template.fields.filter(f => f.visible && f.type !== 'location' && f.fieldType !== 'location') as field}
                   <option value={field.key}>{getFieldDisplayName(field)}</option>
                 {/each}
               </select>
@@ -2171,103 +2115,6 @@
       </div>
     {/if}
 
-    <!-- Location Edit Modal -->
-    {#if showLocationModal}
-      <div class="location-modal-overlay" onclick={closeLocationModal}>
-        <div class="location-modal" onclick={(e) => e.stopPropagation()}>
-          <h2>Ustaw lokalizację</h2>
-          <p class="location-modal-info">
-            Wprowadź współrzędne ręcznie lub wyszukaj adres.
-          </p>
-
-          <!-- Mode tabs -->
-          <div class="location-mode-tabs">
-            <button
-              class="mode-tab"
-              class:active={locationEditMode === 'manual'}
-              onclick={() => locationEditMode = 'manual'}
-            >
-              Wprowadź współrzędne
-            </button>
-            <button
-              class="mode-tab"
-              class:active={locationEditMode === 'geocode'}
-              onclick={() => locationEditMode = 'geocode'}
-            >
-              Wyszukaj adres
-            </button>
-          </div>
-
-          {#if locationEditLoading}
-            <div class="location-loading">
-              <div class="spinner"></div>
-              <p>Wyszukiwanie...</p>
-            </div>
-          {:else}
-            {#if locationEditMode === 'manual'}
-              <div class="location-form">
-                <div class="form-group">
-                  <label for="locationLat">Szerokość geograficzna (latitude):</label>
-                  <input
-                    id="locationLat"
-                    type="number"
-                    step="any"
-                    bind:value={locationEditLat}
-                    placeholder="np. 49.5123"
-                  />
-                </div>
-                <div class="form-group">
-                  <label for="locationLng">Długość geograficzna (longitude):</label>
-                  <input
-                    id="locationLng"
-                    type="number"
-                    step="any"
-                    bind:value={locationEditLng}
-                    placeholder="np. 19.1234"
-                  />
-                </div>
-              </div>
-            {:else}
-              <div class="location-form">
-                <div class="form-group">
-                  <label for="locationAddress">Adres do wyszukania:</label>
-                  <input
-                    id="locationAddress"
-                    type="text"
-                    bind:value={locationEditAddress}
-                    placeholder="np. Jeleśnia, ul. Główna 1"
-                  />
-                </div>
-                <button class="btn btn-geocode" onclick={geocodeAddress}>
-                  Wyszukaj
-                </button>
-
-                {#if locationEditLat && locationEditLng}
-                  <div class="geocode-result">
-                    <p>Znaleziono współrzędne:</p>
-                    <p><strong>Lat:</strong> {locationEditLat}</p>
-                    <p><strong>Lng:</strong> {locationEditLng}</p>
-                  </div>
-                {/if}
-              </div>
-            {/if}
-          {/if}
-
-          <div class="location-modal-actions">
-            <button
-              class="btn btn-primary"
-              onclick={saveLocation}
-              disabled={locationEditLoading || !locationEditLat || !locationEditLng}
-            >
-              Zapisz lokalizację
-            </button>
-            <button class="btn btn-secondary" onclick={closeLocationModal} disabled={locationEditLoading}>
-              Anuluj
-            </button>
-          </div>
-        </div>
-      </div>
-    {/if}
   </div>
 {/if}
 
@@ -2352,6 +2199,18 @@
     z-index: 20;
     background: var(--color-background);
     border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+    overflow-x: auto;
+    overflow-y: hidden;
+  }
+
+  /* Hide scrollbar for header but keep functionality */
+  .table-header::-webkit-scrollbar {
+    display: none;
+  }
+
+  .table-header {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
   }
 
   .table-body {
@@ -2363,6 +2222,7 @@
     width: 100%;
     border-collapse: collapse;
     table-layout: fixed;
+    font-family: "Space Mono", monospace;
   }
 
   .header-table th {
@@ -2392,25 +2252,40 @@
 
   .header-content {
     display: flex;
-    align-items: flex-start;
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
     gap: var(--space-2);
-    padding: 8px 0;
+    padding: 4px 0;
+    width: 100%;
+  }
+
+  .header-text {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 2px;
+    flex: 1;
+    min-width: 0;
   }
 
   .field-name {
     font-weight: 400;
     color: black;
+    line-height: 1.2;
   }
 
   .field-type {
     font-family: "Space Mono", monospace;
-    font-size: 14px;
+    font-size: 11px;
     color: #999;
+    line-height: 1.2;
   }
 
   .sort-icon {
-    margin-left: auto;
     font-size: var(--text-xs);
+    flex-shrink: 0;
+    color: var(--color-text-secondary);
   }
 
   .body-table td {
@@ -2449,41 +2324,34 @@
     background: #fee2e2 !important;
   }
 
-  .missing-location-badge {
-    position: absolute;
-    top: 2px;
-    right: 2px;
-    width: 16px;
-    height: 16px;
-    background: #dc2626;
-    color: white;
-    border-radius: 50%;
-    font-size: 11px;
-    font-weight: bold;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    cursor: help;
-  }
-
   .body-table tbody tr.missing-location .checkbox-column {
     background: #fee2e2;
   }
 
   .cell-content {
+    position: relative;
     min-height: 1.5rem;
     display: flex;
     align-items: flex-start;
     padding: 8px 0;
     cursor: pointer;
     overflow: hidden;
-    display: -webkit-box;
-    -webkit-line-clamp: 3;
-    -webkit-box-orient: vertical;
     line-height: 1.4;
   }
 
   .cell-content.expanded {
+    overflow: visible;
+  }
+
+  /* Simple text values still use line-clamp */
+  .cell-content > .field-value {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+
+  .cell-content.expanded > .field-value {
     -webkit-line-clamp: unset;
     overflow: visible;
   }
@@ -2524,7 +2392,7 @@
     top: 0;
     right: 0;
     width: 5px;
-    height: calc(100vh - 200px);
+    height: 100%;
     cursor: col-resize;
     z-index: 30;
     transform: translateX(50%);
@@ -2538,11 +2406,11 @@
     transform: translateX(-50%);
     width: 1px;
     height: 100%;
-    background: rgba(0, 0, 0, 0.2);
+    background: transparent;
   }
 
   .column-resizer:hover::before {
-    background: rgba(0, 0, 0, 0.4);
+    background: var(--color-accent);
     width: 2px;
   }
 
@@ -2551,7 +2419,7 @@
     background: var(--color-surface);
     padding: 12px 12px 16px 12px;
     text-align: left;
-    font-family: var(--font-ui);
+    font-family: "Space Mono", monospace;
     font-weight: var(--font-weight-bold);
     font-size: var(--text-sm);
     color: var(--color-text-primary);
@@ -2560,7 +2428,12 @@
     transition: background-color var(--transition-fast);
     position: relative;
     border-bottom: 2px solid var(--color-border);
+    border-right: 1px solid rgba(0, 0, 0, 0.1);
     box-sizing: border-box;
+  }
+
+  .header-table th:last-child {
+    border-right: none;
   }
 
   .header-table th.sorted-asc,
@@ -2570,16 +2443,22 @@
   }
 
   .field-name {
+    font-family: "Space Mono", monospace;
     font-weight: var(--font-weight-bold);
     color: var(--color-text-primary);
   }
 
   .body-table td {
     padding: 8px 12px;
-    font-family: var(--font-ui);
+    font-family: "Space Mono", monospace;
     font-size: var(--text-sm);
     vertical-align: top;
     box-sizing: border-box;
+    border-right: 1px solid rgba(0, 0, 0, 0.1);
+  }
+
+  .body-table td:last-child {
+    border-right: none;
   }
 
   .body-table tbody tr:nth-child(even) {
@@ -2734,6 +2613,7 @@
 
   .sub-label {
     color: var(--color-text-muted);
+    font-family: 'Space Mono', monospace;
     font-weight: var(--font-weight-medium);
     white-space: nowrap;
     flex-shrink: 0;
@@ -3018,6 +2898,7 @@
     border-radius: var(--radius-base);
     cursor: pointer;
     transition: all var(--transition-fast);
+    font-family: "Space Mono", monospace;
     font-size: 12px;
     font-weight: 500;
     white-space: nowrap;
@@ -3040,6 +2921,7 @@
     background: #f59e0b;
     color: white;
     border-radius: var(--radius-base);
+    font-family: "Space Mono", monospace;
     font-size: 12px;
     font-weight: 500;
     white-space: nowrap;
@@ -3415,268 +3297,134 @@
     cursor: not-allowed;
   }
 
-  /* Location Edit Modal styles */
-  .location-modal-overlay {
-    position: fixed;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background: rgba(0, 0, 0, 0.5);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    z-index: 1000;
-  }
-
-  .location-modal {
-    background: white;
-    border-radius: var(--radius-lg);
-    padding: var(--space-6);
-    max-width: 500px;
-    width: 95%;
-    box-shadow: var(--shadow-lg);
-  }
-
-  .location-modal h2 {
-    margin: 0 0 var(--space-2) 0;
-    font-family: var(--font-ui);
-    font-size: var(--text-xl);
-    font-weight: var(--font-weight-bold);
-    color: var(--color-text-primary);
-  }
-
-  .location-modal-info {
-    margin: 0 0 var(--space-4) 0;
-    font-family: var(--font-ui);
-    font-size: var(--text-sm);
-    color: var(--color-text-secondary);
-  }
-
-  .location-mode-tabs {
-    display: flex;
-    gap: var(--space-2);
-    margin-bottom: var(--space-4);
-    border-bottom: 2px solid var(--color-border);
-    padding-bottom: var(--space-2);
-  }
-
-  .mode-tab {
-    background: none;
-    border: none;
-    padding: var(--space-2) var(--space-3);
-    font-family: var(--font-ui);
-    font-size: var(--text-sm);
-    font-weight: var(--font-weight-medium);
-    color: var(--color-text-secondary);
-    cursor: pointer;
-    border-radius: var(--radius-base);
-    transition: all var(--transition-fast);
-  }
-
-  .mode-tab:hover {
-    background: var(--color-surface);
-  }
-
-  .mode-tab.active {
-    background: #0ea5e9;
-    color: white;
-  }
-
-  .location-form {
-    margin-bottom: var(--space-4);
-  }
-
-  .location-loading {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    padding: var(--space-6);
-    gap: var(--space-3);
-  }
-
-  .location-loading p {
-    margin: 0;
-    font-family: var(--font-ui);
-    font-size: var(--text-sm);
-    color: var(--color-text-secondary);
-  }
-
-  .btn-geocode {
-    background: #10b981;
-    color: white;
-    width: 100%;
-    margin-top: var(--space-2);
-  }
-
-  .btn-geocode:hover {
-    background: #059669;
-  }
-
-  .geocode-result {
-    margin-top: var(--space-3);
-    padding: var(--space-3);
-    background: #ecfdf5;
-    border: 1px solid #a7f3d0;
-    border-radius: var(--radius-base);
-  }
-
-  .geocode-result p {
-    margin: 0;
-    font-family: var(--font-ui);
-    font-size: var(--text-sm);
-    color: #065f46;
-  }
-
-  .geocode-result p + p {
-    margin-top: var(--space-1);
-  }
-
-  .location-modal-actions {
-    display: flex;
-    gap: var(--space-2);
-    justify-content: flex-end;
-  }
-
-  /* Update missing location badge to be a button */
-  .missing-location-badge {
-    position: absolute;
-    top: 2px;
-    right: 2px;
-    width: 16px;
-    height: 16px;
-    background: #dc2626;
-    color: white;
-    border: none;
-    border-radius: 50%;
-    font-size: 11px;
-    font-weight: bold;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    cursor: pointer;
-    transition: all var(--transition-fast);
-    padding: 0;
-  }
-
-  .missing-location-badge:hover {
-    background: #b91c1c;
-    transform: scale(1.1);
-  }
-
   /* Location column styles */
   .location-column {
     min-width: 250px;
     max-width: 250px;
   }
 
-  .location-cell-content {
-    padding: var(--space-2);
-    min-height: 40px;
+  .missing-location-row {
     display: flex;
-    flex-direction: column;
-    gap: var(--space-1);
+    align-items: center;
+    gap: 8px;
   }
 
-  .coordinates-display {
+  .missing-location-text {
+    color: #999;
+    font-style: italic;
+    font-family: "Space Mono", monospace;
+  }
+
+  /* Compact view for complex fields (max 2 lines) */
+  .compact-view {
     display: flex;
     flex-direction: column;
     gap: 2px;
-    font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
-    font-size: 12px;
+    font-family: "Space Mono", monospace;
+    font-size: var(--text-sm);
   }
 
-  .coord-row {
-    display: flex;
-    align-items: center;
-    gap: var(--space-2);
+  .compact-line {
+    line-height: 1.4;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
-  .coord-label {
-    font-weight: 600;
-    color: var(--color-text-secondary);
-    min-width: 32px;
+  .compact-line:first-child {
+    color: var(--color-text-muted);
+    font-weight: var(--font-weight-medium);
   }
 
-  .coord-value {
-    color: var(--color-text-primary);
-    font-weight: 500;
+  /* Hover overlay for compact fields */
+  .hover-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(255, 255, 255, 0.98);
+    border: 1px solid rgba(0, 0, 0, 0.2);
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+    z-index: 10;
+    pointer-events: none;
+    overflow: auto;
   }
 
-  .missing-coordinates {
+  .hover-content {
+    padding: var(--space-2);
+    font-family: "Space Mono", monospace;
+    font-size: var(--text-sm);
     display: flex;
     flex-direction: column;
-    gap: var(--space-2);
-    align-items: flex-start;
+    gap: 4px;
   }
 
-  .missing-text {
-    font-size: var(--text-sm);
-    color: var(--color-text-secondary);
-    font-style: italic;
+  .hover-row {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    line-height: 1.6;
   }
 
-  .quick-geocode-location-btn {
+  .hover-label {
+    color: var(--color-text-muted);
+    font-weight: var(--font-weight-medium);
+    min-width: 80px;
+    flex-shrink: 0;
+  }
+
+  .hover-value {
+    color: var(--color-text-primary);
+    font-family: "Space Mono", monospace;
+  }
+
+  .hover-link {
+    color: #0ea5e9;
+    text-decoration: underline;
+    font-family: "Space Mono", monospace;
+  }
+
+  .hover-link:hover {
+    color: #0284c7;
+  }
+
+  .hover-text {
+    color: var(--color-text-primary);
+    font-family: "Space Mono", monospace;
+    white-space: pre-wrap;
+    word-break: break-word;
+    line-height: 1.6;
+  }
+
+  .quick-geocode-btn {
     display: inline-flex;
     align-items: center;
     gap: 4px;
-    padding: 4px 8px;
-    background: #10b981;
+    padding: 3px 8px;
+    background: #000000;
     color: white;
     border: none;
-    border-radius: var(--radius-base);
+    border-radius: 0;
     cursor: pointer;
     transition: all var(--transition-fast);
+    font-family: "Space Mono", monospace;
     font-size: 11px;
     font-weight: 500;
     white-space: nowrap;
   }
 
-  .quick-geocode-location-btn:hover {
-    background: #059669;
+  .quick-geocode-btn:hover {
+    background: #333333;
     transform: scale(1.05);
   }
 
-  .quick-geocode-location-btn:active {
+  .quick-geocode-btn:active {
     transform: scale(0.95);
   }
 
-  .geocoding-status-small {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    padding: 4px 8px;
-    background: #f59e0b;
-    color: white;
-    border-radius: var(--radius-base);
-    font-size: 11px;
-    font-weight: 500;
-    white-space: nowrap;
-  }
-
-  .manual-location-btn {
-    display: inline-flex;
-    align-items: center;
-    padding: 4px 8px;
-    background: #6b7280;
-    color: white;
-    border: none;
-    border-radius: var(--radius-base);
-    cursor: pointer;
-    transition: all var(--transition-fast);
-    font-size: 11px;
-    font-weight: 500;
-    white-space: nowrap;
-  }
-
-  .manual-location-btn:hover {
-    background: #4b5563;
-    transform: scale(1.05);
-  }
-
-  .manual-location-btn:active {
-    transform: scale(0.95);
+  .geocoding-status-inline {
+    font-size: 14px;
   }
 
 </style>
