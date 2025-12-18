@@ -18,7 +18,9 @@
   let sortDirection = $state<'asc' | 'desc'>('asc');
   let filteredObjects = $state<SavedObject[]>(data.objects || []);
   let columnWidths = $state<Record<string, number>>({});
+  let manuallyResizedColumns = $state<Set<string>>(new Set());
   let isResizing = $state(false);
+  let justFinishedResizing = $state(false);
   let resizeStartX = $state(0);
   let resizeLeftColumn = $state('');
   let resizeRightColumn = $state('');
@@ -62,18 +64,29 @@
   // Quick geocoding state
   let quickGeocodingIds = $state<Set<string>>(new Set());
 
+  // Flag to track if column widths have been initialized
+  let columnWidthsInitialized = $state(false);
+
   // Initialize data
   $effect(() => {
     if (data.objects) {
       filteredObjects = [...data.objects];
     }
-    // Initialize column widths
-    if (data.template) {
-      const initialWidths: Record<string, number> = {};
-      data.template.fields.filter(f => f.visible && f.type !== 'location' && f.fieldType !== 'location').forEach(field => {
-        initialWidths[field.key] = 200; // Default width
-      });
-      columnWidths = initialWidths;
+  });
+
+  // Initialize column widths only once
+  $effect(() => {
+    if (data.template && filteredObjects && !columnWidthsInitialized) {
+      const newWidths: Record<string, number> = {};
+
+      data.template.fields
+        .filter(f => f.visible && f.type !== 'location' && f.fieldType !== 'location')
+        .forEach(field => {
+          newWidths[field.key] = calculateContentBasedWidth(field, filteredObjects);
+        });
+
+      columnWidths = newWidths;
+      columnWidthsInitialized = true;
     }
   });
 
@@ -512,8 +525,8 @@
   }
 
   function handleSort(fieldKey: string) {
-    // Don't sort if we're currently resizing
-    if (isResizing) return;
+    // Don't sort if we're currently resizing or just finished resizing
+    if (isResizing || justFinishedResizing) return;
 
     if (sortField === fieldKey) {
       // 3-state cycle: asc → desc → reset
@@ -569,6 +582,80 @@
     hoverTooltip = null;
   }
 
+  function getTooltipContent(field: any, fieldValue: any, obj: SavedObject) {
+    if (!fieldValue && fieldValue !== 0 && fieldValue !== false) return null;
+
+    // Price field
+    if (field.type === 'price' && typeof fieldValue === 'object' && fieldValue !== null) {
+      const priceData = fieldValue as PriceData;
+      const calculatedTotal = priceData.funding?.reduce((sum, f) => sum + (f.amount || 0), 0) || 0;
+      const totalStr = formatPrice(calculatedTotal);
+      const maxLength = totalStr.length;
+      return {type: 'price', data: priceData, maxLength, totalStr, calculatedTotal};
+    }
+
+    // Multidate field
+    if (field.type === 'multidate' && typeof fieldValue === 'object' && fieldValue !== null) {
+      const dateEntries = Object.entries(fieldValue);
+      return {type: 'multidate', dateEntries};
+    }
+
+    // Address field
+    if (field.type === 'address' && typeof fieldValue === 'object' && fieldValue !== null) {
+      return {type: 'address', addressData: fieldValue};
+    }
+
+    // Links field
+    if (field.type === 'links' && Array.isArray(fieldValue) && fieldValue.length > 0) {
+      return {type: 'links', links: fieldValue};
+    }
+
+    // Regular text field
+    const formattedValue = formatFieldValue(field, fieldValue);
+    if (formattedValue && formattedValue !== '—') {
+      return {type: 'text', text: formattedValue};
+    }
+
+    return null;
+  }
+
+  // Check if element has visual overflow
+  function isElementOverflowing(element: HTMLElement | null): boolean {
+    if (!element) return false;
+
+    // Get computed styles to check for line-clamp
+    const styles = window.getComputedStyle(element);
+    const lineClamp = styles.webkitLineClamp;
+
+    // For line-clamped elements, we need a larger tolerance due to line-height calculations
+    const tolerance = lineClamp && lineClamp !== 'none' ? 5 : 2;
+
+    // Check horizontal overflow
+    const hasHorizontalOverflow = element.scrollWidth > element.clientWidth + tolerance;
+
+    // Check vertical overflow (for multi-line text)
+    const hasVerticalOverflow = element.scrollHeight > element.clientHeight + tolerance;
+
+    return hasHorizontalOverflow || hasVerticalOverflow;
+  }
+
+  // Check if compact view is hiding data
+  function hasHiddenData(field: any, fieldValue: any): boolean {
+    // Price field: >2 funding sources
+    if (field.type === 'price' && fieldValue?.funding?.length > 2) return true;
+
+    // Multidate field: >2 dates
+    if (field.type === 'multidate' && Object.keys(fieldValue || {}).length > 2) return true;
+
+    // Links field: >2 links
+    if (field.type === 'links' && Array.isArray(fieldValue) && fieldValue.length > 2) return true;
+
+    // Address field: Always has full details to show in tooltip
+    if (field.type === 'address' && fieldValue) return true;
+
+    return false;
+  }
+
   // Price formatting function
   const formatPrice = (amount: number) => {
     const num = typeof amount === 'number' ? amount : parseFloat(amount);
@@ -594,6 +681,46 @@
 
     // All legacy field type handlers removed - using modern field types only
     return String(value);
+  }
+
+  function calculateContentBasedWidth(field: any, objects: SavedObject[]): number {
+    const MAX_WIDTH_CH = 25; // Max width for columns
+    const MIN_WIDTH_PX = 100; // Existing minimum from resize
+    const PADDING_CH = 2; // Extra space for padding/breathing room
+    const SAMPLE_SIZE = 100; // Only sample first 100 rows for performance
+    const MAX_HEADER_WIDTH_CH = 15; // Allow headers longer than this to wrap
+
+    // Calculate header width (field name + type)
+    const headerText = `${field.name || field.key} (${field.type})`;
+    // Don't force long headers to fit on one line - allow them to wrap
+    const headerLength = Math.min(headerText.length, MAX_HEADER_WIDTH_CH);
+    let maxContentLength = headerLength;
+
+    // Sample only first N objects for performance (usually first 100 rows is representative)
+    const sampleObjects = objects.slice(0, SAMPLE_SIZE);
+
+    sampleObjects.forEach(obj => {
+      const value = obj.data[field.key];
+      if (!value) return;
+
+      // Get text representation of the field value
+      const textValue = formatFieldValue(field, value);
+      if (textValue && textValue !== '—') {
+        // For multi-line fields, use the longest line
+        const lines = String(textValue).split('\n');
+        const longestLine = Math.max(...lines.map(line => line.length));
+        maxContentLength = Math.max(maxContentLength, longestLine);
+      }
+    });
+
+    // Calculate width in ch, apply max constraint
+    const widthInCh = Math.min(maxContentLength + PADDING_CH, MAX_WIDTH_CH);
+
+    // Convert ch to pixels (approximate: 1ch ≈ 8px in Space Mono)
+    const widthInPx = widthInCh * 8;
+
+    // Apply minimum constraint
+    return Math.max(widthInPx, MIN_WIDTH_PX);
   }
 
   function getFieldDisplayName(field: any): string {
@@ -663,9 +790,9 @@
     isResizing = true;
     resizeStartX = e.pageX;
     resizeLeftColumn = leftFieldKey;
-    resizeRightColumn = rightFieldKey;
+    resizeRightColumn = ''; // Not used anymore - right column just gets pushed
     resizeInitialLeftWidth = columnWidths[leftFieldKey] || 200;
-    resizeInitialRightWidth = columnWidths[rightFieldKey] || 200;
+    resizeInitialRightWidth = 0; // Not used anymore
     document.addEventListener('mousemove', handleResize);
     document.addEventListener('mouseup', stopResize);
     document.body.style.cursor = 'col-resize';
@@ -673,7 +800,7 @@
   }
 
   function handleResize(e: MouseEvent) {
-    if (!isResizing || !resizeLeftColumn || !resizeRightColumn) return;
+    if (!isResizing || !resizeLeftColumn) return;
 
     e.preventDefault();
     pendingMouseX = e.pageX;
@@ -688,16 +815,14 @@
 
       const deltaX = pendingMouseX - resizeStartX;
 
-      // Calculate new widths based on initial widths and total delta
+      // Calculate new width for left column only - right columns get pushed
       const newLeftWidth = Math.round(resizeInitialLeftWidth + deltaX);
-      const newRightWidth = Math.round(resizeInitialRightWidth - deltaX);
 
-      // Only proceed if both columns would remain above minimum width
-      if (newLeftWidth >= 100 && newRightWidth >= 100) {
+      // Only proceed if column remains above minimum width
+      if (newLeftWidth >= 100) {
         columnWidths = {
           ...columnWidths,
-          [resizeLeftColumn]: newLeftWidth,
-          [resizeRightColumn]: newRightWidth
+          [resizeLeftColumn]: newLeftWidth
         };
       }
 
@@ -709,6 +834,20 @@
   function stopResize(e: MouseEvent) {
     e.preventDefault();
     isResizing = false;
+
+    // Set flag to prevent click events from triggering sort immediately after resize
+    justFinishedResizing = true;
+    setTimeout(() => {
+      justFinishedResizing = false;
+    }, 150);
+
+    // Mark only the left column as manually resized (right column just gets pushed, not resized)
+    const newManuallyResized = new Set(manuallyResizedColumns);
+    if (resizeLeftColumn) {
+      newManuallyResized.add(resizeLeftColumn);
+    }
+    manuallyResizedColumns = newManuallyResized;
+
     resizeLeftColumn = '';
     resizeRightColumn = '';
     resizeInitialLeftWidth = 0;
@@ -1357,7 +1496,7 @@
                 />
               </th>
               <!-- Location column (always visible) -->
-              <th class="location-column" style="width: 250px;">
+              <th class="location-column">
                 <div class="header-content">
                   <div class="header-text">
                     <span class="field-name">Lokalizacja</span>
@@ -1421,16 +1560,17 @@
                     />
                   </td>
                   <!-- Location column -->
-                  <td class="location-column" class:missing-location-cell={isMissingLocation} style="width: 250px;">
+                  <td class="location-column" class:missing-location-cell={isMissingLocation}>
                     {#if obj.location && obj.location.coordinates}
-                      <div class="cell-content">
-                        {obj.location.coordinates[1].toFixed(6)}, {obj.location.coordinates[0].toFixed(6)}
+                      <div class="cell-content coordinates-display">
+                        <div class="coordinate-line">{obj.location.coordinates[1].toFixed(6)}</div>
+                        <div class="coordinate-line">{obj.location.coordinates[0].toFixed(6)}</div>
                       </div>
                     {:else}
                       {@const hasAddress = extractAddressFromObject(obj) !== null}
                       {@const isGeocoding = quickGeocodingIds.has(obj.id)}
                       <div class="cell-content missing-location-row">
-                        <span class="missing-location-text">Brak współrzędnych</span>
+                        <div class="missing-location-text">Brak</div>
                         {#if hasAddress && !isGeocoding}
                           <button
                             class="quick-geocode-btn"
@@ -1444,7 +1584,7 @@
                           </button>
                         {/if}
                         {#if isGeocoding}
-                          <span class="geocoding-status-inline">⏳</span>
+                          <div class="geocoding-status-inline">⏳</div>
                         {/if}
                       </div>
                     {/if}
@@ -1587,8 +1727,37 @@
                           class:expanded={isExpanded}
                           onclick={() => toggleCellExpansion(obj.id, field.key)}
                           ondblclick={() => startEditingCell(obj.id, field.key, obj.data[field.key])}
-                          onmouseenter={() => hoverCell = {objectId: obj.id, fieldKey: field.key}}
-                          onmouseleave={() => hoverCell = null}
+                          onmouseenter={(e) => {
+                            hoverCell = {objectId: obj.id, fieldKey: field.key};
+                            if (!isExpanded) {
+                              const target = e.currentTarget as HTMLElement;
+                              let shouldShowTooltip = false;
+
+                              // Check if compact view with hidden data or overflow
+                              const compactView = target.querySelector('.compact-view');
+                              if (compactView) {
+                                const hasData = hasHiddenData(field, fieldValue);
+                                const compactLines = compactView.querySelectorAll('.compact-line');
+                                const isOverflowing = Array.from(compactLines).some(line =>
+                                  isElementOverflowing(line as HTMLElement)
+                                );
+                                shouldShowTooltip = hasData || isOverflowing;
+                              } else {
+                                // Regular field: check visual overflow only
+                                const contentElement = target.querySelector('.field-value, .sub-fields, .address-display-container');
+                                shouldShowTooltip = contentElement && isElementOverflowing(contentElement as HTMLElement);
+                              }
+
+                              if (shouldShowTooltip) {
+                                const tooltipContent = getTooltipContent(field, fieldValue, obj);
+                                if (tooltipContent) showTooltip(e, tooltipContent);
+                              }
+                            }
+                          }}
+                          onmouseleave={() => {
+                            hoverCell = null;
+                            hideTooltip();
+                          }}
                         >
                           {#if obj.hasIncompleteData && !fieldValue}
                             <span class="missing-data">—</span>
@@ -1599,11 +1768,7 @@
                             {@const fundingCount = priceData.funding?.length || 0}
                             {@const maxLength = totalStr.length}
                             {#if !isExpanded && fundingCount > 2}
-                              <div
-                                class="compact-view"
-                                onmouseenter={(e) => showTooltip(e, {type: 'price', data: priceData, maxLength, totalStr, calculatedTotal})}
-                                onmouseleave={hideTooltip}
-                              >
+                              <div class="compact-view">
                                 <div class="compact-line">{fundingCount} źródeł finansowania</div>
                                 <div class="compact-line">
                                   {priceData.funding[fundingCount - 1].source}: {formatPrice(priceData.funding[fundingCount - 1].amount)} zł
@@ -1637,11 +1802,7 @@
                             {@const dateEntries = Object.entries(dateData)}
                             {@const dateCount = dateEntries.length}
                             {#if !isExpanded && dateCount > 2}
-                              <div
-                                class="compact-view"
-                                onmouseenter={(e) => showTooltip(e, {type: 'multidate', dateEntries})}
-                                onmouseleave={hideTooltip}
-                              >
+                              <div class="compact-view">
                                 <div class="compact-line">{dateCount} dat</div>
                                 <div class="compact-line">
                                   {dateEntries[dateCount - 1][0]}: {new Date(dateEntries[dateCount - 1][1]).toLocaleDateString('pl-PL')}
@@ -1673,11 +1834,7 @@
                               {#if addressData.city}
                                 {parts.push(addressData.city)}
                               {/if}
-                              <div
-                                class="compact-view"
-                                onmouseenter={(e) => showTooltip(e, {type: 'address', addressData})}
-                                onmouseleave={hideTooltip}
-                              >
+                              <div class="compact-view">
                                 <div class="compact-line">{parts.join(', ')}</div>
                                 {#if addressData.gmina}
                                   <div class="compact-line">Gmina: {addressData.gmina}</div>
@@ -1745,11 +1902,7 @@
                           {:else if field.type === 'links' && Array.isArray(fieldValue) && fieldValue.length > 0}
                             {@const linkCount = fieldValue.length}
                             {#if !isExpanded && linkCount > 2}
-                              <div
-                                class="compact-view"
-                                onmouseenter={(e) => showTooltip(e, {type: 'links', links: fieldValue})}
-                                onmouseleave={hideTooltip}
-                              >
+                              <div class="compact-view">
                                 <div class="compact-line">{linkCount} linków</div>
                                 <div class="compact-line">
                                   <a href={fieldValue[linkCount - 1].url} target="_blank" rel="noopener noreferrer" class="sub-value">
@@ -1782,12 +1935,7 @@
                             {/if}
                           {:else}
                             {@const formattedValue = formatFieldValue(field, fieldValue)}
-                            {@const hasLongText = formattedValue && String(formattedValue).length > 100}
-                            <span
-                              class="field-value"
-                              onmouseenter={(e) => hasLongText && !isExpanded ? showTooltip(e, {type: 'text', text: formattedValue}) : null}
-                              onmouseleave={hideTooltip}
-                            >
+                            <span class="field-value">
                               {formattedValue}
                             </span>
                           {/if}
@@ -1804,7 +1952,7 @@
                   <td class="checkbox-column">
                     <div class="cell-content placeholder-cell"></div>
                   </td>
-                  <td style="width: 250px;" class="location-column">
+                  <td class="location-column">
                     <div class="cell-content placeholder-cell"></div>
                   </td>
                   {#each data.template.fields.filter(f => f.visible && f.type !== 'location' && f.fieldType !== 'location') as field}
@@ -2047,6 +2195,79 @@
       </div>
     {/if}
 
+    <!-- Floating Hover Tooltip -->
+    {#if hoverTooltip}
+      <div
+        class="floating-tooltip"
+        style="left: {hoverTooltip.x}px; top: {hoverTooltip.y}px; min-width: {hoverTooltip.width}px;"
+      >
+        {#if hoverTooltip.content.type === 'price'}
+          {@const { data, maxLength, totalStr, calculatedTotal } = hoverTooltip.content}
+          {#if data.funding && Array.isArray(data.funding)}
+            {#each data.funding as fundingItem}
+              {@const amountStr = formatPrice(fundingItem.amount)}
+              {@const padding = maxLength - amountStr.length}
+              <div class="tooltip-row">
+                <span class="tooltip-label">{fundingItem.source}:</span>
+                <span class="tooltip-value" style="padding-left: {padding}ch;">{amountStr} zł</span>
+              </div>
+            {/each}
+            {#if data.showTotal !== false && calculatedTotal > 0}
+              <div class="tooltip-row tooltip-total">
+                <span class="tooltip-label">Suma:</span>
+                <span class="tooltip-value">{totalStr} zł</span>
+              </div>
+            {/if}
+          {/if}
+        {:else if hoverTooltip.content.type === 'multidate'}
+          {#each hoverTooltip.content.dateEntries as [label, date]}
+            <div class="tooltip-row">
+              <span class="tooltip-label">{label}:</span>
+              <span class="tooltip-value">{new Date(date).toLocaleDateString('pl-PL')}</span>
+            </div>
+          {/each}
+        {:else if hoverTooltip.content.type === 'address'}
+          {@const addressData = hoverTooltip.content.addressData}
+          {#if addressData.street}
+            <div class="tooltip-row">
+              <span class="tooltip-label">Ulica:</span>
+              <span class="tooltip-value">{addressData.street}{#if addressData.number} {addressData.number}{/if}</span>
+            </div>
+          {/if}
+          {#if addressData.postalCode}
+            <div class="tooltip-row">
+              <span class="tooltip-label">Kod:</span>
+              <span class="tooltip-value">{addressData.postalCode}</span>
+            </div>
+          {/if}
+          {#if addressData.city}
+            <div class="tooltip-row">
+              <span class="tooltip-label">Miasto:</span>
+              <span class="tooltip-value">{addressData.city}</span>
+            </div>
+          {/if}
+          {#if addressData.gmina}
+            <div class="tooltip-row">
+              <span class="tooltip-label">Gmina:</span>
+              <span class="tooltip-value">{addressData.gmina}</span>
+            </div>
+          {/if}
+        {:else if hoverTooltip.content.type === 'links'}
+          {#each hoverTooltip.content.links as link}
+            <div class="tooltip-row">
+              <a href={link.url} target="_blank" rel="noopener noreferrer" class="tooltip-link">
+                {link.text || link.url}
+              </a>
+            </div>
+          {/each}
+        {:else if hoverTooltip.content.type === 'text'}
+          <div class="tooltip-text">
+            {hoverTooltip.content.text}
+          </div>
+        {/if}
+      </div>
+    {/if}
+
     <!-- New Field Creation Modal -->
     {#if showNewFieldForm}
       <div class="new-field-modal-overlay" onclick={closeNewFieldForm}>
@@ -2273,6 +2494,8 @@
     font-weight: 400;
     color: black;
     line-height: 1.2;
+    word-wrap: break-word;
+    overflow-wrap: break-word;
   }
 
   .field-type {
@@ -2329,7 +2552,6 @@
   }
 
   .cell-content {
-    position: relative;
     min-height: 1.5rem;
     display: flex;
     align-items: flex-start;
@@ -2446,6 +2668,9 @@
     font-family: "Space Mono", monospace;
     font-weight: var(--font-weight-bold);
     color: var(--color-text-primary);
+    word-wrap: break-word;
+    overflow-wrap: break-word;
+    hyphens: auto;
   }
 
   .body-table td {
@@ -3299,20 +3524,41 @@
 
   /* Location column styles */
   .location-column {
-    min-width: 250px;
-    max-width: 250px;
+    width: 15ch; /* 15 character widths - fits "Lokalizacja" and "(współrzędne)" header */
+    white-space: nowrap;
+  }
+
+  .coordinates-display {
+    display: flex;
+    flex-direction: column;
+    gap: 0px;
+    font-family: "Space Mono", monospace;
+    font-size: var(--text-sm);
+  }
+
+  .coordinate-line {
+    line-height: 1.4;
+    white-space: nowrap;
   }
 
   .missing-location-row {
     display: flex;
-    align-items: center;
-    gap: 8px;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 2px;
   }
 
   .missing-location-text {
     color: #999;
     font-style: italic;
     font-family: "Space Mono", monospace;
+    font-size: var(--text-sm);
+    line-height: 1.4;
+  }
+
+  .geocoding-status-inline {
+    font-size: var(--text-sm);
+    line-height: 1.4;
   }
 
   /* Compact view for complex fields (max 2 lines) */
@@ -3336,60 +3582,64 @@
     font-weight: var(--font-weight-medium);
   }
 
-  /* Hover overlay for compact fields */
-  .hover-overlay {
-    position: absolute;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background: rgba(255, 255, 255, 0.98);
+  /* Floating tooltip for hover data */
+  .floating-tooltip {
+    position: fixed;
+    background: white;
     border: 1px solid rgba(0, 0, 0, 0.2);
-    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-    z-index: 10;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+    z-index: 1000;
     pointer-events: none;
+    padding: 8px 12px;
+    font-family: "Space Mono", monospace;
+    font-size: var(--text-sm);
+    max-width: 500px;
+    max-height: 400px;
     overflow: auto;
   }
 
-  .hover-content {
-    padding: var(--space-2);
-    font-family: "Space Mono", monospace;
-    font-size: var(--text-sm);
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-  }
-
-  .hover-row {
+  .tooltip-row {
     display: flex;
     align-items: baseline;
     gap: 8px;
     line-height: 1.6;
+    margin-bottom: 2px;
   }
 
-  .hover-label {
+  .tooltip-row:last-child {
+    margin-bottom: 0;
+  }
+
+  .tooltip-label {
     color: var(--color-text-muted);
     font-weight: var(--font-weight-medium);
     min-width: 80px;
     flex-shrink: 0;
   }
 
-  .hover-value {
+  .tooltip-value {
     color: var(--color-text-primary);
     font-family: "Space Mono", monospace;
   }
 
-  .hover-link {
+  .tooltip-total {
+    margin-top: 4px;
+    padding-top: 4px;
+    border-top: 1px solid rgba(0, 0, 0, 0.1);
+    font-weight: var(--font-weight-medium);
+  }
+
+  .tooltip-link {
     color: #0ea5e9;
     text-decoration: underline;
     font-family: "Space Mono", monospace;
   }
 
-  .hover-link:hover {
+  .tooltip-link:hover {
     color: #0284c7;
   }
 
-  .hover-text {
+  .tooltip-text {
     color: var(--color-text-primary);
     font-family: "Space Mono", monospace;
     white-space: pre-wrap;
@@ -3400,8 +3650,8 @@
   .quick-geocode-btn {
     display: inline-flex;
     align-items: center;
-    gap: 4px;
-    padding: 3px 8px;
+    gap: 2px;
+    padding: 2px 6px;
     background: #000000;
     color: white;
     border: none;
@@ -3409,7 +3659,7 @@
     cursor: pointer;
     transition: all var(--transition-fast);
     font-family: "Space Mono", monospace;
-    font-size: 11px;
+    font-size: 10px;
     font-weight: 500;
     white-space: nowrap;
   }
