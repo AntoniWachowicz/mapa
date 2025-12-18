@@ -132,11 +132,18 @@ async function tryGeocode(query: string): Promise<GeocodingResult | null> {
 
     console.log(`    Fetching: ${url}`);
 
+    // Add 10 second timeout to prevent hanging requests
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 10000);
+
     const response = await fetch(url, {
       headers: {
         'User-Agent': 'MapaApplication/1.0'
-      }
+      },
+      signal: controller.signal
     });
+
+    clearTimeout(timeoutId);
 
     if (!response.ok) {
       console.log(`    HTTP ${response.status}`);
@@ -164,7 +171,11 @@ async function tryGeocode(query: string): Promise<GeocodingResult | null> {
     };
 
   } catch (error) {
-    console.error('Geocoding attempt failed:', error);
+    if ((error as Error).name === 'AbortError') {
+      console.log('    Request timeout (10s)');
+    } else {
+      console.error('Geocoding attempt failed:', error);
+    }
     return null;
   }
 }
@@ -173,12 +184,19 @@ async function tryGeocode(query: string): Promise<GeocodingResult | null> {
 export async function reverseGeocode(lat: number, lng: number): Promise<GeocodingResult | null> {
   try {
     const url = `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&addressdetails=1&accept-language=pl,en`;
-    
+
+    // Add 10 second timeout to prevent hanging requests
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 10000);
+
     const response = await fetch(url, {
       headers: {
         'User-Agent': 'MapaApplication/1.0'
-      }
+      },
+      signal: controller.signal
     });
+
+    clearTimeout(timeoutId);
     
     if (!response.ok) {
       console.error('Reverse geocoding API error:', response.status);
@@ -202,7 +220,11 @@ export async function reverseGeocode(lat: number, lng: number): Promise<Geocodin
     };
     
   } catch (error) {
-    console.error('Reverse geocoding error:', error);
+    if ((error as Error).name === 'AbortError') {
+      console.log('Reverse geocoding timeout (10s)');
+    } else {
+      console.error('Reverse geocoding error:', error);
+    }
     return null;
   }
 }

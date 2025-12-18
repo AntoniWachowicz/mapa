@@ -64,6 +64,10 @@
   // Quick geocoding state
   let quickGeocodingIds = $state<Set<string>>(new Set());
 
+  // Geocoding request queue to prevent rate limiting
+  let geocodingQueue: Array<{objectId: string; address: string}> = [];
+  let isProcessingQueue = false;
+
   // Flag to track if column widths have been initialized
   let columnWidthsInitialized = $state(false);
 
@@ -1350,7 +1354,95 @@
     return null;
   }
 
-  // Quick geocode function - geocodes directly from address field without opening modal
+  // Process geocoding queue - one at a time with delays
+  async function processGeocodingQueue() {
+    if (isProcessingQueue || geocodingQueue.length === 0) {
+      return;
+    }
+
+    isProcessingQueue = true;
+
+    while (geocodingQueue.length > 0) {
+      const request = geocodingQueue.shift();
+      if (!request) break;
+
+      const { objectId, address } = request;
+
+      console.log(`Processing queue: ${geocodingQueue.length + 1} remaining, geocoding: ${address}`);
+
+      // Add to loading set
+      quickGeocodingIds.add(objectId);
+      quickGeocodingIds = new Set(quickGeocodingIds);
+
+      try {
+        const response = await fetch('/api/geocode', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ address })
+        });
+
+        if (!response.ok) {
+          throw new Error('Geocoding failed');
+        }
+
+        const result = await response.json();
+        if (!result.success || !result.data) {
+          console.error(`Failed to geocode: ${address}`);
+          // Don't alert for queued items, just log
+        } else {
+          // Save coordinates
+          const { lat, lng } = result.data;
+          const locationResponse = await fetch(`/api/objects/${objectId}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              location: {
+                type: 'Point',
+                coordinates: [lng, lat]
+              },
+              clearIncomplete: true
+            })
+          });
+
+          if (locationResponse.ok) {
+            const locationResult = await locationResponse.json();
+            if (locationResult.success && locationResult.object) {
+              // Update object in list
+              const objIndex = filteredObjects.findIndex(o => o.id === objectId);
+              if (objIndex !== -1) {
+                filteredObjects[objIndex] = locationResult.object;
+                if (filteredObjects[objIndex].missingFields?.includes('location')) {
+                  filteredObjects[objIndex].missingFields = filteredObjects[objIndex].missingFields?.filter(f => f !== 'location');
+                  if (filteredObjects[objIndex].missingFields?.length === 0) {
+                    filteredObjects[objIndex].hasIncompleteData = false;
+                  }
+                }
+                filteredObjects = [...filteredObjects];
+              }
+            }
+            console.log(`✓ Geocoded: ${address} -> ${lat.toFixed(6)}, ${lng.toFixed(6)}`);
+          }
+        }
+      } catch (error) {
+        console.error('Queue geocode error:', error);
+      } finally {
+        // Remove from loading set
+        quickGeocodingIds.delete(objectId);
+        quickGeocodingIds = new Set(quickGeocodingIds);
+      }
+
+      // Wait 1.5 seconds between addresses to respect Nominatim rate limits
+      // (each address may make multiple queries internally with 500ms delays)
+      if (geocodingQueue.length > 0) {
+        await new Promise(resolve => setTimeout(resolve, 1500));
+      }
+    }
+
+    isProcessingQueue = false;
+    console.log('Geocoding queue completed');
+  }
+
+  // Quick geocode function - adds to queue instead of running immediately
   async function quickGeocodePin(objectId: string) {
     const obj = filteredObjects.find(o => o.id === objectId);
     if (!obj) return;
@@ -1361,71 +1453,33 @@
       return;
     }
 
-    console.log('Attempting to geocode:', address);
-
-    // Add to loading set
-    quickGeocodingIds.add(objectId);
-    quickGeocodingIds = new Set(quickGeocodingIds);
-
-    try {
-      const response = await fetch('/api/geocode', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ address })
-      });
-
-      if (!response.ok) {
-        throw new Error('Geocoding failed');
-      }
-
-      const result = await response.json();
-      if (!result.success || !result.data) {
-        alert(`Nie znaleziono współrzędnych dla adresu: "${address}"\n\nSpróbuj:\n- Dodać więcej szczegółów (ulica, miasto)\n- Sprawdzić poprawność danych w adresie`);
-        return;
-      }
-
-      // Save coordinates
-      const { lat, lng } = result.data;
-      const locationResponse = await fetch(`/api/objects/${objectId}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          location: {
-            type: 'Point',
-            coordinates: [lng, lat]
-          },
-          clearIncomplete: true
-        })
-      });
-
-      if (locationResponse.ok) {
-        const locationResult = await locationResponse.json();
-        if (locationResult.success && locationResult.object) {
-          // Update object in list
-          const objIndex = filteredObjects.findIndex(o => o.id === objectId);
-          if (objIndex !== -1) {
-            filteredObjects[objIndex] = locationResult.object;
-            if (filteredObjects[objIndex].missingFields?.includes('location')) {
-              filteredObjects[objIndex].missingFields = filteredObjects[objIndex].missingFields?.filter(f => f !== 'location');
-              if (filteredObjects[objIndex].missingFields?.length === 0) {
-                filteredObjects[objIndex].hasIncompleteData = false;
-              }
-            }
-            filteredObjects = [...filteredObjects];
-          }
-        }
-        alert(`✓ Geokodowanie zakończone!\nAdres: ${address}\nWspółrzędne: ${lat.toFixed(6)}, ${lng.toFixed(6)}`);
-      } else {
-        alert('Błąd podczas zapisywania lokalizacji');
-      }
-    } catch (error) {
-      console.error('Quick geocode error:', error);
-      alert(`Błąd geokodowania dla adresu: ${address}`);
-    } finally {
-      // Remove from loading set
-      quickGeocodingIds.delete(objectId);
-      quickGeocodingIds = new Set(quickGeocodingIds);
+    // Check if already in queue
+    if (geocodingQueue.some(r => r.objectId === objectId)) {
+      alert('Ten obiekt jest już w kolejce do geokodowania');
+      return;
     }
+
+    // Check if already being processed
+    if (quickGeocodingIds.has(objectId)) {
+      alert('Ten obiekt jest obecnie geokodowany');
+      return;
+    }
+
+    console.log('Adding to geocoding queue:', address);
+
+    // Add to queue
+    geocodingQueue.push({ objectId, address });
+    geocodingQueue = [...geocodingQueue];
+
+    // Show immediate feedback
+    if (geocodingQueue.length === 1) {
+      alert(`Rozpoczęto geokodowanie dla adresu: ${address}`);
+    } else {
+      alert(`Dodano do kolejki (pozycja ${geocodingQueue.length}): ${address}`);
+    }
+
+    // Start processing queue
+    processGeocodingQueue();
   }
 
 </script>
