@@ -1,41 +1,19 @@
 <script lang="ts">
   import type { Field, Template, FieldType, RichTextConfig, FilesConfig, GalleryConfig, MultiDateConfig, AddressConfig, LinksConfig, PriceConfig } from './types.js';
   import TagManager from './TagManager.svelte';
+  import Icon from './Icon.svelte';
+  import * as dragDrop from './features/dragDrop/index.js';
 
-  // Icon components
-  function EyeIcon() {
-    return `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path fill-rule="evenodd" clip-rule="evenodd" d="M2.28883 13.0792C1.90372 12.4253 1.90372 11.5747 2.28883 10.9208C4.39231 7.34883 7.9568 5 12 5C16.0432 5 19.6077 7.34883 21.7112 10.9208C22.0963 11.5747 22.0963 12.4253 21.7112 13.0792C19.6077 16.6512 16.0432 19 12 19C7.9568 19 4.39231 16.6512 2.28883 13.0792ZM16 12C16 14.2091 14.2091 16 12 16C9.79086 16 8 14.2091 8 12C8 9.79086 9.79086 8 12 8C14.2091 8 16 9.79086 16 12ZM12 14C13.1046 14 14 13.1046 14 12C14 10.8954 13.1046 10 12 10C10.8954 10 10 10.8954 10 12C10 13.1046 10.8954 14 12 14Z" fill="currentColor"/></svg>`;
-  }
-
-  function TrashIcon() {
-    return `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path fill-rule="evenodd" clip-rule="evenodd" d="M7.44 6C7.74928 6 8 5.74928 8 5.44V5C8 3.34315 9.34315 2 11 2H13C14.6569 2 16 3.34315 16 5V5.44C16 5.74928 16.2507 6 16.56 6H20C20.5523 6 21 6.44772 21 7C21 7.55228 20.5523 8 20 8H19.56C19.2507 8 19 8.25072 19 8.56V18C19 20.2091 17.2091 22 15 22H9C6.79086 22 5 20.2091 5 18V8.56C5 8.25072 4.74928 8 4.44 8H4C3.44772 8 3 7.55228 3 7C3 6.44772 3.44772 6 4 6H7.44ZM10 5C10 4.44772 10.4477 4 11 4H13C13.5523 4 14 4.44772 14 5V5.44C14 5.74928 13.7493 6 13.44 6H10.56C10.2507 6 10 5.74928 10 5.44V5ZM9 11C9 10.4477 9.44772 10 10 10C10.5523 10 11 10.4477 11 11V17C11 17.5523 10.5523 18 10 18C9.44772 18 9 17.5523 9 17V11ZM14 10C13.4477 10 13 10.4477 13 11V17C13 17.5523 13.4477 18 14 18C14.5523 18 15 17.5523 15 17V11C15 10.4477 14.5523 10 14 10Z" fill="currentColor"/></svg>`;
-  }
-
-  function ChevronUpIcon() {
-    return `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path fill-rule="evenodd" clip-rule="evenodd" d="M6.29289 15.2071C6.68342 15.5976 7.31658 15.5976 7.70711 15.2071L12 10.9142L16.2929 15.2071C16.6834 15.5976 17.3166 15.5976 17.7071 15.2071C18.0976 14.8166 18.0976 14.1834 17.7071 13.7929L12.7071 8.79289C12.5196 8.60536 12.2652 8.5 12 8.5C11.7348 8.5 11.4804 8.60536 11.2929 8.79289L6.29289 13.7929C5.90237 14.1834 5.90237 14.8166 6.29289 15.2071Z" fill="currentColor"/></svg>`;
-  }
-
-  function ChevronDownIcon() {
-    return `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path fill-rule="evenodd" clip-rule="evenodd" d="M6.29289 8.79289C6.68342 8.40237 7.31658 8.40237 7.70711 8.79289L12 13.0858L16.2929 8.79289C16.6834 8.40237 17.3166 8.40237 17.7071 8.79289C18.0976 9.18342 18.0976 9.81658 17.7071 10.2071L12.7071 15.2071C12.5196 15.3946 12.2652 15.5 12 15.5C11.7348 15.5 11.4804 15.3946 11.2929 15.2071L6.29289 10.2071C5.90237 9.81658 5.90237 9.18342 6.29289 8.79289Z" fill="currentColor"/></svg>`;
-  }
-
+  // Custom icon - triangle with exclamation (not in static icons)
   function RequiredIcon() {
     return `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M12 2L22 20H2L12 2Z" fill="currentColor"/><text x="12" y="16" text-anchor="middle" fill="white" font-size="10" font-weight="bold">!</text></svg>`;
   }
 
-  function PlusIcon() {
-    return `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>`;
-  }
-
-  function EditIcon() {
-    return `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" fill="currentColor"/></svg>`;
-  }
-  
   interface Props {
     template: Template;
     onUpdate: (template: Template) => void;
   }
-  
+
   const { template, onUpdate }: Props = $props();
 
   let label = $state('');
@@ -51,8 +29,6 @@
   let newFieldLabel = $state('');
   let newFieldType = $state<FieldType>('richtext');
   let newFieldRequired = $state(false);
-  let draggedFieldIndex = $state<number | null>(null);
-  let dragOverIndex = $state<number | null>(null);
   let deleteConfirmIndex = $state<number | null>(null);
 
   // New field type configurations
@@ -548,62 +524,25 @@
     editingConfigIndexes = new Set(editingConfigIndexes);
   }
 
-  // Drag and drop functions
-  function handleDragStart(event: DragEvent, index: number): void {
-    draggedFieldIndex = index;
-    if (event.dataTransfer) {
-      event.dataTransfer.effectAllowed = 'move';
-      event.dataTransfer.setData('text/html', '');
-    }
-  }
-
-  function handleDragOver(event: DragEvent, index: number): void {
-    event.preventDefault();
-    dragOverIndex = index;
-    if (event.dataTransfer) {
-      event.dataTransfer.dropEffect = 'move';
-    }
-  }
-
-  function handleDragLeave(): void {
-    dragOverIndex = null;
-  }
-
-  function handleDrop(event: DragEvent, dropIndex: number): void {
-    event.preventDefault();
-
-    if (draggedFieldIndex === null || draggedFieldIndex === dropIndex) {
-      draggedFieldIndex = null;
-      dragOverIndex = null;
-      return;
-    }
-
-    const draggedField = template.fields[draggedFieldIndex];
-    const targetField = template.fields[dropIndex];
-
-    // Don't allow moving the title/name field or moving over the title/name field
-    if ((targetField.key === 'title' || targetField.key === 'name') ||
-        (draggedField.key === 'title' || draggedField.key === 'name')) {
-      draggedFieldIndex = null;
-      dragOverIndex = null;
-      return;
-    }
-
-    // Create new array with moved field
-    const newFields = [...template.fields];
-    const [movedField] = newFields.splice(draggedFieldIndex, 1);
-    newFields.splice(dropIndex, 0, movedField);
-
-    const updatedTemplate: Template = { ...template, fields: newFields };
-    onUpdate(updatedTemplate);
-
-    draggedFieldIndex = null;
-    dragOverIndex = null;
-  }
-
+  // Drag and drop helper
   function canMoveField(field: Field): boolean {
     // Allow coordinates to be moved, but protect title/name field from being moved
     return field.key !== 'title' && field.key !== 'name';
+  }
+
+  function handleFieldDrop(event: DragEvent, dropIndex: number): void {
+    const newFields = dragDrop.handleDrop(
+      event,
+      dropIndex,
+      template.fields,
+      canMoveField,
+      canMoveField
+    );
+
+    if (newFields) {
+      const updatedTemplate: Template = { ...template, fields: newFields };
+      onUpdate(updatedTemplate);
+    }
   }
 
   function getFieldTypeDisplayName(fieldType: string): string {
@@ -662,13 +601,13 @@
           <div
             class="field-row"
             class:draggable={canMoveField(field)}
-            class:dragging={draggedFieldIndex === originalIndex}
-            class:drag-over={dragOverIndex === originalIndex}
+            class:dragging={dragDrop.getDraggedFieldIndex() === originalIndex}
+            class:drag-over={dragDrop.getDragOverIndex() === originalIndex}
             draggable={canMoveField(field)}
-            ondragstart={(e) => handleDragStart(e, originalIndex)}
-            ondragover={(e) => handleDragOver(e, originalIndex)}
-            ondragleave={handleDragLeave}
-            ondrop={(e) => handleDrop(e, originalIndex)}
+            ondragstart={(e) => dragDrop.startDrag(e, originalIndex)}
+            ondragover={(e) => dragDrop.handleDragOver(e, originalIndex)}
+            ondragleave={dragDrop.handleDragLeave}
+            ondrop={(e) => handleFieldDrop(e, originalIndex)}
           >
             <div class="field-name">
               {#if editingFieldIndex === originalIndex}
@@ -710,7 +649,7 @@
                   disabled={!hasEditableConfig(field)}
                   title={hasEditableConfig(field) ? "Edytuj konfigurację pola" : "To pole nie ma konfigurowalnych opcji"}
                 >
-                  {@html EditIcon()}
+                  <Icon name="Pen/Edit" size={20} />
                 </button>
 
                 <button
@@ -729,7 +668,7 @@
                   class:inactive={!field.visible}
                   title={field.visible ? 'Ukryj pole' : 'Pokaż pole'}
                 >
-                  {@html EyeIcon()}
+                  <Icon name="Eye" size={20} />
                 </button>
               </div>
 
@@ -739,7 +678,7 @@
                 class="icon-button move-button"
                 title="Przenieś w górę"
               >
-                {@html ChevronUpIcon()}
+                <Icon name="Chevron/Up" size={20} />
               </button>
 
               <button
@@ -748,7 +687,7 @@
                 class="icon-button move-button"
                 title="Przenieś w dół"
               >
-                {@html ChevronDownIcon()}
+                <Icon name="Chevron/Down" size={20} />
               </button>
             </div>
           </div>
@@ -1223,14 +1162,14 @@
 
         <!-- Add field button bar -->
         <button class="add-field-bar" onclick={startAddingField} disabled={addingNewField}>
-          {@html PlusIcon()}
+          <Icon name="Brightess/Plus" size={20} />
         </button>
       </div>
     {:else}
       <div class="empty-state">
         <p>Brak zdefiniowanych pól</p>
         <button class="add-field-bar" onclick={startAddingField} disabled={addingNewField}>
-          {@html PlusIcon()}
+          <Icon name="Brightess/Plus" size={20} />
         </button>
       </div>
     {/if}

@@ -1183,6 +1183,8 @@
 {/if}
 
 <style>
+  @import '$lib/styles/modal.css';
+
   .config-container {
     padding: var(--space-6);
     height: calc(100vh - var(--nav-height));
@@ -1559,25 +1561,14 @@
   }
 
   /* Modal styles */
+  /* Modal Styles - Base styles from modal.css, component-specific overrides below */
   .modal-overlay {
-    position: fixed;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background: rgba(0, 0, 0, 0.5);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    z-index: 10000;
+    --modal-z-index: 10000; /* Higher z-index for admin modals */
   }
 
   .modal-content {
-    background: white;
     padding: var(--space-6);
-    border-radius: var(--radius-lg);
     max-width: 500px;
-    box-shadow: var(--shadow-lg);
   }
 
   .modal-content h2 {

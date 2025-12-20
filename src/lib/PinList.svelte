@@ -40,7 +40,10 @@
     }
   }
   
-  function formatFieldValue(field: any, value: any): string {
+  // Format field value for compact list item display
+  // NOTE: Returns empty string (not '—') for missing values to save space
+  // NOTE: Category/tags excluded as they're rendered separately in this component
+  function formatListItemValue(field: any, value: any): string {
     if (field.type === 'category' || field.type === 'tags') {
       return ''; // Category and tags are handled separately
     } else {
@@ -107,7 +110,7 @@
                 {#if value && value !== '' && field.type !== 'gallery'}
                   <div class="field-row">
                     <span class="field-label">{field.displayLabel || field.label}:</span>
-                    <span class="field-value">{formatFieldValue(field, value)}</span>
+                    <span class="field-value">{formatListItemValue(field, value)}</span>
                   </div>
                 {/if}
               {/each}

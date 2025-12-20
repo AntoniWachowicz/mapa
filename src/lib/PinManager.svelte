@@ -30,6 +30,8 @@
   } from './types.js';
   import PinList from './PinList.svelte';
   import Icon from './Icon.svelte';
+  import ColumnMappingModal from './components/modals/ColumnMappingModal.svelte';
+  import ExcelImportPreviewModal from './components/modals/ExcelImportPreviewModal.svelte';
   import RichTextInput from './fields/RichTextInput.svelte';
   import LinksInput from './fields/LinksInput.svelte';
   import MultiDateInput from './fields/MultiDateInput.svelte';
@@ -584,11 +586,28 @@
     importController = new AbortController();
 
     try {
+      // Convert column mapping from modal format (_latitude, _longitude, _geocode, _skip) to API format (latitude, longitude, geocode, ignore)
+      const apiColumnMapping: Record<string, string> = {};
+      for (const [excelCol, modalValue] of Object.entries(columnMapping)) {
+        if (modalValue === '_latitude') {
+          apiColumnMapping[excelCol] = 'latitude';
+        } else if (modalValue === '_longitude') {
+          apiColumnMapping[excelCol] = 'longitude';
+        } else if (modalValue === '_geocode') {
+          apiColumnMapping[excelCol] = 'geocode';
+        } else if (modalValue === '_skip' || modalValue === '') {
+          apiColumnMapping[excelCol] = 'ignore';
+        } else {
+          // Regular field mapping
+          apiColumnMapping[excelCol] = modalValue;
+        }
+      }
+
       // Send JSON with tempId (file is already on server)
       const response = await fetch('/api/import-excel', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ tempId: currentTempId, columnMapping }),
+        body: JSON.stringify({ tempId: currentTempId, columnMapping: apiColumnMapping }),
         signal: importController.signal
       });
 
@@ -1046,248 +1065,40 @@
 {/if}
 
 <!-- Column Mapping Modal -->
-{#if showColumnMappingModal}
-  <div class="modal-overlay">
-    <div class="modal-content">
-      <div class="modal-header">
-        <h3>Mapowanie kolumn Excel</h3>
-        <button type="button" onclick={() => {
-          showColumnMappingModal = false;
-          currentTempId = null;
-        }} class="close-btn">
-          <Icon name="Close" size={20} />
-        </button>
-      </div>
+<ColumnMappingModal
+  open={showColumnMappingModal}
+  {template}
+  {excelHeaders}
+  {excelSampleData}
+  excelAllData={[]}
+  {columnMapping}
+  importInProgress={isImporting}
+  onclose={() => {
+    showColumnMappingModal = false;
+    currentTempId = null;
+  }}
+  onimport={proceedWithImport}
+  oncolumnmappingchange={(mapping) => columnMapping = mapping}
+  onnewfield={(columnName) => {
+    newFieldData = { name: '', label: columnName, type: 'text', required: false, forColumn: columnName };
+    showCreateFieldModal = true;
+  }}
+  getFieldDisplayName={(field) => field.displayLabel || field.label}
+/>
 
-      <div class="modal-body">
-        <p>Zmapuj kolumny z pliku Excel do pól w schemacie lub specjalnych celów (współrzędne, geokodowanie).</p>
-        <p class="help-text">Plik zawiera {excelSampleData.length} przykładowych wierszy z {excelHeaders.length} kolumnami.</p>
-
-        <div class="mapping-table">
-          <div class="mapping-header">
-            <div class="mapping-col col-excel">Kolumna Excel</div>
-            <div class="mapping-col col-sample">Przykładowe dane</div>
-            <div class="mapping-col col-map-to">Mapuj do</div>
-          </div>
-
-          <div class="mapping-rows">
-            {#each excelHeaders as header, index}
-              <div class="mapping-row">
-                <div class="mapping-col col-excel">
-                  <strong>{header}</strong>
-                </div>
-                <div class="mapping-col col-sample">
-                  <div class="sample-data">
-                    {#each excelSampleData.slice(0, 3) as sample}
-                      {#if sample[header]}
-                        <div class="sample-item">{String(sample[header]).substring(0, 50)}{String(sample[header]).length > 50 ? '...' : ''}</div>
-                      {:else}
-                        <div class="sample-item empty">—</div>
-                      {/if}
-                    {/each}
-                  </div>
-                </div>
-                <div class="mapping-col col-map-to">
-                  <select
-                    value={columnMapping[header] || 'ignore'}
-                    onchange={(e) => {
-                      const target = e.target as HTMLSelectElement;
-                      if (target.value === 'create_new') {
-                        // Show create field modal
-                        newFieldData = { name: '', label: header, type: 'text', required: false, forColumn: header };
-                        showCreateFieldModal = true;
-                      } else {
-                        columnMapping = {
-                          ...columnMapping,
-                          [header]: target.value
-                        };
-                      }
-                    }}
-                    class="mapping-select"
-                  >
-                    <option value="ignore">⊗ Ignoruj</option>
-                    <optgroup label="Specjalne">
-                      <option value="latitude">📍 Szerokość geograficzna (Latitude)</option>
-                      <option value="longitude">📍 Długość geograficzna (Longitude)</option>
-                      <option value="geocode">🔍 Adres do geokodowania</option>
-                    </optgroup>
-                    <optgroup label="Pola schematu">
-                      {#each template.fields.filter(f => f.visible) as field}
-                        <option value={field.key}>{field.displayLabel || field.label}</option>
-                      {/each}
-                    </optgroup>
-                    <option value="create_new">➕ Utwórz nowe pole</option>
-                  </select>
-
-                  {#if columnMapping[header] && columnMapping[header] !== 'ignore'}
-                    <div class="mapping-preview">
-                      {#if columnMapping[header] === 'latitude'}
-                        → Szerokość geograficzna
-                      {:else if columnMapping[header] === 'longitude'}
-                        → Długość geograficzna
-                      {:else if columnMapping[header] === 'geocode'}
-                        → Adres (geokodowanie)
-                      {:else}
-                        {@const field = template.fields.find(f => f.key === columnMapping[header])}
-                        {#if field}
-                          → {field.displayLabel || field.label}
-                        {/if}
-                      {/if}
-                    </div>
-                  {/if}
-                </div>
-              </div>
-            {/each}
-          </div>
-        </div>
-
-        <div class="mapping-summary">
-          <h4>Podsumowanie mapowania:</h4>
-          <ul>
-            <li><strong>Zmapowane kolumny:</strong> {Object.values(columnMapping).filter(v => v !== 'ignore').length}</li>
-            <li><strong>Ignorowane kolumny:</strong> {Object.values(columnMapping).filter(v => v === 'ignore').length + (excelHeaders.length - Object.keys(columnMapping).length)}</li>
-            {#if Object.values(columnMapping).includes('latitude') && Object.values(columnMapping).includes('longitude')}
-              <li class="success">✓ Współrzędne będą importowane bezpośrednio</li>
-            {:else if Object.values(columnMapping).includes('geocode')}
-              <li class="warning">⚠ Adresy wymagają ręcznego geokodowania po imporcie</li>
-            {:else}
-              <li class="warning">⚠ Brak współrzędnych - wszystkie pinezki będą bez lokalizacji</li>
-            {/if}
-          </ul>
-        </div>
-      </div>
-
-      <div class="modal-footer">
-        <button type="button" onclick={() => {
-          showColumnMappingModal = false;
-          currentTempId = null;
-        }} class="cancel-btn">
-          Anuluj
-        </button>
-        <button type="button" onclick={proceedWithImport} class="import-confirm-btn">
-          Kontynuuj import
-        </button>
-      </div>
-    </div>
-  </div>
-{/if}
-
-<!-- Excel Import Modal -->
-{#if showImportModal}
-  <div class="modal-overlay">
-    <div class="modal-content">
-      <div class="modal-header">
-        <h3>Import danych z Excel</h3>
-        <button type="button" onclick={() => showImportModal = false} class="close-btn">
-          <Icon name="Close" size={20} />
-        </button>
-      </div>
-      
-      <div class="modal-body">
-        <p>Znaleziono <strong>{importedData.length}</strong> wierszy do zaimportowania.</p>
-        {#if importedData.filter(row => row.hasIncompleteData).length > 0}
-          {@const incompleteRows = importedData.filter(row => row.hasIncompleteData).length}
-          <div class="warning-box">
-<Icon name="Cross" size={16} /> <strong>Uwaga:</strong> {incompleteRows} wierszy będzie miało niekompletne dane. 
-            Pinezki z niekompletnymi danymi zostaną oznaczone na mapie.
-          </div>
-        {/if}
-        <p>Wybierz które wiersze chcesz zaimportować:</p>
-        
-        <div class="import-data-table">
-          <div class="table-controls">
-            <button 
-              type="button" 
-              onclick={() => {
-                if (selectedImportRows.size === importedData.length) {
-                  selectedImportRows = new Set();
-                } else {
-                  selectedImportRows = new Set(importedData.map((_, i) => i));
-                }
-              }}
-              class="select-all-btn"
-            >
-              {selectedImportRows.size === importedData.length ? 'Odznacz wszystkie' : 'Zaznacz wszystkie'}
-            </button>
-            <span class="selection-count">
-              Wybrano: {selectedImportRows.size} / {importedData.length}
-            </span>
-          </div>
-          
-          <div class="import-table-scroll">
-            <table class="import-table">
-              <thead>
-                <tr>
-                  <th>Wybierz</th>
-                  <th>Współrzędne</th>
-                  <th>Dane</th>
-                </tr>
-              </thead>
-              <tbody>
-                {#each importedData as row, i}
-                  <tr class:selected={selectedImportRows.has(i)} class:incomplete={row.hasIncompleteData}>
-                    <td>
-                      <input 
-                        type="checkbox" 
-                        checked={selectedImportRows.has(i)}
-                        onchange={(e) => {
-                          const target = e.target as HTMLInputElement;
-                          if (target.checked) {
-                            selectedImportRows.add(i);
-                          } else {
-                            selectedImportRows.delete(i);
-                          }
-                          selectedImportRows = new Set(selectedImportRows);
-                        }}
-                      >
-                      {#if row.hasIncompleteData}
-<span class="incomplete-indicator" title="Pinezka będzie miała niekompletne dane"><Icon name="Cross" size={12} /></span>
-                      {/if}
-                    </td>
-                    <td>
-                      {#if row.coordinates}
-                        <span class="coordinates">
-                          {row.coordinates.lat.toFixed(4)}, {row.coordinates.lng.toFixed(4)}
-                        </span>
-                      {:else}
-                        <span class="no-coordinates">Brak współrzędnych</span>
-                      {/if}
-                    </td>
-                    <td>
-                      <div class="row-data">
-                        {#each Object.entries(row.originalData) as [key, value]}
-                          <div class="data-item">
-                            <strong>{key}:</strong> {value}
-                          </div>
-                        {/each}
-                        {#if row.hasIncompleteData}
-                          <div class="data-item incomplete-notice">
-<em><Icon name="Cross" size={12} /> Wymaga uzupełnienia po imporcie</em>
-                          </div>
-                        {/if}
-                      </div>
-                    </td>
-                  </tr>
-                {/each}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      </div>
-      
-      <div class="modal-footer">
-        <button type="button" onclick={() => showImportModal = false} class="cancel-btn">
-          Anuluj
-        </button>
-        <button type="button" onclick={importSelectedRows} class="import-confirm-btn">
-          Importuj wybrane ({selectedImportRows.size})
-        </button>
-      </div>
-    </div>
-  </div>
-{/if}
+<!-- Excel Import Preview Modal -->
+<ExcelImportPreviewModal
+  open={showImportModal}
+  {importedData}
+  selectedRows={selectedImportRows}
+  onclose={() => showImportModal = false}
+  onimport={importSelectedRows}
+  onselectionchange={(newSelection) => selectedImportRows = newSelection}
+/>
 
 <style>
+  @import '$lib/styles/modal.css';
+
   .pin-form-panel {
     --panel-width: 420px;
     --base-unit: calc(var(--panel-width) / 16);
@@ -1915,28 +1726,14 @@
     cursor: not-allowed;
   }
 
-  /* Modal Styles */
+  /* Modal Styles - Base styles from modal.css, component-specific overrides below */
   .modal-overlay {
-    position: fixed;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background: rgba(0, 0, 0, 0.5);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    z-index: 1000;
-    padding: 20px;
+    --modal-padding: 20px;
   }
 
   .modal-content {
-    background: white;
     border: 2px solid #000000;
-    border-radius: 0;
-    box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
-    max-width: 90vw;
-    max-height: 90vh;
+    border-radius: 0; /* Override default rounded corners */
     width: 800px;
     display: flex;
     flex-direction: column;

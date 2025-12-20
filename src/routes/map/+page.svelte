@@ -323,7 +323,10 @@
     }
   }
 
-  function formatFieldValue(field: any, value: any): string {
+  // Format field value for detailed display in pin detail panel
+  // NOTE: This is the "rich" formatter with full support for all field types
+  // NOTE: Currently unused - consider removing if not needed
+  function formatDetailFieldValue(field: any, value: any): string {
     if (!value && value !== 0) return '';
 
     const fieldType = field.fieldType || field.type;

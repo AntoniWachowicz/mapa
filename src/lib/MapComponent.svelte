@@ -1,7 +1,8 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
   import type { SavedObject, MapConfig, MapObject, GeoJSON, Tag, CategoryFieldData } from './types.js';
-  
+  import * as mapBoundaries from './features/mapBoundaries/index.js';
+
   interface Props {
     objects: MapObject[];
     onMapClick: (coordinates: {lat: number, lng: number}) => void;
@@ -93,82 +94,6 @@
     return '#FF0000';
   }
 
-  // Calculate bounds from polygon coordinates
-  function calculatePolygonBoundsLocal(polygon: GeoJSON.Polygon | GeoJSON.MultiPolygon): { swLat: number, swLng: number, neLat: number, neLng: number } {
-    let minLat = Infinity;
-    let maxLat = -Infinity;
-    let minLng = Infinity;
-    let maxLng = -Infinity;
-
-    if (polygon.type === 'Polygon') {
-      const coordinates = polygon.coordinates[0]; // First ring (outer boundary)
-      coordinates.forEach(([lng, lat]: number[]) => {
-        minLat = Math.min(minLat, lat);
-        maxLat = Math.max(maxLat, lat);
-        minLng = Math.min(minLng, lng);
-        maxLng = Math.max(maxLng, lng);
-      });
-    } else if (polygon.type === 'MultiPolygon') {
-      polygon.coordinates.forEach(polygonCoords => {
-        const ring = polygonCoords[0]; // First ring of each polygon
-        ring.forEach(([lng, lat]: number[]) => {
-          minLat = Math.min(minLat, lat);
-          maxLat = Math.max(maxLat, lat);
-          minLng = Math.min(minLng, lng);
-          maxLng = Math.max(maxLng, lng);
-        });
-      });
-    }
-
-    return {
-      swLat: minLat,
-      swLng: minLng,
-      neLat: maxLat,
-      neLng: maxLng
-    };
-  }
-
-  // Check if coordinates are within the configured bounds
-  function isWithinBounds(lat: number, lng: number): boolean {
-    if (mapConfig.boundaryType === 'polygon' && mapConfig.polygonBoundary) {
-      return isPointInPolygon(lat, lng, mapConfig.polygonBoundary);
-    }
-
-    // Default rectangle boundary check
-    return lat >= mapConfig.swLat && lat <= mapConfig.neLat &&
-           lng >= mapConfig.swLng && lng <= mapConfig.neLng;
-  }
-
-  // Point-in-polygon algorithm using ray casting
-  function isPointInPolygon(lat: number, lng: number, polygon: GeoJSON.Polygon | GeoJSON.MultiPolygon): boolean {
-    if (polygon.type === 'Polygon') {
-      return checkPolygon(lat, lng, polygon.coordinates[0]);
-    } else if (polygon.type === 'MultiPolygon') {
-      // Check if point is in any of the polygons
-      return polygon.coordinates.some(polygonCoords =>
-        checkPolygon(lat, lng, polygonCoords[0])
-      );
-    }
-    return false;
-  }
-
-  // Helper function to check if point is in a single polygon
-  function checkPolygon(lat: number, lng: number, coordinates: number[][]): boolean {
-    let isInside = false;
-
-    for (let i = 0, j = coordinates.length - 1; i < coordinates.length; j = i++) {
-      const xi = coordinates[i][0]; // longitude
-      const yi = coordinates[i][1]; // latitude
-      const xj = coordinates[j][0]; // longitude
-      const yj = coordinates[j][1]; // latitude
-
-      if (((yi > lat) !== (yj > lat)) && (lng < (xj - xi) * (lat - yi) / (yj - yi) + xi)) {
-        isInside = !isInside;
-      }
-    }
-
-    return isInside;
-  }
 
   // Create overlay to darken area outside bounds
   function createBoundsOverlay() {
@@ -270,7 +195,7 @@
     let fitBounds;
     if (mapConfig.boundaryType === 'polygon' && mapConfig.polygonBoundary) {
       // Calculate bounds from polygon using helper function
-      const polygonBounds = calculatePolygonBoundsLocal(mapConfig.polygonBoundary);
+      const polygonBounds = mapBoundaries.calculatePolygonBounds(mapConfig.polygonBoundary);
       fitBounds = [
         [polygonBounds.swLat, polygonBounds.swLng],
         [polygonBounds.neLat, polygonBounds.neLng]
@@ -391,7 +316,13 @@
       const { lat, lng } = e.latlng;
 
       // Check if click is within bounds before allowing pin placement
-      if (!isWithinBounds(lat, lng)) {
+      if (!mapBoundaries.isWithinBounds(
+        lat,
+        lng,
+        mapConfig.boundaryType,
+        { swLat: mapConfig.swLat, swLng: mapConfig.swLng, neLat: mapConfig.neLat, neLng: mapConfig.neLng },
+        mapConfig.polygonBoundary
+      )) {
         return;
       }
 

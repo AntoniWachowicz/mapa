@@ -1,6 +1,8 @@
 <script lang="ts">
   import type { GalleryData, GalleryConfig, GalleryItem } from '../types.js';
   import Icon from '../Icon.svelte';
+  import ImagePickerModal from '../components/modals/ImagePickerModal.svelte';
+  import { getYouTubeEmbedUrl, getVimeoEmbedUrl, detectVideoType } from '../utils/videoEmbeds.js';
 
   interface Props {
     value: GalleryData;
@@ -45,19 +47,11 @@
   function addVideoEmbed() {
     if (!videoUrl.trim()) return;
 
-    // Detect video type
-    let embedType: 'youtube' | 'vimeo' | undefined;
-    if (videoUrl.includes('youtube.com') || videoUrl.includes('youtu.be')) {
-      embedType = 'youtube';
-    } else if (videoUrl.includes('vimeo.com')) {
-      embedType = 'vimeo';
-    }
-
     const newItem: GalleryItem = {
       id: `video_${Date.now()}`,
       type: 'video',
       url: videoUrl,
-      embedType,
+      embedType: detectVideoType(videoUrl),
       order: value.items.length
     };
 
@@ -176,16 +170,6 @@
 
     showImagePicker = false;
     selectedImageIds = new Set();
-  }
-
-  function getYouTubeEmbedUrl(url: string): string {
-    const videoId = url.match(/(?:youtube\.com\/(?:[^\/]+\/.+\/|(?:v|e(?:mbed)?)\/|.*[?&]v=)|youtu\.be\/)([^"&?\/\s]{11})/)?.[1];
-    return videoId ? `https://www.youtube.com/embed/${videoId}` : url;
-  }
-
-  function getVimeoEmbedUrl(url: string): string {
-    const videoId = url.match(/vimeo\.com\/(\d+)/)?.[1];
-    return videoId ? `https://player.vimeo.com/video/${videoId}` : url;
   }
 </script>
 
@@ -313,58 +297,14 @@
 </div>
 
 <!-- Image Picker Modal -->
-{#if showImagePicker}
-  <div class="modal-overlay" onclick={() => showImagePicker = false}>
-    <div class="modal-content" onclick={(e) => e.stopPropagation()}>
-      <div class="modal-header">
-        <h3>Wybierz zdjęcia z galerii</h3>
-        <button type="button" onclick={() => showImagePicker = false} class="close-btn">
-          <Icon name="Close" size={20} />
-        </button>
-      </div>
-
-      <div class="modal-body">
-        {#if availableImages.length === 0}
-          <p class="no-images">Brak dostępnych zdjęć w galerii. Prześlij nowe zdjęcia, aby je dodać.</p>
-        {:else}
-          <div class="image-grid">
-            {#each availableImages as image}
-              <div
-                class="image-card"
-                class:selected={selectedImageIds.has(image.id)}
-                onclick={() => toggleImageSelection(image.id)}
-              >
-                <img src={image.url} alt={image.originalName} />
-                <div class="image-info">
-                  <span class="image-name">{image.originalName}</span>
-                </div>
-                {#if selectedImageIds.has(image.id)}
-                  <div class="selected-indicator">
-                    <Icon name="Checkmark" size={20} />
-                  </div>
-                {/if}
-              </div>
-            {/each}
-          </div>
-        {/if}
-      </div>
-
-      <div class="modal-footer">
-        <button type="button" onclick={() => showImagePicker = false} class="cancel-btn">
-          Anuluj
-        </button>
-        <button
-          type="button"
-          onclick={addSelectedImages}
-          class="add-btn"
-          disabled={selectedImageIds.size === 0}
-        >
-          Dodaj wybrane ({selectedImageIds.size})
-        </button>
-      </div>
-    </div>
-  </div>
-{/if}
+<ImagePickerModal
+  open={showImagePicker}
+  {availableImages}
+  {selectedImageIds}
+  onclose={() => showImagePicker = false}
+  onadd={addSelectedImages}
+  ontoggle={toggleImageSelection}
+/>
 
 <style>
   .gallery-container {
@@ -597,186 +537,5 @@
 
   .remove-btn:hover {
     background: #b91c1c;
-  }
-
-  /* Modal Styles */
-  .modal-overlay {
-    position: fixed;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background: rgba(0, 0, 0, 0.6);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    z-index: 10000;
-    padding: 20px;
-  }
-
-  .modal-content {
-    background: white;
-    border-radius: 12px;
-    box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
-    max-width: 90vw;
-    max-height: 90vh;
-    width: 900px;
-    display: flex;
-    flex-direction: column;
-  }
-
-  .modal-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 20px 24px;
-    border-bottom: 1px solid #e5e7eb;
-  }
-
-  .modal-header h3 {
-    margin: 0;
-    font-size: 18px;
-    font-weight: 600;
-    color: #1f2937;
-  }
-
-  .close-btn {
-    background: none;
-    border: none;
-    font-size: 24px;
-    cursor: pointer;
-    color: #9ca3af;
-    padding: 4px;
-    border-radius: 4px;
-    transition: all 0.2s ease;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-  }
-
-  .close-btn:hover {
-    background: #f3f4f6;
-    color: #374151;
-  }
-
-  .modal-body {
-    padding: 24px;
-    flex: 1;
-    overflow: auto;
-  }
-
-  .no-images {
-    text-align: center;
-    color: #6b7280;
-    padding: 40px 20px;
-  }
-
-  .image-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
-    gap: 16px;
-  }
-
-  .image-card {
-    position: relative;
-    border: 2px solid #e5e7eb;
-    border-radius: 8px;
-    overflow: hidden;
-    cursor: pointer;
-    transition: all 0.2s;
-  }
-
-  .image-card:hover {
-    border-color: #3b82f6;
-    transform: translateY(-2px);
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
-  }
-
-  .image-card.selected {
-    border-color: #3b82f6;
-    border-width: 3px;
-  }
-
-  .image-card img {
-    width: 100%;
-    height: 150px;
-    object-fit: cover;
-    display: block;
-  }
-
-  .image-info {
-    padding: 8px;
-    background: #f9fafb;
-  }
-
-  .image-name {
-    font-size: 12px;
-    color: #374151;
-    display: block;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-
-  .selected-indicator {
-    position: absolute;
-    top: 8px;
-    right: 8px;
-    background: #3b82f6;
-    color: white;
-    width: 32px;
-    height: 32px;
-    border-radius: 50%;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
-  }
-
-  .modal-footer {
-    display: flex;
-    justify-content: flex-end;
-    gap: 12px;
-    padding: 20px 24px;
-    border-top: 1px solid #e5e7eb;
-    background: #f9fafb;
-  }
-
-  .cancel-btn {
-    background: #e5e7eb;
-    color: #374151;
-    border: none;
-    padding: 10px 20px;
-    border-radius: 6px;
-    cursor: pointer;
-    font-weight: 600;
-    font-size: 14px;
-    transition: all 0.2s ease;
-  }
-
-  .cancel-btn:hover {
-    background: #d1d5db;
-  }
-
-  .add-btn {
-    background: #3b82f6;
-    color: white;
-    border: none;
-    padding: 10px 20px;
-    border-radius: 6px;
-    cursor: pointer;
-    font-weight: 600;
-    font-size: 14px;
-    transition: all 0.2s ease;
-  }
-
-  .add-btn:hover:not(:disabled) {
-    background: #2563eb;
-  }
-
-  .add-btn:disabled {
-    background: #d1d5db;
-    color: #9ca3af;
-    cursor: not-allowed;
   }
 </style>

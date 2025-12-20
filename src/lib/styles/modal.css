@@ -1,0 +1,34 @@
+/**
+ * Shared modal overlay styles
+ *
+ * Used across multiple components to provide consistent modal behavior.
+ * Customize using CSS variables for specific use cases.
+ *
+ * Usage:
+ *   <div class="modal-overlay" style="--modal-z-index: 10000; --modal-padding: 20px;">
+ *     <div class="modal-content">...</div>
+ *   </div>
+ */
+
+.modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: var(--modal-z-index, 1000);
+  padding: var(--modal-padding, 0);
+}
+
+.modal-content {
+  background: white;
+  border-radius: var(--modal-border-radius, var(--radius-lg, 8px));
+  max-width: var(--modal-max-width, 90vw);
+  max-height: var(--modal-max-height, 90vh);
+  overflow: auto;
+  box-shadow: var(--modal-shadow, 0 25px 50px -12px rgba(0, 0, 0, 0.25));
+}

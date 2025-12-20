@@ -9,8 +9,9 @@
 
   const { template }: Props = $props();
 
-  // Format field value for display
-  function formatFieldValue(field: Field, value: any): string {
+  // Format field value for schema preview display
+  // NOTE: Intentionally simple - for detailed formatting see formatDetailFieldValue() in map/+page.svelte
+  function formatPreviewValue(field: Field, value: any): string {
     if (!value && value !== 0 && value !== false) {
       return '—';
     }
@@ -65,7 +66,7 @@
         {#if titleField}
           <div class="pin-header">
             <h4 class="pin-title">
-              {formatFieldValue(titleField, getFieldSampleValue(titleField))}
+              {formatPreviewValue(titleField, getFieldSampleValue(titleField))}
             </h4>
           </div>
         {/if}
@@ -199,7 +200,7 @@
                 </div>
               {:else}
                 <span class="text-value">
-                  {formatFieldValue(field, fieldValue)}
+                  {formatPreviewValue(field, fieldValue)}
                 </span>
               {/if}
             </div>

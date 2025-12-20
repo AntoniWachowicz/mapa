@@ -1,6 +1,35 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import type { SavedObject, Template, CategoryFieldData, PriceData } from '$lib/types.js';
+  import Icon from '$lib/Icon.svelte';
+  import Modal from '$lib/components/modals/Modal.svelte';
+  import ColumnMappingModal from '$lib/components/modals/ColumnMappingModal.svelte';
+  import HeaderSelectionModal from '$lib/components/modals/HeaderSelectionModal.svelte';
+  import BulkEditModal from '$lib/components/modals/BulkEditModal.svelte';
+  import DataTable from '$lib/components/table/DataTable.svelte';
+  import ListActionsToolbar from '$lib/components/list/ListActionsToolbar.svelte';
+  import BulkActionsToolbar from '$lib/components/list/BulkActionsToolbar.svelte';
+  import {
+    extractAddressFromObject,
+    isGeocoding,
+    isInQueue,
+    addToQueue,
+    processQueue,
+    getQueueLength
+  } from '$lib/features/geocoding';
+  import { convertValueByFieldType, buildFieldTypeMap } from '$lib/features/excelImport';
+  import {
+    calculateInitialWidths,
+    initResizeCallbacks,
+    startResize as startColumnResize,
+    getIsResizing
+  } from '$lib/features/tableResize';
+  import {
+    formatPrice,
+    formatTableCellValue,
+    getFieldDisplayName,
+    getFieldType
+  } from '$lib/utils/formatters';
 
   interface Props {
     data: {
@@ -19,13 +48,7 @@
   let filteredObjects = $state<SavedObject[]>(data.objects || []);
   let columnWidths = $state<Record<string, number>>({});
   let manuallyResizedColumns = $state<Set<string>>(new Set());
-  let isResizing = $state(false);
   let justFinishedResizing = $state(false);
-  let resizeStartX = $state(0);
-  let resizeLeftColumn = $state('');
-  let resizeRightColumn = $state('');
-  let resizeInitialLeftWidth = $state(0);
-  let resizeInitialRightWidth = $state(0);
   let expandedCells = $state<Set<string>>(new Set());
   let tableBodyElement = $state<HTMLElement | null>(null);
   let tableHeaderElement = $state<HTMLElement | null>(null);
@@ -61,13 +84,6 @@
   let newFieldType = $state<string>('richtext');
   let creatingField = $state(false);
 
-  // Quick geocoding state
-  let quickGeocodingIds = $state<Set<string>>(new Set());
-
-  // Geocoding request queue to prevent rate limiting
-  let geocodingQueue: Array<{objectId: string; address: string}> = [];
-  let isProcessingQueue = false;
-
   // Flag to track if column widths have been initialized
   let columnWidthsInitialized = $state(false);
 
@@ -81,15 +97,11 @@
   // Initialize column widths only once
   $effect(() => {
     if (data.template && filteredObjects && !columnWidthsInitialized) {
-      const newWidths: Record<string, number> = {};
-
-      data.template.fields
-        .filter(f => f.visible && f.type !== 'location' && f.fieldType !== 'location')
-        .forEach(field => {
-          newWidths[field.key] = calculateContentBasedWidth(field, filteredObjects);
-        });
-
-      columnWidths = newWidths;
+      columnWidths = calculateInitialWidths(
+        data.template.fields,
+        filteredObjects,
+        formatTableCellValue
+      );
       columnWidthsInitialized = true;
     }
   });
@@ -215,67 +227,7 @@
     showMappingModal = true;
   }
 
-  function convertValueByFieldType(value: string, fieldType: string): any {
-    if (!value || value === '') return null;
-
-    try {
-      switch (fieldType) {
-        // New field types - most accept text as-is
-        case 'richtext':
-        case 'files':
-        case 'gallery':
-        case 'multidate':
-        case 'address':
-        case 'links':
-        case 'tags':
-        case 'category':
-          return value; // Store as text, will be processed by field editor
-
-        case 'price':
-          // Try to parse as number for price
-          const priceNum = parseFloat(value.replace(/,/g, '.').replace(/[^\d.-]/g, ''));
-          return isNaN(priceNum) ? value : priceNum;
-
-        // Legacy field types (for backward compatibility)
-        case 'number':
-        case 'currency':
-        case 'percentage':
-          const num = parseFloat(value.replace(/,/g, '.').replace(/[^\d.-]/g, ''));
-          return isNaN(num) ? null : num;
-
-        case 'checkbox':
-          const lower = value.toLowerCase().trim();
-          return lower === 'true' || lower === 'tak' || lower === 'yes' || lower === '1';
-
-        case 'date':
-          const date = new Date(value);
-          return isNaN(date.getTime()) ? value : date.toISOString();
-
-        case 'email':
-          if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)) {
-            console.warn(`Invalid email: ${value}`);
-          }
-          return value;
-
-        case 'url':
-        case 'image':
-        case 'youtube':
-          if (!/^https?:\/\/.+/.test(value)) {
-            console.warn(`Invalid URL: ${value}`);
-          }
-          return value;
-
-        case 'text':
-        case 'textarea':
-        case 'select':
-        default:
-          return value;
-      }
-    } catch (error) {
-      console.error(`Error converting value "${value}" for type ${fieldType}:`, error);
-      return value; // Return original value on error
-    }
-  }
+  // convertValueByFieldType moved to excelImport module
 
   function openNewFieldForm(columnName: string) {
     newFieldForColumn = columnName;
@@ -397,12 +349,7 @@
     }
 
     // Create a map of field key to field type for type conversion
-    const fieldTypeMap: Record<string, string> = {};
-    if (data.template.fields) {
-      for (const field of data.template.fields) {
-        fieldTypeMap[field.key] = field.type || field.fieldType || 'text';
-      }
-    }
+    const fieldTypeMap = buildFieldTypeMap(data.template);
 
     for (const row of excelAllData) {
       try {
@@ -530,7 +477,7 @@
 
   function handleSort(fieldKey: string) {
     // Don't sort if we're currently resizing or just finished resizing
-    if (isResizing || justFinishedResizing) return;
+    if (getIsResizing() || justFinishedResizing) return;
 
     if (sortField === fieldKey) {
       // 3-state cycle: asc → desc → reset
@@ -615,7 +562,7 @@
     }
 
     // Regular text field
-    const formattedValue = formatFieldValue(field, fieldValue);
+    const formattedValue = formatTableCellValue(field, fieldValue);
     if (formattedValue && formattedValue !== '—') {
       return {type: 'text', text: formattedValue};
     }
@@ -660,122 +607,7 @@
     return false;
   }
 
-  // Price formatting function
-  const formatPrice = (amount: number) => {
-    const num = typeof amount === 'number' ? amount : parseFloat(amount);
-    const fixed = num.toFixed(2);
-    const [integer, decimal] = fixed.split('.');
-    const withSpaces = integer.replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
-    return `${withSpaces},${decimal}`;
-  };
-
-  function formatFieldValue(field: any, value: any): string {
-    // Check for empty values
-    if (!value && value !== 0 && value !== false) return '—';
-
-    // Check for empty arrays
-    if (Array.isArray(value) && value.length === 0) return '—';
-
-    // Check for empty gallery objects
-    if (typeof value === 'object' && value !== null && 'items' in value) {
-      if (!value.items || (Array.isArray(value.items) && value.items.length === 0)) {
-        return '—';
-      }
-    }
-
-    // All legacy field type handlers removed - using modern field types only
-    return String(value);
-  }
-
-  function calculateContentBasedWidth(field: any, objects: SavedObject[]): number {
-    const MAX_WIDTH_CH = 25; // Max width for columns
-    const MIN_WIDTH_PX = 100; // Existing minimum from resize
-    const PADDING_CH = 2; // Extra space for padding/breathing room
-    const SAMPLE_SIZE = 100; // Only sample first 100 rows for performance
-    const MAX_HEADER_WIDTH_CH = 15; // Allow headers longer than this to wrap
-
-    // Calculate header width (field name + type)
-    const headerText = `${field.name || field.key} (${field.type})`;
-    // Don't force long headers to fit on one line - allow them to wrap
-    const headerLength = Math.min(headerText.length, MAX_HEADER_WIDTH_CH);
-    let maxContentLength = headerLength;
-
-    // Sample only first N objects for performance (usually first 100 rows is representative)
-    const sampleObjects = objects.slice(0, SAMPLE_SIZE);
-
-    sampleObjects.forEach(obj => {
-      const value = obj.data[field.key];
-      if (!value) return;
-
-      // Get text representation of the field value
-      const textValue = formatFieldValue(field, value);
-      if (textValue && textValue !== '—') {
-        // For multi-line fields, use the longest line
-        const lines = String(textValue).split('\n');
-        const longestLine = Math.max(...lines.map(line => line.length));
-        maxContentLength = Math.max(maxContentLength, longestLine);
-      }
-    });
-
-    // Calculate width in ch, apply max constraint
-    const widthInCh = Math.min(maxContentLength + PADDING_CH, MAX_WIDTH_CH);
-
-    // Convert ch to pixels (approximate: 1ch ≈ 8px in Space Mono)
-    const widthInPx = widthInCh * 8;
-
-    // Apply minimum constraint
-    return Math.max(widthInPx, MIN_WIDTH_PX);
-  }
-
-  function getFieldDisplayName(field: any): string {
-    return field.displayLabel || field.label;
-  }
-
-  function getFieldType(field: any): string {
-    // Modern field types only
-    const typeMap: Record<string, string> = {
-      'title': 'tytuł',
-      'location': 'lokalizacja',
-      'richtext': 'tekst sformatowany',
-      'files': 'pliki',
-      'gallery': 'galeria',
-      'multidate': 'wielodata',
-      'address': 'adres',
-      'links': 'linki',
-      'tags': 'tagi',
-      'price': 'cena',
-      'category': 'kategoria'
-    };
-    return typeMap[field.type] || field.type;
-  }
-
-  // Icon functions
-  function DownloadIcon(): string {
-    return `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-      <path d="M13.3414 17.2444C13.2154 17.3704 13 17.2812 13 17.103L13 10C13 9.44772 12.5522 9 12 9C11.4477 9 11 9.44772 11 10L11 17.1029C11 17.2811 10.7845 17.3703 10.6585 17.2443L8.46446 15.0502C8.07394 14.6597 7.44077 14.6597 7.05025 15.0502C6.65972 15.4408 6.65972 16.0739 7.05025 16.4645L11.2874 20.7016C11.375 20.7906 11.4791 20.8632 11.5948 20.9145C11.7186 20.9695 11.8557 21 12 21C12.1316 21 12.2572 20.9746 12.3723 20.9284C12.4942 20.8796 12.6084 20.8058 12.7071 20.7071L16.9497 16.4645C17.3403 16.0739 17.3403 15.4408 16.9497 15.0502C16.5592 14.6597 15.9261 14.6597 15.5355 15.0502L13.3414 17.2444Z" fill="currentColor"/>
-      <path d="M21 11C21 12.1046 20.1046 13 19 13H16C15.4477 13 15 12.5523 15 12V10C15 8.34315 13.6569 7 12 7C10.3431 7 9 8.34315 9 10V12C9 12.5523 8.55228 13 8 13H5C3.89543 13 3 12.1046 3 11L3 7C3 4.79086 4.79086 3 7 3L17 3C19.2091 3 21 4.79086 21 7V11Z" fill="currentColor"/>
-    </svg>`;
-  }
-
-  function UploadIcon(): string {
-    return `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-      <path d="M10.6586 6.7556C10.7846 6.62961 11 6.71884 11 6.89703V14C11 14.5523 11.4478 15 12 15C12.5523 15 13 14.5523 13 14V6.8971C13 6.71892 13.2155 6.62968 13.3415 6.75568L15.5355 8.94975C15.9261 9.34028 16.5592 9.34028 16.9498 8.94975C17.3403 8.55923 17.3403 7.92606 16.9498 7.53554L12.7126 3.29836C12.625 3.20942 12.5209 3.1368 12.4052 3.08548C12.2814 3.03053 12.1443 3 12 3C11.8684 3 11.7428 3.02542 11.6277 3.07163C11.5058 3.12044 11.3916 3.19419 11.2929 3.2929L7.05026 7.53554C6.65973 7.92606 6.65973 8.55923 7.05026 8.94975C7.44078 9.34028 8.07395 9.34028 8.46447 8.94975L10.6586 6.7556Z" fill="currentColor"/>
-      <path d="M3 13C3 11.8954 3.89543 11 5 11H8C8.55228 11 9 11.4477 9 12V14C9 15.6569 10.3431 17 12 17C13.6569 17 15 15.6569 15 14V12C15 11.4477 15.4477 11 16 11H19C20.1046 11 21 11.8954 21 13V17C21 19.2091 19.2091 21 17 21H7C4.79086 21 3 19.2091 3 17V13Z" fill="currentColor"/>
-    </svg>`;
-  }
-
-  function ChevronUpIcon(): string {
-    return `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-      <path fill-rule="evenodd" clip-rule="evenodd" d="M6.29289 15.2071C6.68342 15.5976 7.31658 15.5976 7.70711 15.2071L12 10.9142L16.2929 15.2071C16.6834 15.5976 17.3166 15.5976 17.7071 15.2071C18.0976 14.8166 18.0976 14.1834 17.7071 13.7929L12.7071 8.79289C12.5196 8.60536 12.2652 8.5 12 8.5C11.7348 8.5 11.4804 8.60536 11.2929 8.79289L6.29289 13.7929C5.90237 14.1834 5.90237 14.8166 6.29289 15.2071Z" fill="currentColor"/>
-    </svg>`;
-  }
-
-  function ChevronDownIcon(): string {
-    return `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-      <path fill-rule="evenodd" clip-rule="evenodd" d="M17.7071 8.79289C17.3166 8.40237 16.6834 8.40237 16.2929 8.79289L12 13.0858L7.70711 8.79289C7.31658 8.40237 6.68342 8.40237 6.29289 8.79289C5.90237 9.18342 5.90237 9.81658 6.29289 10.2071L11.2929 15.2071C11.4804 15.3946 11.7348 15.5 12 15.5C12.2652 15.5 12.5196 15.3946 12.7071 15.2071L17.7071 10.2071C18.0976 9.81658 18.0976 9.18342 17.7071 8.79289Z" fill="currentColor"/>
-    </svg>`;
-  }
-
+  // Icon function (SyncIcon - no matching static icon file yet)
   function SyncIcon(): string {
     return `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
       <path d="M4 12C4 7.58172 7.58172 4 12 4C14.5264 4 16.7792 5.17107 18.2454 7M20 12C20 16.4183 16.4183 20 12 20C9.47362 20 7.22075 18.8289 5.75463 17" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
@@ -784,88 +616,7 @@
     </svg>`;
   }
 
-  // Column resizing functions
-  let resizeRAF = $state<number | null>(null);
-  let pendingMouseX = $state<number | null>(null);
-
-  function startResize(e: MouseEvent, leftFieldKey: string, rightFieldKey: string) {
-    e.preventDefault();
-    e.stopPropagation();
-    isResizing = true;
-    resizeStartX = e.pageX;
-    resizeLeftColumn = leftFieldKey;
-    resizeRightColumn = ''; // Not used anymore - right column just gets pushed
-    resizeInitialLeftWidth = columnWidths[leftFieldKey] || 200;
-    resizeInitialRightWidth = 0; // Not used anymore
-    document.addEventListener('mousemove', handleResize);
-    document.addEventListener('mouseup', stopResize);
-    document.body.style.cursor = 'col-resize';
-    document.body.style.userSelect = 'none';
-  }
-
-  function handleResize(e: MouseEvent) {
-    if (!isResizing || !resizeLeftColumn) return;
-
-    e.preventDefault();
-    pendingMouseX = e.pageX;
-
-    if (resizeRAF !== null) return;
-
-    resizeRAF = requestAnimationFrame(() => {
-      if (pendingMouseX === null) {
-        resizeRAF = null;
-        return;
-      }
-
-      const deltaX = pendingMouseX - resizeStartX;
-
-      // Calculate new width for left column only - right columns get pushed
-      const newLeftWidth = Math.round(resizeInitialLeftWidth + deltaX);
-
-      // Only proceed if column remains above minimum width
-      if (newLeftWidth >= 100) {
-        columnWidths = {
-          ...columnWidths,
-          [resizeLeftColumn]: newLeftWidth
-        };
-      }
-
-      resizeRAF = null;
-      pendingMouseX = null;
-    });
-  }
-
-  function stopResize(e: MouseEvent) {
-    e.preventDefault();
-    isResizing = false;
-
-    // Set flag to prevent click events from triggering sort immediately after resize
-    justFinishedResizing = true;
-    setTimeout(() => {
-      justFinishedResizing = false;
-    }, 150);
-
-    // Mark only the left column as manually resized (right column just gets pushed, not resized)
-    const newManuallyResized = new Set(manuallyResizedColumns);
-    if (resizeLeftColumn) {
-      newManuallyResized.add(resizeLeftColumn);
-    }
-    manuallyResizedColumns = newManuallyResized;
-
-    resizeLeftColumn = '';
-    resizeRightColumn = '';
-    resizeInitialLeftWidth = 0;
-    resizeInitialRightWidth = 0;
-    pendingMouseX = null;
-    if (resizeRAF !== null) {
-      cancelAnimationFrame(resizeRAF);
-      resizeRAF = null;
-    }
-    document.removeEventListener('mousemove', handleResize);
-    document.removeEventListener('mouseup', stopResize);
-    document.body.style.cursor = '';
-    document.body.style.userSelect = '';
-  }
+  // Column resizing functions moved to tableResize module
 
   function toggleCellExpansion(objId: string, fieldKey: string) {
     const cellId = `${objId}-${fieldKey}`;
@@ -1111,6 +862,24 @@
   });
 
   onMount(async () => {
+    // Initialize table resize callbacks
+    initResizeCallbacks({
+      onWidthChange: (key: string, width: number) => {
+        columnWidths = { ...columnWidths, [key]: width };
+      },
+      onResizeComplete: (columnKey: string) => {
+        const newManuallyResized = new Set(manuallyResizedColumns);
+        newManuallyResized.add(columnKey);
+        manuallyResizedColumns = newManuallyResized;
+      },
+      onPreventClick: () => {
+        justFinishedResizing = true;
+        setTimeout(() => {
+          justFinishedResizing = false;
+        }, 150);
+      }
+    });
+
     // Fix any fields missing adminVisible property (one-time migration)
     if (data.template && data.template.fields) {
       const needsFix = data.template.fields.some(f => f.adminVisible === undefined);
@@ -1225,261 +994,66 @@
     }
   }
 
-  // Extract address from object's data (looks for address-type fields or text fields that might contain addresses)
-  function extractAddressFromObject(obj: SavedObject): string | null {
-    if (!data.template) return null;
-
-    // Priority 1: Look for 'address' type fields
-    const addressFields = data.template.fields.filter(f => f.type === 'address' || f.fieldType === 'address');
-    for (const field of addressFields) {
-      const addressData = obj.data[field.key];
-
-      // Handle structured address object
-      if (addressData && typeof addressData === 'object') {
-        const parts = [];
-        if (addressData.street) parts.push(addressData.street);
-        if (addressData.number) parts.push(addressData.number);
-        if (addressData.city) parts.push(addressData.city);
-        if (addressData.gmina) parts.push(addressData.gmina);
-        if (addressData.postalCode) parts.push(addressData.postalCode);
-
-        // Even if we only have gmina or postal code, return it
-        if (parts.length > 0) return parts.join(', ');
-      }
-
-      // Handle string dumped into address field (Excel import case)
-      if (addressData && typeof addressData === 'string') {
-        const trimmed = addressData.trim();
-        if (trimmed.length > 2) return trimmed;
-      }
-    }
-
-    // Priority 2: Look for fields with 'adres' in the name
-    const addressLikeFields = data.template.fields.filter(f =>
-      f.key?.toLowerCase().includes('adres') ||
-      f.displayLabel?.toLowerCase().includes('adres') ||
-      f.label?.toLowerCase().includes('adres')
-    );
-    for (const field of addressLikeFields) {
-      const value = obj.data[field.key];
-
-      // Handle string addresses
-      if (value && typeof value === 'string' && value.trim().length > 5) {
-        return value.trim();
-      }
-
-      // Handle address object that might be in a field with "adres" in name
-      if (value && typeof value === 'object') {
-        const parts = [];
-        if (value.street) parts.push(value.street);
-        if (value.number) parts.push(value.number);
-        if (value.city) parts.push(value.city);
-        if (value.postalCode) parts.push(value.postalCode);
-        if (value.gmina) parts.push(value.gmina);
-        if (parts.length > 0) return parts.join(' ');
-      }
-    }
-
-    // Priority 3: Look for gmina + postal code fields separately and combine them
-    const gminaFields = data.template.fields.filter(f =>
-      f.key?.toLowerCase().includes('gmina') ||
-      f.label?.toLowerCase().includes('gmina')
-    );
-    const postalCodeFields = data.template.fields.filter(f =>
-      f.key?.toLowerCase().includes('kod') ||
-      f.key?.toLowerCase().includes('postal') ||
-      f.label?.toLowerCase().includes('kod pocztowy')
-    );
-
-    let gminaValue = '';
-    let postalValue = '';
-
-    for (const field of gminaFields) {
-      const value = obj.data[field.key];
-      if (value && typeof value === 'string' && value.trim().length > 2) {
-        gminaValue = value.trim();
-        break;
-      }
-    }
-
-    for (const field of postalCodeFields) {
-      const value = obj.data[field.key];
-      if (value && typeof value === 'string' && value.trim().length > 0) {
-        postalValue = value.trim();
-        break;
-      }
-    }
-
-    // If we have gmina or postal code, combine them
-    if (gminaValue || postalValue) {
-      const parts = [];
-      if (gminaValue) parts.push(gminaValue);
-      if (postalValue) parts.push(postalValue);
-      return parts.join(', ');
-    }
-
-    // Priority 4: Look for fields with location/miejsce/lokalizacja in name
-    const locationFields = data.template.fields.filter(f =>
-      f.key?.toLowerCase().includes('miejsce') ||
-      f.key?.toLowerCase().includes('lokalizacja') ||
-      f.key?.toLowerCase().includes('location') ||
-      f.label?.toLowerCase().includes('miejsce') ||
-      f.label?.toLowerCase().includes('lokalizacja')
-    );
-    for (const field of locationFields) {
-      const value = obj.data[field.key];
-      if (value && typeof value === 'string' && value.trim().length > 3) {
-        return value.trim();
-      }
-    }
-
-    // Priority 5: Look for text fields that might contain addresses
-    const textFields = data.template.fields.filter(f =>
-      (f.type === 'richtext' || f.type === 'textarea' || f.type === 'text') &&
-      !f.key?.toLowerCase().includes('opis') && // Exclude description fields
-      !f.key?.toLowerCase().includes('uwag') && // Exclude notes
-      !f.key?.toLowerCase().includes('description')
-    );
-    for (const field of textFields) {
-      const value = obj.data[field.key];
-      if (value && typeof value === 'string') {
-        const trimmed = value.trim();
-        // Check if it looks like an address (has at least one digit or comma, and multiple words)
-        if (trimmed.length > 5 && (/\d/.test(trimmed) || /,/.test(trimmed)) && trimmed.split(/[\s,]+/).length >= 2) {
-          return trimmed;
-        }
-      }
-    }
-
-    return null;
-  }
-
-  // Process geocoding queue - one at a time with delays
-  async function processGeocodingQueue() {
-    if (isProcessingQueue || geocodingQueue.length === 0) {
-      return;
-    }
-
-    isProcessingQueue = true;
-
-    while (geocodingQueue.length > 0) {
-      const request = geocodingQueue.shift();
-      if (!request) break;
-
-      const { objectId, address } = request;
-
-      console.log(`Processing queue: ${geocodingQueue.length + 1} remaining, geocoding: ${address}`);
-
-      // Add to loading set
-      quickGeocodingIds.add(objectId);
-      quickGeocodingIds = new Set(quickGeocodingIds);
-
-      try {
-        const response = await fetch('/api/geocode', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ address })
-        });
-
-        if (!response.ok) {
-          throw new Error('Geocoding failed');
-        }
-
-        const result = await response.json();
-        if (!result.success || !result.data) {
-          console.error(`Failed to geocode: ${address}`);
-          // Don't alert for queued items, just log
-        } else {
-          // Save coordinates
-          const { lat, lng } = result.data;
-          const locationResponse = await fetch(`/api/objects/${objectId}`, {
-            method: 'PATCH',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              location: {
-                type: 'Point',
-                coordinates: [lng, lat]
-              },
-              clearIncomplete: true
-            })
-          });
-
-          if (locationResponse.ok) {
-            const locationResult = await locationResponse.json();
-            if (locationResult.success && locationResult.object) {
-              // Update object in list
-              const objIndex = filteredObjects.findIndex(o => o.id === objectId);
-              if (objIndex !== -1) {
-                filteredObjects[objIndex] = locationResult.object;
-                if (filteredObjects[objIndex].missingFields?.includes('location')) {
-                  filteredObjects[objIndex].missingFields = filteredObjects[objIndex].missingFields?.filter(f => f !== 'location');
-                  if (filteredObjects[objIndex].missingFields?.length === 0) {
-                    filteredObjects[objIndex].hasIncompleteData = false;
-                  }
-                }
-                filteredObjects = [...filteredObjects];
-              }
-            }
-            console.log(`✓ Geocoded: ${address} -> ${lat.toFixed(6)}, ${lng.toFixed(6)}`);
-          }
-        }
-      } catch (error) {
-        console.error('Queue geocode error:', error);
-      } finally {
-        // Remove from loading set
-        quickGeocodingIds.delete(objectId);
-        quickGeocodingIds = new Set(quickGeocodingIds);
-      }
-
-      // Wait 1.5 seconds between addresses to respect Nominatim rate limits
-      // (each address may make multiple queries internally with 500ms delays)
-      if (geocodingQueue.length > 0) {
-        await new Promise(resolve => setTimeout(resolve, 1500));
-      }
-    }
-
-    isProcessingQueue = false;
-    console.log('Geocoding queue completed');
-  }
-
-  // Quick geocode function - adds to queue instead of running immediately
+  // Quick geocode function - uses geocoding module
   async function quickGeocodePin(objectId: string) {
     const obj = filteredObjects.find(o => o.id === objectId);
     if (!obj) return;
 
-    const address = extractAddressFromObject(obj);
+    const address = extractAddressFromObject(obj, data.template);
     if (!address) {
       alert('Nie znaleziono pola z adresem dla tego obiektu.');
       return;
     }
 
-    // Check if already in queue
-    if (geocodingQueue.some(r => r.objectId === objectId)) {
-      alert('Ten obiekt jest już w kolejce do geokodowania');
-      return;
+    try {
+      // Add to queue (module will handle validation)
+      addToQueue(objectId, address);
+
+      // Show immediate feedback
+      const queueLength = getQueueLength();
+      if (queueLength === 1) {
+        alert(`Rozpoczęto geokodowanie dla adresu: ${address}`);
+      } else {
+        alert(`Dodano do kolejki (pozycja ${queueLength}): ${address}`);
+      }
+
+      // Start processing queue with update callback
+      processQueue(async (objId: string, lat: number, lng: number) => {
+        const locationResponse = await fetch(`/api/objects/${objId}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            location: {
+              type: 'Point',
+              coordinates: [lng, lat]
+            },
+            clearIncomplete: true
+          })
+        });
+
+        if (locationResponse.ok) {
+          const locationResult = await locationResponse.json();
+          if (locationResult.success && locationResult.object) {
+            // Update object in list
+            const objIndex = filteredObjects.findIndex(o => o.id === objId);
+            if (objIndex !== -1) {
+              filteredObjects[objIndex] = locationResult.object;
+              if (filteredObjects[objIndex].missingFields?.includes('location')) {
+                filteredObjects[objIndex].missingFields = filteredObjects[objIndex].missingFields?.filter(f => f !== 'location');
+                if (filteredObjects[objIndex].missingFields?.length === 0) {
+                  filteredObjects[objIndex].hasIncompleteData = false;
+                }
+              }
+              filteredObjects = [...filteredObjects];
+            }
+          }
+        }
+      });
+    } catch (error) {
+      if (error instanceof Error) {
+        alert(error.message);
+      }
     }
-
-    // Check if already being processed
-    if (quickGeocodingIds.has(objectId)) {
-      alert('Ten obiekt jest obecnie geokodowany');
-      return;
-    }
-
-    console.log('Adding to geocoding queue:', address);
-
-    // Add to queue
-    geocodingQueue.push({ objectId, address });
-    geocodingQueue = [...geocodingQueue];
-
-    // Show immediate feedback
-    if (geocodingQueue.length === 1) {
-      alert(`Rozpoczęto geokodowanie dla adresu: ${address}`);
-    } else {
-      alert(`Dodano do kolejki (pozycja ${geocodingQueue.length}): ${address}`);
-    }
-
-    // Start processing queue
-    processGeocodingQueue();
   }
 
 </script>
@@ -1498,756 +1072,98 @@
   </div>
 {:else}
   <div class="list-container">
-    <div class="list-actions">
-      <button class="btn btn-primary" onclick={handleTemplateDownload}>
-        {@html DownloadIcon()}
-        <span>Export szablonu</span>
-      </button>
-      <label class="btn btn-primary">
-        {@html UploadIcon()}
-        <span>Importuj excel</span>
-        <input
-          type="file"
-          accept=".xlsx,.xls"
-          onchange={handleExcelImport}
-          style="display: none;"
-        >
-      </label>
-      <button class="btn btn-primary" onclick={handleExcelExport}>
-        {@html DownloadIcon()}
-        <span>Export tabeli</span>
-      </button>
-    </div>
+    <ListActionsToolbar
+      onTemplateDownload={handleTemplateDownload}
+      onExcelImport={handleExcelImport}
+      onExcelExport={handleExcelExport}
+    />
 
-    <!-- Bulk Edit Toolbar -->
-    {#if selectedRows.size > 0}
-      <div class="bulk-toolbar">
-        <span class="bulk-count">{selectedRows.size} wierszy zaznaczonych</span>
-        <button class="btn btn-bulk" onclick={openBulkEditModal}>
-          Edytuj zaznaczone
-        </button>
-        <button class="btn btn-bulk-delete" onclick={deleteSelected}>
-          Usuń zaznaczone
-        </button>
-        <button class="btn btn-bulk-clear" onclick={() => selectedRows = new Set()}>
-          Wyczyść zaznaczenie
-        </button>
-      </div>
-    {/if}
+    <BulkActionsToolbar
+      selectedCount={selectedRows.size}
+      onBulkEdit={openBulkEditModal}
+      onBulkDelete={deleteSelected}
+      onClearSelection={() => selectedRows = new Set()}
+    />
 
-    <div class="table-container">
-      <!-- Sticky Header -->
-      <div class="table-header" bind:this={tableHeaderElement}>
-        <table class="header-table">
-          <thead>
-            <tr>
-              <!-- Checkbox column -->
-              <th class="checkbox-column" onclick={toggleSelectAll}>
-                <input
-                  type="checkbox"
-                  checked={selectedRows.size === filteredObjects.length && filteredObjects.length > 0}
-                  onchange={toggleSelectAll}
-                />
-              </th>
-              <!-- Location column (always visible) -->
-              <th class="location-column">
-                <div class="header-content">
-                  <div class="header-text">
-                    <span class="field-name">Lokalizacja</span>
-                    <span class="field-type">(współrzędne)</span>
-                  </div>
-                </div>
-              </th>
-              {#each data.template.fields.filter(f => f.visible && f.type !== 'location' && f.fieldType !== 'location') as field, index}
-                <th
-                  onclick={() => handleSort(field.key)}
-                  class:sorted-asc={sortField === field.key && sortDirection === 'asc'}
-                  class:sorted-desc={sortField === field.key && sortDirection === 'desc'}
-                  style="width: {columnWidths[field.key] || 200}px; position: relative;"
-                >
-                  <div class="header-content">
-                    <div class="header-text">
-                      <span class="field-name">{getFieldDisplayName(field)}</span>
-                      <span class="field-type">({getFieldType(field)})</span>
-                    </div>
-                    {#if sortField === field.key}
-                      <span class="sort-icon">
-                        {@html sortDirection === 'asc' ? ChevronUpIcon() : ChevronDownIcon()}
-                      </span>
-                    {/if}
-                  </div>
-                  {#if index < data.template.fields.filter(f => f.visible && f.type !== 'location' && f.fieldType !== 'location').length - 1}
-                    {@const visibleFields = data.template.fields.filter(f => f.visible && f.type !== 'location' && f.fieldType !== 'location')}
-                    {@const nextField = visibleFields[index + 1]}
-                    <div
-                      class="column-resizer"
-                      onmousedown={(e) => startResize(e, field.key, nextField.key)}
-                    ></div>
-                  {/if}
-                </th>
-              {/each}
-            </tr>
-          </thead>
-        </table>
-      </div>
-
-      <!-- Scrollable Body -->
-      <div class="table-body" bind:this={tableBodyElement} onscroll={syncHeaderScroll}>
-        <table class="body-table">
-          <tbody>
-            {#if filteredObjects.length === 0}
-              <tr>
-                <td colspan={data.template.fields.filter(f => f.visible && f.type !== 'location' && f.fieldType !== 'location').length + 2} class="empty-row">
-                  Brak danych do wyświetlenia
-                </td>
-              </tr>
-            {:else}
-              {#each filteredObjects as obj, rowIndex}
-                {@const isMissingLocation = !obj.location || obj.missingFields?.includes('location')}
-                <tr class:incomplete={obj.hasIncompleteData} class:missing-location={isMissingLocation}>
-                  <!-- Checkbox column -->
-                  <td class="checkbox-column" class:missing-location-cell={isMissingLocation}>
-                    <input
-                      type="checkbox"
-                      checked={selectedRows.has(obj.id)}
-                      onclick={(e) => handleRowSelection(obj.id, rowIndex, e)}
-                    />
-                  </td>
-                  <!-- Location column -->
-                  <td class="location-column" class:missing-location-cell={isMissingLocation}>
-                    {#if obj.location && obj.location.coordinates}
-                      <div class="cell-content coordinates-display">
-                        <div class="coordinate-line">{obj.location.coordinates[1].toFixed(6)}</div>
-                        <div class="coordinate-line">{obj.location.coordinates[0].toFixed(6)}</div>
-                      </div>
-                    {:else}
-                      {@const hasAddress = extractAddressFromObject(obj) !== null}
-                      {@const isGeocoding = quickGeocodingIds.has(obj.id)}
-                      <div class="cell-content missing-location-row">
-                        <div class="missing-location-text">Brak</div>
-                        {#if hasAddress && !isGeocoding}
-                          <button
-                            class="quick-geocode-btn"
-                            title="Automatyczne geokodowanie z adresu"
-                            onclick={(e) => {
-                              e.stopPropagation();
-                              quickGeocodePin(obj.id);
-                            }}
-                          >
-                            Geokoduj
-                          </button>
-                        {/if}
-                        {#if isGeocoding}
-                          <div class="geocoding-status-inline">⏳</div>
-                        {/if}
-                      </div>
-                    {/if}
-                  </td>
-                  {#each data.template.fields.filter(f => f.visible && f.type !== 'location' && f.fieldType !== 'location') as field}
-                    {@const cellId = `${obj.id}-${field.key}`}
-                    {@const isExpanded = expandedCells.has(cellId)}
-                    {@const fieldValue = obj.data[field.key]}
-                    <td style="width: {columnWidths[field.key] || 200}px;" class:sorted-column={sortField === field.key}>
-                      {#if editingCell && editingCell.objectId === obj.id && editingCell.fieldKey === field.key}
-                        <div class="edit-field-container">
-                          {#if field.type === 'price' && typeof fieldValue === 'object' && fieldValue !== null}
-                            <div class="edit-price-container">
-                              {#if editingValue.funding && Array.isArray(editingValue.funding)}
-                                {#each editingValue.funding as fundingItem, idx}
-                                  <div class="edit-price-row">
-                                    <span class="edit-label">{fundingItem.source}:</span>
-                                    <input
-                                      type="number"
-                                      bind:value={editingValue.funding[idx].amount}
-                                      class="edit-field-input-small"
-                                      onkeydown={handleKeydown}
-                                    />
-                                  </div>
-                                {/each}
-                              {/if}
-                            </div>
-                          {:else if field.type === 'multidate' && typeof fieldValue === 'object' && fieldValue !== null}
-                            <div class="edit-multidate-container">
-                              {#each Object.entries(fieldValue) as [label, date]}
-                                <div class="edit-date-row">
-                                  <span class="edit-label">{label}:</span>
-                                  <input
-                                    type="date"
-                                    bind:value={editingValue[label]}
-                                    class="edit-field-input-small"
-                                    onkeydown={handleKeydown}
-                                  />
-                                </div>
-                              {/each}
-                            </div>
-                          {:else if field.type === 'address' && typeof fieldValue === 'object' && fieldValue !== null}
-                            <div class="edit-address-container">
-                              <div class="edit-date-row">
-                                <span class="edit-label">Ulica:</span>
-                                <input
-                                  type="text"
-                                  bind:value={editingValue.street}
-                                  class="edit-field-input-small"
-                                  onkeydown={handleKeydown}
-                                />
-                              </div>
-                              <div class="edit-date-row">
-                                <span class="edit-label">Numer:</span>
-                                <input
-                                  type="text"
-                                  bind:value={editingValue.number}
-                                  class="edit-field-input-small"
-                                  onkeydown={handleKeydown}
-                                />
-                              </div>
-                              <div class="edit-date-row">
-                                <span class="edit-label">Kod:</span>
-                                <input
-                                  type="text"
-                                  bind:value={editingValue.postalCode}
-                                  class="edit-field-input-small"
-                                  onkeydown={handleKeydown}
-                                />
-                              </div>
-                              <div class="edit-date-row">
-                                <span class="edit-label">Miasto:</span>
-                                <input
-                                  type="text"
-                                  bind:value={editingValue.city}
-                                  class="edit-field-input-small"
-                                  onkeydown={handleKeydown}
-                                />
-                              </div>
-                              <div class="edit-date-row">
-                                <span class="edit-label">Gmina:</span>
-                                <input
-                                  type="text"
-                                  bind:value={editingValue.gmina}
-                                  class="edit-field-input-small"
-                                  onkeydown={handleKeydown}
-                                />
-                              </div>
-                            </div>
-                          {:else if field.type === 'links' && Array.isArray(fieldValue)}
-                            <div class="edit-links-container">
-                              {#each fieldValue as link, idx}
-                                <div class="edit-link-row">
-                                  <input
-                                    type="text"
-                                    bind:value={editingValue[idx].text}
-                                    placeholder="Tekst"
-                                    class="edit-field-input-small"
-                                    onkeydown={handleKeydown}
-                                  />
-                                  <input
-                                    type="text"
-                                    bind:value={editingValue[idx].url}
-                                    placeholder="URL"
-                                    class="edit-field-input-small"
-                                    onkeydown={handleKeydown}
-                                  />
-                                </div>
-                              {/each}
-                            </div>
-                          {:else if field.type === 'richtext'}
-                            <textarea
-                              bind:value={editingValue}
-                              class="edit-field-textarea"
-                              onkeydown={handleKeydown}
-                              use:focus
-                            ></textarea>
-                          {:else}
-                            <!-- Default text input for other modern field types -->
-                            <input
-                              type="text"
-                              bind:value={editingValue}
-                              class="edit-field-input"
-                              onkeydown={handleKeydown}
-                              use:focus
-                            />
-                          {/if}
-                          <div class="edit-buttons">
-                            <button class="edit-save-btn" onclick={saveEdit} title="Zapisz (Ctrl+Enter)">
-                              ✓
-                            </button>
-                            <button class="edit-cancel-btn" onclick={cancelEdit} title="Anuluj">
-                              ✕
-                            </button>
-                          </div>
-                        </div>
-                      {:else}
-                        <div
-                          class="cell-content"
-                          class:expanded={isExpanded}
-                          onclick={() => toggleCellExpansion(obj.id, field.key)}
-                          ondblclick={() => startEditingCell(obj.id, field.key, obj.data[field.key])}
-                          onmouseenter={(e) => {
-                            hoverCell = {objectId: obj.id, fieldKey: field.key};
-                            if (!isExpanded) {
-                              const target = e.currentTarget as HTMLElement;
-                              let shouldShowTooltip = false;
-
-                              // Check if compact view with hidden data or overflow
-                              const compactView = target.querySelector('.compact-view');
-                              if (compactView) {
-                                const hasData = hasHiddenData(field, fieldValue);
-                                const compactLines = compactView.querySelectorAll('.compact-line');
-                                const isOverflowing = Array.from(compactLines).some(line =>
-                                  isElementOverflowing(line as HTMLElement)
-                                );
-                                shouldShowTooltip = hasData || isOverflowing;
-                              } else {
-                                // Regular field: check visual overflow only
-                                const contentElement = target.querySelector('.field-value, .sub-fields, .address-display-container');
-                                shouldShowTooltip = contentElement && isElementOverflowing(contentElement as HTMLElement);
-                              }
-
-                              if (shouldShowTooltip) {
-                                const tooltipContent = getTooltipContent(field, fieldValue, obj);
-                                if (tooltipContent) showTooltip(e, tooltipContent);
-                              }
-                            }
-                          }}
-                          onmouseleave={() => {
-                            hoverCell = null;
-                            hideTooltip();
-                          }}
-                        >
-                          {#if obj.hasIncompleteData && !fieldValue}
-                            <span class="missing-data">—</span>
-                          {:else if field.type === 'price' && typeof fieldValue === 'object' && fieldValue !== null}
-                            {@const priceData = fieldValue as PriceData}
-                            {@const calculatedTotal = priceData.funding?.reduce((sum, f) => sum + (f.amount || 0), 0) || 0}
-                            {@const totalStr = formatPrice(calculatedTotal)}
-                            {@const fundingCount = priceData.funding?.length || 0}
-                            {@const maxLength = totalStr.length}
-                            {#if !isExpanded && fundingCount > 2}
-                              <div class="compact-view">
-                                <div class="compact-line">{fundingCount} źródeł finansowania</div>
-                                <div class="compact-line">
-                                  {priceData.funding[fundingCount - 1].source}: {formatPrice(priceData.funding[fundingCount - 1].amount)} zł
-                                </div>
-                              </div>
-                            {:else}
-                              {@const maxLength = totalStr.length}
-                              <div class="price-container">
-                                <div class="sub-fields">
-                                  {#if priceData.funding && Array.isArray(priceData.funding)}
-                                    {#each priceData.funding as fundingItem}
-                                      {@const amountStr = formatPrice(fundingItem.amount)}
-                                      {@const padding = maxLength - amountStr.length}
-                                      <div class="sub-field-row">
-                                        <span class="sub-label">{fundingItem.source}:</span>
-                                        <span class="sub-value" style="padding-left: {padding}ch;">{amountStr} zł</span>
-                                      </div>
-                                    {/each}
-                                    {#if priceData.showTotal !== false && calculatedTotal > 0}
-                                      <div class="sub-field-row total-row">
-                                        <span class="sub-label">Suma:</span>
-                                        <span class="sub-value">{totalStr} zł</span>
-                                      </div>
-                                    {/if}
-                                  {/if}
-                                </div>
-                              </div>
-                            {/if}
-                          {:else if field.type === 'multidate' && typeof fieldValue === 'object' && fieldValue !== null}
-                            {@const dateData = fieldValue}
-                            {@const dateEntries = Object.entries(dateData)}
-                            {@const dateCount = dateEntries.length}
-                            {#if !isExpanded && dateCount > 2}
-                              <div class="compact-view">
-                                <div class="compact-line">{dateCount} dat</div>
-                                <div class="compact-line">
-                                  {dateEntries[dateCount - 1][0]}: {new Date(dateEntries[dateCount - 1][1]).toLocaleDateString('pl-PL')}
-                                </div>
-                              </div>
-                            {:else}
-                              <div class="sub-fields">
-                                {#each dateEntries as [label, date]}
-                                  <div class="sub-field-row">
-                                    <span class="sub-label">{label}:</span>
-                                    <span class="sub-value">{new Date(date).toLocaleDateString('pl-PL')}</span>
-                                  </div>
-                                {/each}
-                              </div>
-                            {/if}
-                          {:else if field.type === 'address' && typeof fieldValue === 'object' && fieldValue !== null}
-                            {@const addressData = fieldValue}
-                            {@const isMissingLocation = !obj.location || obj.missingFields?.includes('location')}
-                            {@const hasAddress = extractAddressFromObject(obj) !== null}
-                            {@const isGeocoding = quickGeocodingIds.has(obj.id)}
-                            {#if !isExpanded}
-                              {@const parts = []}
-                              {#if addressData.street}
-                                {parts.push(addressData.street + (addressData.number ? ' ' + addressData.number : ''))}
-                              {/if}
-                              {#if addressData.postalCode}
-                                {parts.push(addressData.postalCode)}
-                              {/if}
-                              {#if addressData.city}
-                                {parts.push(addressData.city)}
-                              {/if}
-                              <div class="compact-view">
-                                <div class="compact-line">{parts.join(', ')}</div>
-                                {#if addressData.gmina}
-                                  <div class="compact-line">Gmina: {addressData.gmina}</div>
-                                {/if}
-                              </div>
-                            {:else}
-                              <div class="address-display-container">
-                                <div class="sub-fields">
-                                  {#if addressData.street}
-                                    <div class="sub-field-row">
-                                      <span class="sub-label">Ulica:</span>
-                                      <span class="sub-value">{addressData.street}{#if addressData.number} {addressData.number}{/if}</span>
-                                    </div>
-                                  {/if}
-                                  {#if addressData.postalCode}
-                                    <div class="sub-field-row">
-                                      <span class="sub-label">Kod:</span>
-                                      <span class="sub-value">{addressData.postalCode}</span>
-                                    </div>
-                                  {/if}
-                                  {#if addressData.city}
-                                    <div class="sub-field-row">
-                                      <span class="sub-label">Miasto:</span>
-                                      <span class="sub-value">{addressData.city}</span>
-                                    </div>
-                                  {/if}
-                                  {#if addressData.gmina}
-                                    <div class="sub-field-row">
-                                      <span class="sub-label">Gmina:</span>
-                                      <span class="sub-value">{addressData.gmina}</span>
-                                    </div>
-                                  {/if}
-                                </div>
-                                <div class="address-actions">
-                                  {#if isMissingLocation && hasAddress && !isGeocoding}
-                                    <button
-                                      class="quick-geocode-address-btn"
-                                      title="Automatyczne geokodowanie z adresu"
-                                      onclick={(e) => {
-                                        e.stopPropagation();
-                                        quickGeocodePin(obj.id);
-                                      }}
-                                    >
-                                      📍 Geokoduj
-                                    </button>
-                                  {/if}
-                                  {#if isGeocoding}
-                                    <span class="geocoding-status">⏳ Geokodowanie...</span>
-                                  {/if}
-                                  {#if !isMissingLocation}
-                                    <button
-                                      class="sync-address-btn"
-                                      onclick={(e) => {
-                                        e.stopPropagation();
-                                        syncAddressWithLocation(obj.id);
-                                      }}
-                                      title="Synchronizuj adres z lokalizacją"
-                                    >
-                                      {@html SyncIcon()}
-                                    </button>
-                                  {/if}
-                                </div>
-                              </div>
-                            {/if}
-                          {:else if field.type === 'links' && Array.isArray(fieldValue) && fieldValue.length > 0}
-                            {@const linkCount = fieldValue.length}
-                            {#if !isExpanded && linkCount > 2}
-                              <div class="compact-view">
-                                <div class="compact-line">{linkCount} linków</div>
-                                <div class="compact-line">
-                                  <a href={fieldValue[linkCount - 1].url} target="_blank" rel="noopener noreferrer" class="sub-value">
-                                    {fieldValue[linkCount - 1].text || fieldValue[linkCount - 1].url}
-                                  </a>
-                                </div>
-                              </div>
-                            {:else}
-                              <div class="sub-fields">
-                                {#each fieldValue as link}
-                                  <div class="sub-field-row">
-                                    <a href={link.url} target="_blank" rel="noopener noreferrer" class="sub-value">
-                                      {link.text || link.url}
-                                    </a>
-                                  </div>
-                                {/each}
-                              </div>
-                            {/if}
-                          {:else if field.type === 'tags'}
-                            {#if fieldValue && typeof fieldValue === 'object' && fieldValue !== null && 'majorTag' in fieldValue}
-                              {@const tagData = fieldValue as CategoryFieldData}
-                              {@const majorTag = data.template.tags?.find(t => t.id === tagData.majorTag)}
-                              {#if majorTag}
-                                <span class="tag-display" style="background-color: {majorTag.color}">
-                                  {majorTag.displayName || majorTag.name}
-                                </span>
-                              {/if}
-                            {:else}
-                              <span class="missing-data">—</span>
-                            {/if}
-                          {:else}
-                            {@const formattedValue = formatFieldValue(field, fieldValue)}
-                            <span class="field-value">
-                              {formattedValue}
-                            </span>
-                          {/if}
-                        </div>
-                      {/if}
-                    </td>
-                  {/each}
-                </tr>
-              {/each}
-
-              <!-- Placeholder rows to fill screen -->
-              {#each Array(placeholderRowCount).fill(null) as _, index}
-                <tr class="placeholder-row" class:even={index % 2 === 0}>
-                  <td class="checkbox-column">
-                    <div class="cell-content placeholder-cell"></div>
-                  </td>
-                  <td class="location-column">
-                    <div class="cell-content placeholder-cell"></div>
-                  </td>
-                  {#each data.template.fields.filter(f => f.visible && f.type !== 'location' && f.fieldType !== 'location') as field}
-                    <td style="width: {columnWidths[field.key] || 200}px;" class:sorted-column={sortField === field.key}>
-                      <div class="cell-content placeholder-cell"></div>
-                    </td>
-                  {/each}
-                </tr>
-              {/each}
-            {/if}
-          </tbody>
-        </table>
-      </div>
-    </div>
+    <DataTable
+      template={data.template}
+      objects={filteredObjects}
+      {sortField}
+      {sortDirection}
+      {columnWidths}
+      {selectedRows}
+      {expandedCells}
+      {editingCell}
+      bind:editingValue
+      {hoverCell}
+      {placeholderRowCount}
+      isResizing={getIsResizing()}
+      {justFinishedResizing}
+      {getFieldDisplayName}
+      {getFieldType}
+      {formatTableCellValue}
+      {formatPrice}
+      {hasHiddenData}
+      {isElementOverflowing}
+      {getTooltipContent}
+      {extractAddressFromObject}
+      {isGeocoding}
+      {SyncIcon}
+      startColumnResize={startColumnResize}
+      onSort={handleSort}
+      onToggleSelectAll={toggleSelectAll}
+      onRowSelection={handleRowSelection}
+      onEditStart={startEditingCell}
+      onEditSave={saveEdit}
+      onEditCancel={cancelEdit}
+      onToggleExpansion={toggleCellExpansion}
+      onShowTooltip={showTooltip}
+      onHideTooltip={hideTooltip}
+      onQuickGeocode={quickGeocodePin}
+      onSyncAddress={syncAddressWithLocation}
+      onKeydown={handleKeydown}
+      onHeaderScroll={syncHeaderScroll}
+    />
 
     <!-- Bulk Edit Modal -->
-    {#if showBulkEditModal}
-      <div class="bulk-modal-overlay" onclick={closeBulkEditModal}>
-        <div class="bulk-modal" onclick={(e) => e.stopPropagation()}>
-          <h2>Edycja zaznaczonych wierszy</h2>
-          <p class="bulk-modal-info">Edytujesz {selectedRows.size} wierszy</p>
-
-          <div class="bulk-modal-form">
-            <div class="form-group">
-              <label for="bulkEditField">Pole do edycji:</label>
-              <select id="bulkEditField" bind:value={bulkEditField}>
-                {#each data.template.fields.filter(f => f.visible && f.type !== 'location' && f.fieldType !== 'location') as field}
-                  <option value={field.key}>{getFieldDisplayName(field)}</option>
-                {/each}
-              </select>
-            </div>
-
-            <div class="form-group">
-              <label for="bulkEditValue">Nowa wartość:</label>
-              {#if data.template.fields.find(f => f.key === bulkEditField)?.type === 'checkbox'}
-                <select id="bulkEditValue" bind:value={bulkEditValue}>
-                  <option value={true}>Tak</option>
-                  <option value={false}>Nie</option>
-                </select>
-              {:else if data.template.fields.find(f => f.key === bulkEditField)?.type === 'number' || data.template.fields.find(f => f.key === bulkEditField)?.type === 'currency'}
-                <input
-                  id="bulkEditValue"
-                  type="number"
-                  bind:value={bulkEditValue}
-                  placeholder="Wprowadź wartość"
-                />
-              {:else if data.template.fields.find(f => f.key === bulkEditField)?.type === 'date'}
-                <input
-                  id="bulkEditValue"
-                  type="date"
-                  bind:value={bulkEditValue}
-                />
-              {:else}
-                <input
-                  id="bulkEditValue"
-                  type="text"
-                  bind:value={bulkEditValue}
-                  placeholder="Wprowadź wartość"
-                />
-              {/if}
-            </div>
-          </div>
-
-          <div class="bulk-modal-actions">
-            <button class="btn btn-primary" onclick={applyBulkEdit}>
-              Zastosuj
-            </button>
-            <button class="btn btn-secondary" onclick={closeBulkEditModal}>
-              Anuluj
-            </button>
-          </div>
-        </div>
-      </div>
-    {/if}
+    <BulkEditModal
+      open={showBulkEditModal}
+      template={data.template}
+      selectedCount={selectedRows.size}
+      {bulkEditField}
+      {bulkEditValue}
+      onclose={closeBulkEditModal}
+      onapply={applyBulkEdit}
+      onfieldupdated={(field) => bulkEditField = field}
+      onvalueupdated={(value) => bulkEditValue = value}
+      {getFieldDisplayName}
+    />
 
     <!-- Header Selection Modal -->
-    {#if showHeaderSelectionModal}
-      <div class="mapping-modal-overlay" onclick={closeHeaderSelectionModal}>
-        <div class="mapping-modal" onclick={(e) => e.stopPropagation()}>
-          <h2>Wybierz wiersz z nagłówkami kolumn</h2>
-          <p class="mapping-modal-info">
-            Wskaż, który wiersz w pliku Excel zawiera nazwy kolumn.
-            Poniżej znajduje się podgląd pierwszych {Math.min(5, excelRawData.length)} wierszy.
-          </p>
-
-          <div class="header-selection-preview">
-            <table class="header-preview-table">
-              <tbody>
-                {#each excelRawData.slice(0, 5) as row, rowIndex}
-                  <tr class:selected={selectedHeaderRow === rowIndex}>
-                    <td class="row-selector">
-                      <input
-                        type="radio"
-                        name="headerRow"
-                        value={rowIndex}
-                        checked={selectedHeaderRow === rowIndex}
-                        onchange={() => selectedHeaderRow = rowIndex}
-                      />
-                      <span class="row-number">Wiersz {rowIndex + 1}</span>
-                    </td>
-                    {#each row.slice(0, 10) as cell, cellIndex}
-                      <td class="preview-cell" title={String(cell || '')}>
-                        {String(cell || '—').substring(0, 50)}
-                      </td>
-                    {/each}
-                    {#if row.length > 10}
-                      <td class="preview-cell more-cols">
-                        ... (+{row.length - 10} kolumn)
-                      </td>
-                    {/if}
-                  </tr>
-                {/each}
-              </tbody>
-            </table>
-          </div>
-
-          <div class="mapping-modal-actions">
-            <button class="btn btn-primary" onclick={confirmHeaderSelection}>
-              Dalej
-            </button>
-            <button class="btn btn-secondary" onclick={closeHeaderSelectionModal}>
-              Anuluj
-            </button>
-          </div>
-        </div>
-      </div>
-    {/if}
+    <HeaderSelectionModal
+      open={showHeaderSelectionModal}
+      {excelRawData}
+      {selectedHeaderRow}
+      onclose={closeHeaderSelectionModal}
+      onconfirm={confirmHeaderSelection}
+      onheaderrowchange={(rowIndex) => selectedHeaderRow = rowIndex}
+    />
 
     <!-- Column Mapping Modal for Excel Import -->
-    {#if showMappingModal}
-      <div class="mapping-modal-overlay" onclick={closeMappingModal}>
-        <div class="mapping-modal" onclick={(e) => e.stopPropagation()}>
-          <h2>Mapowanie kolumn Excel</h2>
-          <p class="mapping-modal-info">
-            Przypisz kolumny z pliku Excel do pól w schemacie.
-            Znaleziono {excelAllData.length} wierszy do importu.
-          </p>
-
-          {#if importInProgress}
-            <div class="import-progress">
-              <div class="spinner"></div>
-              <p>Importowanie danych...</p>
-            </div>
-          {:else}
-            <!-- Column mapping table -->
-            <div class="mapping-table-container">
-              <table class="mapping-table">
-                <thead>
-                  <tr>
-                    <th>Kolumna Excel</th>
-                    <th>Przykładowe dane</th>
-                    <th>Pole w schemacie</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {#each excelHeaders as header}
-                    <tr>
-                      <td class="mapping-excel-col">{header}</td>
-                      <td class="mapping-sample">
-                        {#if excelSampleData.length > 0}
-                          <span class="sample-value">{excelSampleData[0]?.[header] || '—'}</span>
-                          {#if excelSampleData.length > 1}
-                            <span class="sample-value">{excelSampleData[1]?.[header] || '—'}</span>
-                          {/if}
-                        {:else}
-                          <span class="sample-value">—</span>
-                        {/if}
-                      </td>
-                      <td class="mapping-field-select">
-                        <select
-                          value={columnMapping[header] || ''}
-                          onchange={(e) => {
-                            const target = e.target as HTMLSelectElement;
-                            if (target.value === '_create_new_field') {
-                              openNewFieldForm(header);
-                              target.value = ''; // Reset dropdown
-                            } else {
-                              columnMapping = { ...columnMapping, [header]: target.value };
-                            }
-                          }}
-                        >
-                          <option value="">— Pomiń —</option>
-                          <option value="_skip">— Pomiń —</option>
-                          <optgroup label="Współrzędne">
-                            <option value="_latitude">Szerokość (latitude)</option>
-                            <option value="_longitude">Długość (longitude)</option>
-                          </optgroup>
-                          <optgroup label="Pola schematu">
-                            {#each data.template?.fields || [] as field}
-                              {@const fieldType = field.type || field.fieldType || 'richtext'}
-                              {@const typeLabel =
-                                fieldType === 'richtext' ? ' [tekst]' :
-                                fieldType === 'files' ? ' [pliki]' :
-                                fieldType === 'gallery' ? ' [galeria]' :
-                                fieldType === 'multidate' ? ' [daty]' :
-                                fieldType === 'address' ? ' [adres]' :
-                                fieldType === 'links' ? ' [linki]' :
-                                fieldType === 'price' ? ' [cena]' :
-                                fieldType === 'category' ? ' [kategoria]' :
-                                fieldType === 'tags' ? ' [tagi]' :
-                                // Legacy types
-                                fieldType === 'number' || fieldType === 'currency' || fieldType === 'percentage' ? ' [liczba]' :
-                                fieldType === 'checkbox' ? ' [tak/nie]' :
-                                fieldType === 'date' ? ' [data]' : ''
-                              }
-                              <option value={field.key}>{getFieldDisplayName(field)}{typeLabel}</option>
-                            {/each}
-                          </optgroup>
-                          <option value="_create_new_field" style="color: #0ea5e9; font-weight: 500;">+ Utwórz nowe pole...</option>
-                        </select>
-                      </td>
-                    </tr>
-                  {/each}
-                </tbody>
-              </table>
-            </div>
-
-            <!-- Import info -->
-            <div class="mapping-info">
-              <p>
-                <strong>Uwaga:</strong> Rekordy bez współrzędnych zostaną zaimportowane jako niekompletne
-                i nie będą widoczne na mapie (tylko w widoku listy).
-              </p>
-              <p style="margin-top: 8px;">
-                <strong>Typy danych:</strong> Dane tekstowe zostaną zaimportowane i będą mogły być
-                edytowane za pomocą odpowiednich edytorów (galeria, daty, adres, itp.).
-              </p>
-            </div>
-
-            <div class="mapping-modal-actions">
-              <button class="btn btn-primary" onclick={executeImportWithMapping} disabled={importInProgress}>
-                Importuj {excelAllData.length} rekordów
-              </button>
-              <button class="btn btn-secondary" onclick={closeMappingModal} disabled={importInProgress}>
-                Anuluj
-              </button>
-            </div>
-          {/if}
-        </div>
-      </div>
-    {/if}
+    <ColumnMappingModal
+      open={showMappingModal}
+      template={data.template}
+      {excelHeaders}
+      {excelSampleData}
+      {excelAllData}
+      {columnMapping}
+      {importInProgress}
+      onclose={closeMappingModal}
+      onimport={executeImportWithMapping}
+      oncolumnmappingchange={(mapping) => columnMapping = mapping}
+      onnewfield={openNewFieldForm}
+      {getFieldDisplayName}
+    />
 
     <!-- Floating Hover Tooltip -->
     {#if hoverTooltip}
@@ -2394,6 +1310,8 @@
 {/if}
 
 <style>
+  @import '$lib/styles/modal.css';
+
   .login-prompt, .no-template {
     text-align: center;
     padding: var(--space-12) var(--space-4);
@@ -2417,13 +1335,6 @@
     padding: var(--space-6);
     width: 100%;
     margin: 0;
-  }
-
-  .list-actions {
-    display: flex;
-    gap: var(--space-2);
-    margin-bottom: var(--space-4);
-    padding: var(--space-3);
   }
 
   .btn {
@@ -3014,132 +1925,6 @@
     transform: scale(1.2);
   }
 
-  /* Bulk toolbar styles */
-  .bulk-toolbar {
-    display: flex;
-    align-items: center;
-    gap: var(--space-3);
-    padding: var(--space-3);
-    background: #f0f9ff;
-    border: 1px solid #0ea5e9;
-    border-radius: var(--radius-base);
-    margin-bottom: var(--space-4);
-  }
-
-  .bulk-count {
-    font-family: var(--font-ui);
-    font-size: var(--text-sm);
-    font-weight: var(--font-weight-medium);
-    color: #0c4a6e;
-  }
-
-  .btn-bulk {
-    background: #0ea5e9;
-    color: white;
-  }
-
-  .btn-bulk:hover {
-    background: #0284c7;
-  }
-
-  .btn-bulk-delete {
-    background: #dc2626;
-    color: white;
-  }
-
-  .btn-bulk-delete:hover {
-    background: #b91c1c;
-  }
-
-  .btn-bulk-clear {
-    background: #6b7280;
-    color: white;
-  }
-
-  .btn-bulk-clear:hover {
-    background: #4b5563;
-  }
-
-  /* Bulk edit modal styles */
-  .bulk-modal-overlay {
-    position: fixed;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background: rgba(0, 0, 0, 0.5);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    z-index: 1000;
-  }
-
-  .bulk-modal {
-    background: white;
-    border-radius: var(--radius-lg);
-    padding: var(--space-6);
-    max-width: 500px;
-    width: 90%;
-    box-shadow: var(--shadow-lg);
-  }
-
-  .bulk-modal h2 {
-    margin: 0 0 var(--space-2) 0;
-    font-family: var(--font-ui);
-    font-size: var(--text-xl);
-    font-weight: var(--font-weight-bold);
-    color: var(--color-text-primary);
-  }
-
-  .bulk-modal-info {
-    margin: 0 0 var(--space-4) 0;
-    font-family: var(--font-ui);
-    font-size: var(--text-sm);
-    color: var(--color-text-secondary);
-  }
-
-  .bulk-modal-form {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-4);
-    margin-bottom: var(--space-6);
-  }
-
-  .form-group {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-2);
-  }
-
-  .form-group label {
-    font-family: var(--font-ui);
-    font-size: var(--text-sm);
-    font-weight: var(--font-weight-medium);
-    color: var(--color-text-primary);
-  }
-
-  .form-group select,
-  .form-group input {
-    padding: var(--space-2) var(--space-3);
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-base);
-    font-family: var(--font-ui);
-    font-size: var(--text-sm);
-    background: white;
-  }
-
-  .form-group select:focus,
-  .form-group input:focus {
-    outline: none;
-    border-color: #0ea5e9;
-  }
-
-  .bulk-modal-actions {
-    display: flex;
-    gap: var(--space-2);
-    justify-content: flex-end;
-  }
-
   .btn-secondary {
     background: #6b7280;
     color: white;
@@ -3232,216 +2017,10 @@
   }
 
   /* Column Mapping Modal styles */
-  .mapping-modal-overlay {
-    position: fixed;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background: rgba(0, 0, 0, 0.5);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    z-index: 1000;
-  }
+  /* Modal Styles - Base styles from modal.css, component-specific overrides below */
+  /* Column Mapping Modal styles moved to ColumnMappingModal.svelte */
 
-  .mapping-modal {
-    background: white;
-    border-radius: var(--radius-lg);
-    padding: var(--space-6);
-    max-width: 800px;
-    width: 95%;
-    max-height: 90vh;
-    overflow-y: auto;
-    box-shadow: var(--shadow-lg);
-  }
-
-  .mapping-modal h2 {
-    margin: 0 0 var(--space-2) 0;
-    font-family: var(--font-ui);
-    font-size: var(--text-xl);
-    font-weight: var(--font-weight-bold);
-    color: var(--color-text-primary);
-  }
-
-  .mapping-modal-info {
-    margin: 0 0 var(--space-4) 0;
-    font-family: var(--font-ui);
-    font-size: var(--text-sm);
-    color: var(--color-text-secondary);
-  }
-
-  .mapping-table-container {
-    max-height: 400px;
-    overflow-y: auto;
-    margin-bottom: var(--space-4);
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-base);
-  }
-
-  .mapping-table {
-    width: 100%;
-    border-collapse: collapse;
-  }
-
-  .mapping-table th {
-    position: sticky;
-    top: 0;
-    background: var(--color-surface);
-    padding: var(--space-3);
-    text-align: left;
-    font-family: var(--font-ui);
-    font-size: var(--text-sm);
-    font-weight: var(--font-weight-semibold);
-    color: var(--color-text-primary);
-    border-bottom: 2px solid var(--color-border);
-  }
-
-  .mapping-table td {
-    padding: var(--space-2) var(--space-3);
-    font-family: var(--font-ui);
-    font-size: var(--text-sm);
-    border-bottom: 1px solid var(--color-border);
-    vertical-align: middle;
-  }
-
-  .mapping-table tbody tr:nth-child(even) {
-    background: #f8f9fa;
-  }
-
-  .mapping-table tbody tr:hover {
-    background: #e9ecef;
-  }
-
-  .mapping-excel-col {
-    font-weight: var(--font-weight-medium);
-    color: var(--color-text-primary);
-    white-space: nowrap;
-    max-width: 200px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-
-  .mapping-sample {
-    max-width: 200px;
-    overflow: hidden;
-  }
-
-  .sample-value {
-    display: block;
-    font-size: var(--text-xs);
-    color: var(--color-text-muted);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    padding: 2px 0;
-  }
-
-  .mapping-field-select select {
-    width: 100%;
-    padding: var(--space-2);
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-base);
-    font-family: var(--font-ui);
-    font-size: var(--text-sm);
-    background: white;
-    cursor: pointer;
-  }
-
-  .mapping-field-select select:focus {
-    outline: none;
-    border-color: #0ea5e9;
-  }
-
-  .mapping-info {
-    background: #fef3c7;
-    border: 1px solid #fcd34d;
-    border-radius: var(--radius-base);
-    padding: var(--space-3);
-    margin-bottom: var(--space-4);
-  }
-
-  .mapping-info p {
-    margin: 0;
-    font-family: var(--font-ui);
-    font-size: var(--text-sm);
-    color: #92400e;
-  }
-
-  .mapping-modal-actions {
-    display: flex;
-    gap: var(--space-2);
-    justify-content: flex-end;
-  }
-
-  /* Header Selection Modal styles */
-  .header-selection-preview {
-    max-height: 400px;
-    overflow: auto;
-    margin-bottom: var(--space-4);
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-base);
-  }
-
-  .header-preview-table {
-    width: 100%;
-    border-collapse: collapse;
-    font-size: var(--text-sm);
-  }
-
-  .header-preview-table tr {
-    border-bottom: 1px solid var(--color-border);
-    transition: background-color 0.2s;
-  }
-
-  .header-preview-table tr:hover {
-    background-color: #f9fafb;
-  }
-
-  .header-preview-table tr.selected {
-    background-color: #e0f2fe;
-  }
-
-  .header-preview-table td {
-    padding: var(--space-2);
-    border-right: 1px solid #e5e7eb;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    max-width: 150px;
-  }
-
-  .header-preview-table td:last-child {
-    border-right: none;
-  }
-
-  .row-selector {
-    position: sticky;
-    left: 0;
-    background-color: inherit;
-    font-weight: 500;
-    display: flex;
-    align-items: center;
-    gap: var(--space-2);
-    min-width: 100px;
-    z-index: 1;
-  }
-
-  .row-number {
-    font-family: var(--font-ui);
-    color: var(--color-text-secondary);
-  }
-
-  .preview-cell {
-    font-family: var(--font-mono);
-    color: var(--color-text);
-  }
-
-  .more-cols {
-    font-style: italic;
-    color: var(--color-text-muted);
-    font-family: var(--font-ui);
-  }
+  /* Header Selection Modal styles moved to HeaderSelectionModal.svelte */
 
   .import-progress {
     display: flex;
