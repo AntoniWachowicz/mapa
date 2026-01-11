@@ -31,9 +31,10 @@ export type FieldType =
   | 'multidate'  // Multiple labeled dates
   | 'address'    // Structured address with geocoding
   | 'links'      // Hyperlinks with labels
-  | 'tags'       // Tag selection (existing system)
+  | 'tags'       // Tag selection (legacy - use 'selection' for new fields)
   | 'price'      // Funding breakdown with percentages
-  | 'category';  // Category selection (existing system)
+  | 'category'   // Category selection (legacy - use 'selection' for new fields)
+  | 'selection'; // Unified selection list (single, multi, or hierarchical)
 
 // ============================================================================
 // Field Configuration Interfaces
@@ -88,6 +89,26 @@ export interface PriceConfig {
   showTotal: boolean;
 }
 
+// Selection Field Configuration (unified replacement for category/tags)
+export type SelectionMode = 'single' | 'multi' | 'hierarchical';
+
+export interface SelectionOption {
+  id: string;           // Unique identifier within this field
+  value: string;        // Display value
+  color?: string;       // Optional color for badges
+  order: number;        // Sort order
+  archived?: boolean;   // Soft delete (hidden but data preserved)
+}
+
+export interface SelectionConfig {
+  mode: SelectionMode;
+  options: SelectionOption[];
+  allowCustom: boolean;          // Allow users to add one-off values per pin
+  maxSelections?: number;        // For 'multi' mode - max allowed selections
+  maxSecondary?: number;         // For 'hierarchical' mode - max secondary selections
+  isCategory?: boolean;          // Use as category field for map display (only one per schema)
+}
+
 export type FieldConfig =
   | RichTextConfig
   | FilesConfig
@@ -96,7 +117,8 @@ export type FieldConfig =
   | AddressConfig
   | LinksConfig
   | TagConfig
-  | PriceConfig;
+  | PriceConfig
+  | SelectionConfig;
 
 // ============================================================================
 // Field Data Structures (what gets stored in pins)
@@ -151,6 +173,15 @@ export interface CategoryFieldData {
 export interface TagsFieldData {
   selectedTags: string[];
   selectedTag?: string;
+}
+
+// Selection field data (stored in pins)
+export interface SelectionFieldData {
+  selected?: string | null;      // For 'single' mode - option ID or custom value
+  selections?: string[];         // For 'multi' mode - array of option IDs or custom values
+  primary?: string | null;       // For 'hierarchical' mode - primary selection
+  secondary?: string[];          // For 'hierarchical' mode - secondary selections
+  customEntries?: string[];      // Per-pin custom values (not in field options)
 }
 
 export interface FundingSource {
@@ -235,7 +266,8 @@ export type FieldValue =
   | LinkData[]            // links
   | TagsFieldData         // tags
   | CategoryFieldData     // category
-  | PriceData;            // price
+  | PriceData             // price
+  | SelectionFieldData;   // selection
 
 export interface ProjectData {
   [fieldName: string]: FieldValue;

@@ -1,13 +1,11 @@
 <script lang="ts">
-  import type { Field, Template, FieldType, RichTextConfig, FilesConfig, GalleryConfig, MultiDateConfig, AddressConfig, LinksConfig, PriceConfig } from './types.js';
+  import type { Field, Template, FieldType, AddressConfig, MultiDateConfig, PriceConfig, SelectionConfig, SelectionOption } from './types.js';
   import TagManager from './TagManager.svelte';
+  import SelectionOptionsEditor from './SchemaBuilder/SelectionOptionsEditor.svelte';
   import Icon from './Icon.svelte';
   import * as dragDrop from './features/dragDrop/index.js';
-
-  // Custom icon - triangle with exclamation (not in static icons)
-  function RequiredIcon() {
-    return `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M12 2L22 20H2L12 2Z" fill="currentColor"/><text x="12" y="16" text-anchor="middle" fill="white" font-size="10" font-weight="bold">!</text></svg>`;
-  }
+  import { getFieldTypeDisplayName, getFieldDisplayType, hasEditableConfig, isFieldMandatory } from './SchemaBuilder/fieldTypeHelpers.js';
+  import * as fieldOps from './SchemaBuilder/fieldOperations.js';
 
   interface Props {
     template: Template;
@@ -16,319 +14,114 @@
 
   const { template, onUpdate }: Props = $props();
 
-  let label = $state('');
-  let type = $state<Field['type']>('text');
-  let required = $state(false);
-  let maxMinorTags = $state(3); // For category field type
-  let allowMultiple = $state(true); // For tags field type (single vs multiple choice)
-  let selectOptions = $state(''); // For select field type (comma-separated)
-  let addressSync = $state(false); // For address field type (auto-sync with coordinates)
   let editingFieldIndex = $state<number | null>(null);
-  let editingConfigIndexes = $state<Set<number>>(new Set());
   let addingNewField = $state(false);
   let newFieldLabel = $state('');
   let newFieldType = $state<FieldType>('richtext');
   let newFieldRequired = $state(false);
+  let newFieldConfig = $state<Record<string, unknown>>({});
   let deleteConfirmIndex = $state<number | null>(null);
 
-  // New field type configurations
-  let richTextMaxLength = $state(5000);
-  let richTextFormatting = $state(['bold', 'italic', 'underline', 'lists', 'links']);
-
-  let filesAllowedTypes = $state(['pdf', 'docx', 'xlsx']);
-  let filesMaxSize = $state(10);
-  let filesMaxCount = $state(5);
-
-  let galleryStyle = $state<'carousel' | 'grid' | 'masonry'>('carousel');
-  let galleryAllowImages = $state(true);
-  let galleryAllowVideos = $state(true);
-  let galleryMaxItems = $state(10);
-
-  let multiDateFields = $state([
-    { key: 'submitted', label: 'Data złożenia', required: false }
-  ]);
-  let multiDateLayout = $state<'horizontal' | 'vertical'>('horizontal');
-
-  let addressDisplayFields = $state(['street', 'number', 'postalCode', 'city']);
-  let addressRequiredFields = $state(['city']);
-  let addressEnableGeocoding = $state(true);
-
-  let linksMaxCount = $state(10);
-
-  let priceCurrency = $state('PLN');
-  let priceFundingSources = $state(['UE', 'Wnioskodawca']);
-  let priceShowPercentages = $state(true);
-  let priceShowTotal = $state(true);
-  
-  // Check if category field already exists (only one allowed)
-  const hasCategoryField = $derived(
-    template?.fields?.some(f => f.fieldType === 'category' || f.type === 'category') ?? false
-  );
-  const canAddCategoryField = $derived(!hasCategoryField && type === 'category');
-  
-  function addField(): void {
-    if (label.trim() && template?.fields) {
-      const key = label.toLowerCase().replace(/[^a-z0-9]/g, '_');
-      // Check if trying to add second category field
-      if (type === 'category' && template.fields.some(f => f.type === 'category')) {
-        return; // Prevent adding multiple category fields
-      }
-
-      const newField: Field = {
-        key,
-        label,
-        displayLabel: label,
-        type,
-        required,
-        visible: true,
-        protected: false,
-        adminVisible: true,
-        ...(type === 'category' && { tagConfig: { maxMinorTags } }),
-        ...(type === 'tags' && { tagConfig: { maxMinorTags: 0, allowMultiple } }),
-        ...(type === 'select' && {
-          selectConfig: {
-            options: selectOptions.split(',').map(opt => opt.trim()).filter(opt => opt.length > 0)
-          }
-        }),
-        ...(type === 'address' && { addressSync })
-      };
-      const updatedTemplate: Template = {
-        ...template,
-        fields: [...template.fields, newField]
-      };
-      onUpdate(updatedTemplate);
-
-      label = '';
-      type = 'text';
-      required = false;
-      maxMinorTags = 3;
-      allowMultiple = true;
-      selectOptions = '';
-      addressSync = false;
-    }
+  // Migration state
+  interface MigrationPreview {
+    fieldKey: string;
+    fieldLabel: string;
+    fieldType: 'category' | 'tags';
+    targetMode: 'hierarchical' | 'multi';
+    tagCount: number;
+    pinCount: number;
+    willRemoveTags: boolean;
   }
+
+  let showMigrationModal = $state(false);
+  let migrationPreview = $state<MigrationPreview | null>(null);
+  let isMigrating = $state(false);
+  let migrationError = $state<string | null>(null);
+
+  // Field count for header
+  const fieldCount = $derived(template?.fields?.filter(f => f.adminVisible).length ?? 0);
+
+  // Check if category field already exists (only one allowed)
+  // Includes legacy category fields and selection fields with isCategory flag
+  const hasCategoryField = $derived(
+    template?.fields?.some(f =>
+      f.fieldType === 'category' ||
+      f.type === 'category' ||
+      (f.fieldType === 'selection' && (f.config as SelectionConfig | undefined)?.isCategory)
+    ) ?? false
+  );
+
+  // Get the key of the field currently marked as category (for disabling checkbox on other fields)
+  const currentCategoryFieldKey = $derived(
+    template?.fields?.find(f =>
+      f.fieldType === 'category' ||
+      f.type === 'category' ||
+      (f.fieldType === 'selection' && (f.config as SelectionConfig | undefined)?.isCategory)
+    )?.key ?? null
+  );
+
+  // Address field labels in Polish
+  const addressFieldLabels: Record<string, string> = {
+    gmina: 'Gmina',
+    street: 'Ulica',
+    number: 'Numer',
+    postalCode: 'Kod pocztowy',
+    city: 'Miasto'
+  };
 
   function startAddingField(): void {
     addingNewField = true;
     newFieldLabel = '';
-    newFieldType = 'text';
+    newFieldType = 'richtext';
     newFieldRequired = false;
+    newFieldConfig = {};
   }
 
   function saveNewField(): void {
-    if (!newFieldLabel.trim() || !template?.fields) return;
+    const updatedTemplate = fieldOps.saveNewField(template, {
+      newFieldLabel,
+      newFieldType,
+      newFieldRequired,
+      config: newFieldConfig
+    });
 
-    const fieldId = `field_${Date.now()}`;
-    const fieldName = newFieldLabel.toLowerCase().replace(/[^a-z0-9]/g, '_');
-
-    // Check if trying to add second category field
-    if (newFieldType === 'category' && template.fields.some(f => f.fieldType === 'category' || f.type === 'category')) {
-      return;
+    if (updatedTemplate) {
+      onUpdate(updatedTemplate);
+      addingNewField = false;
+      newFieldConfig = {};
     }
-
-    let config: any = undefined;
-
-    switch (newFieldType) {
-      case 'richtext':
-        config = {
-          maxLength: richTextMaxLength,
-          allowedFormatting: richTextFormatting
-        } as RichTextConfig;
-        break;
-
-      case 'files':
-        config = {
-          allowedTypes: filesAllowedTypes,
-          maxFileSize: filesMaxSize * 1024 * 1024, // Convert MB to bytes
-          maxFiles: filesMaxCount
-        } as FilesConfig;
-        break;
-
-      case 'gallery':
-        config = {
-          displayStyle: galleryStyle,
-          allowImages: galleryAllowImages,
-          allowVideos: galleryAllowVideos,
-          maxItems: galleryMaxItems
-        } as GalleryConfig;
-        break;
-
-      case 'multidate':
-        config = {
-          dateFields: multiDateFields,
-          layout: multiDateLayout
-        } as MultiDateConfig;
-        break;
-
-      case 'address':
-        config = {
-          displayFields: addressDisplayFields,
-          requiredFields: addressRequiredFields,
-          enableGeocoding: addressEnableGeocoding
-        } as AddressConfig;
-        break;
-
-      case 'links':
-        config = {
-          maxLinks: linksMaxCount
-        } as LinksConfig;
-        break;
-
-      case 'price':
-        config = {
-          currency: priceCurrency,
-          defaultFundingSources: priceFundingSources,
-          showPercentages: priceShowPercentages,
-          showTotal: priceShowTotal
-        } as PriceConfig;
-        break;
-
-      case 'tags':
-      case 'category':
-        // Tags and category use existing tag system
-        break;
-    }
-
-    const newField: Field = {
-      id: fieldId,
-      fieldType: newFieldType,
-      fieldName: fieldName,
-      label: newFieldLabel,
-      required: newFieldRequired,
-      order: template.fields.length,
-      config: config,
-      // Legacy compatibility
-      key: fieldName,
-      displayLabel: newFieldLabel,
-      type: newFieldType as any,
-      visible: true,
-      protected: false,
-      adminVisible: true
-    };
-
-    const updatedTemplate: Template = {
-      ...template,
-      version: 2,
-      fields: [...template.fields, newField]
-    };
-
-    onUpdate(updatedTemplate);
-    addingNewField = false;
-
-    // Reset config values to defaults
-    resetConfigDefaults();
-  }
-
-  function resetConfigDefaults(): void {
-    richTextMaxLength = 5000;
-    richTextFormatting = ['bold', 'italic', 'underline', 'lists', 'links'];
-    filesAllowedTypes = ['pdf', 'docx', 'xlsx'];
-    filesMaxSize = 10;
-    filesMaxCount = 5;
-    galleryStyle = 'carousel';
-    galleryAllowImages = true;
-    galleryAllowVideos = true;
-    galleryMaxItems = 10;
-    multiDateFields = [{ key: 'submitted', label: 'Data złożenia', required: false }];
-    multiDateLayout = 'horizontal';
-    addressDisplayFields = ['street', 'number', 'postalCode', 'city'];
-    addressRequiredFields = ['city'];
-    addressEnableGeocoding = true;
-    linksMaxCount = 10;
-    priceCurrency = 'PLN';
-    priceFundingSources = ['UE', 'Wnioskodawca'];
-    priceShowPercentages = true;
-    priceShowTotal = true;
-  }
-
-  // Helper functions for dynamic arrays
-  function addDateField(): void {
-    multiDateFields = [...multiDateFields, { key: '', label: '', required: false }];
-  }
-
-  function removeDateField(index: number): void {
-    multiDateFields = multiDateFields.filter((_, i) => i !== index);
-  }
-
-  function addFundingSource(): void {
-    priceFundingSources = [...priceFundingSources, ''];
-  }
-
-  function removeFundingSource(index: number): void {
-    priceFundingSources = priceFundingSources.filter((_, i) => i !== index);
   }
 
   function cancelNewField(): void {
     addingNewField = false;
+    newFieldConfig = {};
   }
-  
+
   function removeField(index: number): void {
-    const field = template.fields[index];
+    const updatedTemplate = fieldOps.removeField(template, index);
 
-    // Don't allow removal of protected fields
-    if (field.protected || field.key === 'title') {
-      return;
+    if (updatedTemplate) {
+      onUpdate(updatedTemplate);
+      deleteConfirmIndex = null;
     }
-
-    const updatedTemplate: Template = {
-      ...template,
-      fields: template.fields.filter((_, i) => i !== index)
-    };
-    onUpdate(updatedTemplate);
-    deleteConfirmIndex = null;
-    editingConfigIndexes.delete(index);
-    editingConfigIndexes = new Set(editingConfigIndexes);
   }
 
   function startDeleteField(index: number): void {
     deleteConfirmIndex = index;
   }
 
-  function cancelDeleteField(): void {
-    deleteConfirmIndex = null;
-  }
-
   function toggleRequired(index: number): void {
-    const field = template.fields[index];
-
-    // Don't allow changing required state of protected fields
-    if (field.protected || field.key === 'title') {
-      return;
+    const updatedTemplate = fieldOps.toggleRequired(template, index);
+    if (updatedTemplate) {
+      onUpdate(updatedTemplate);
     }
-
-    const updatedTemplate: Template = {
-      ...template,
-      fields: template.fields.map((f, i) =>
-        i === index ? { ...f, required: !f.required } : f
-      )
-    };
-    onUpdate(updatedTemplate);
   }
 
-  function isFieldMandatory(field: Field): boolean {
-    return field.protected || field.key === 'title' || field.key === 'location';
-  }
-  
   function toggleVisibility(index: number): void {
-    const updatedTemplate: Template = {
-      ...template,
-      fields: template.fields.map((field, i) => 
-        i === index ? { ...field, visible: !field.visible } : field
-      )
-    };
+    const updatedTemplate = fieldOps.toggleVisibility(template, index);
     onUpdate(updatedTemplate);
   }
-  
-  function toggleAdminVisibility(index: number): void {
-    const updatedTemplate: Template = {
-      ...template,
-      fields: template.fields.map((field, i) => 
-        i === index ? { ...field, adminVisible: !field.adminVisible } : field
-      )
-    };
-    onUpdate(updatedTemplate);
-  }
-  
+
   function moveFieldUp(index: number): void {
     const currentField = template.fields[index];
     const targetField = template.fields[index - 1];
@@ -354,27 +147,6 @@
       onUpdate(updatedTemplate);
     }
   }
-  
-  function handleLabelInput(event: Event): void {
-    const target = event.target as HTMLInputElement;
-    if (target) {
-      label = target.value;
-    }
-  }
-  
-  function handleTypeChange(event: Event): void {
-    const target = event.target as HTMLSelectElement;
-    if (target) {
-      type = target.value as Field['type'];
-    }
-  }
-  
-  function handleRequiredChange(event: Event): void {
-    const target = event.target as HTMLInputElement;
-    if (target) {
-      required = target.checked;
-    }
-  }
 
   function startEditingField(index: number): void {
     editingFieldIndex = index;
@@ -382,10 +154,10 @@
 
   function saveFieldName(index: number, newDisplayLabel: string): void {
     if (!newDisplayLabel.trim()) return;
-    
+
     const updatedTemplate: Template = {
       ...template,
-      fields: template.fields.map((field, i) => 
+      fields: template.fields.map((field, i) =>
         i === index ? { ...field, displayLabel: newDisplayLabel.trim() } : field
       )
     };
@@ -397,136 +169,73 @@
     editingFieldIndex = null;
   }
 
-  function toggleEditingConfig(index: number): void {
-    if (editingConfigIndexes.has(index)) {
-      editingConfigIndexes.delete(index);
-      editingConfigIndexes = new Set(editingConfigIndexes);
-    } else {
-      const field = template.fields[index];
-      const fieldType = field.fieldType || field.type;
-
-      // Load current config values when opening
-      if (fieldType === 'richtext' && field.config) {
-        const config = field.config as RichTextConfig;
-        richTextMaxLength = config.maxLength || 5000;
-        richTextFormatting = config.allowedFormatting || ['bold', 'italic', 'underline', 'lists', 'links'];
-      } else if (fieldType === 'files' && field.config) {
-        const config = field.config as FilesConfig;
-        filesAllowedTypes = config.allowedTypes || ['pdf', 'docx', 'xlsx'];
-        filesMaxSize = (config.maxFileSize || 10485760) / (1024 * 1024); // Convert bytes to MB
-        filesMaxCount = config.maxFiles || 5;
-      } else if (fieldType === 'gallery' && field.config) {
-        const config = field.config as GalleryConfig;
-        galleryStyle = config.displayStyle || 'carousel';
-        galleryAllowImages = config.allowImages ?? true;
-        galleryAllowVideos = config.allowVideos ?? true;
-        galleryMaxItems = config.maxItems || 10;
-      } else if (fieldType === 'multidate' && field.config) {
-        const config = field.config as MultiDateConfig;
-        multiDateFields = config.dateFields || [{ key: 'submitted', label: 'Data złożenia', required: false }];
-        multiDateLayout = config.layout || 'horizontal';
-      } else if (fieldType === 'address' && field.config) {
-        const config = field.config as AddressConfig;
-        addressDisplayFields = config.displayFields || ['street', 'number', 'postalCode', 'city'];
-        addressRequiredFields = config.requiredFields || ['city'];
-        addressEnableGeocoding = config.enableGeocoding ?? true;
-      } else if (fieldType === 'links' && field.config) {
-        const config = field.config as LinksConfig;
-        linksMaxCount = config.maxLinks || 10;
-      } else if (fieldType === 'price' && field.config) {
-        const config = field.config as PriceConfig;
-        priceCurrency = config.currency || 'PLN';
-        priceFundingSources = config.defaultFundingSources || ['UE', 'Wnioskodawca'];
-        priceShowPercentages = config.showPercentages ?? true;
-        priceShowTotal = config.showTotal ?? true;
-      }
-
-      editingConfigIndexes.add(index);
-      editingConfigIndexes = new Set(editingConfigIndexes);
-    }
-  }
-
-  function saveEditedConfig(index: number): void {
-    const field = template.fields[index];
-    const fieldType = field.fieldType || field.type;
-    let config: any = undefined;
-
-    switch (fieldType) {
-      case 'richtext':
-        config = {
-          maxLength: richTextMaxLength,
-          allowedFormatting: richTextFormatting
-        } as RichTextConfig;
-        break;
-
-      case 'files':
-        config = {
-          allowedTypes: filesAllowedTypes,
-          maxFileSize: filesMaxSize * 1024 * 1024,
-          maxFiles: filesMaxCount
-        } as FilesConfig;
-        break;
-
-      case 'gallery':
-        config = {
-          displayStyle: galleryStyle,
-          allowImages: galleryAllowImages,
-          allowVideos: galleryAllowVideos,
-          maxItems: galleryMaxItems
-        } as GalleryConfig;
-        break;
-
-      case 'multidate':
-        config = {
-          dateFields: multiDateFields,
-          layout: multiDateLayout
-        } as MultiDateConfig;
-        break;
-
-      case 'address':
-        config = {
-          displayFields: addressDisplayFields,
-          requiredFields: addressRequiredFields,
-          enableGeocoding: addressEnableGeocoding
-        } as AddressConfig;
-        break;
-
-      case 'links':
-        config = {
-          maxLinks: linksMaxCount
-        } as LinksConfig;
-        break;
-
-      case 'price':
-        config = {
-          currency: priceCurrency,
-          defaultFundingSources: priceFundingSources,
-          showPercentages: priceShowPercentages,
-          showTotal: priceShowTotal
-        } as PriceConfig;
-        break;
-    }
-
+  function updateFieldConfig(index: number, fieldConfig: Record<string, unknown>): void {
     const updatedTemplate: Template = {
       ...template,
       fields: template.fields.map((f, i) =>
-        i === index ? { ...f, config } : f
+        i === index ? { ...f, config: fieldConfig as any } : f
       )
     };
-
     onUpdate(updatedTemplate);
-    editingConfigIndexes.delete(index);
-    editingConfigIndexes = new Set(editingConfigIndexes);
   }
 
-  function cancelEditingConfig(index: number): void {
-    editingConfigIndexes.delete(index);
-    editingConfigIndexes = new Set(editingConfigIndexes);
+  // Toggle address sub-field
+  function toggleAddressField(fieldIndex: number, subField: string): void {
+    const field = template.fields[fieldIndex];
+    const config = (field.config || { displayFields: ['gmina', 'postalCode'] }) as AddressConfig;
+    const displayFields = config.displayFields || ['gmina', 'postalCode'];
+
+    const newDisplayFields = displayFields.includes(subField)
+      ? displayFields.filter(f => f !== subField)
+      : [...displayFields, subField];
+
+    updateFieldConfig(fieldIndex, { ...config, displayFields: newDisplayFields });
+  }
+
+  // Add date field to multidate
+  function addDateField(fieldIndex: number): void {
+    const field = template.fields[fieldIndex];
+    const config = (field.config || { dateFields: [] }) as MultiDateConfig;
+    const dateFields = config.dateFields || [];
+
+    const newDateFields = [...dateFields, { key: `date_${Date.now()}`, label: '', required: false }];
+    updateFieldConfig(fieldIndex, { ...config, dateFields: newDateFields });
+  }
+
+  // Update date field label
+  function updateDateFieldLabel(fieldIndex: number, dateIndex: number, label: string): void {
+    const field = template.fields[fieldIndex];
+    const config = (field.config || { dateFields: [] }) as MultiDateConfig;
+    const dateFields = [...(config.dateFields || [])];
+
+    if (dateFields[dateIndex]) {
+      dateFields[dateIndex] = { ...dateFields[dateIndex], label };
+      updateFieldConfig(fieldIndex, { ...config, dateFields });
+    }
+  }
+
+  // Remove date field
+  function removeDateField(fieldIndex: number, dateIndex: number): void {
+    const field = template.fields[fieldIndex];
+    const config = (field.config || { dateFields: [] }) as MultiDateConfig;
+    const dateFields = (config.dateFields || []).filter((_, i) => i !== dateIndex);
+
+    updateFieldConfig(fieldIndex, { ...config, dateFields });
+  }
+
+  // Change field type
+  function changeFieldType(index: number, newType: FieldType): void {
+    const updatedTemplate: Template = {
+      ...template,
+      fields: template.fields.map((f, i) =>
+        i === index ? { ...f, fieldType: newType, type: newType, config: {} } : f
+      )
+    };
+    onUpdate(updatedTemplate);
   }
 
   // Drag and drop helper
   function canMoveField(field: Field): boolean {
-    // Allow coordinates to be moved, but protect title/name field from being moved
     return field.key !== 'title' && field.key !== 'name';
   }
 
@@ -545,59 +254,216 @@
     }
   }
 
-  function getFieldTypeDisplayName(fieldType: string): string {
-    const typeNames: Record<string, string> = {
-      // New field types
-      'title': 'tytuł',
-      'location': 'lokalizacja',
-      'richtext': 'tekst',
-      'files': 'pliki',
-      'gallery': 'galeria',
-      'multidate': 'daty',
-      'address': 'adres',
-      'links': 'linki',
-      'tags': 'tagi',
-      'price': 'cena',
-      'category': 'kategoria',
-      // Legacy field types
-      'text': 'tekst',
-      'textarea': 'długi tekst',
-      'number': 'liczba',
-      'currency': 'kwota',
-      'percentage': 'procent',
-      'email': 'email',
-      'url': 'adres www',
-      'date': 'data',
-      'select': 'lista',
-      'image': 'obraz',
-      'youtube': 'youtube',
-      'checkbox': 'tak/nie'
+  // Get address display fields for a field
+  function getAddressDisplayFields(field: Field): string[] {
+    const config = field.config as AddressConfig | undefined;
+    return config?.displayFields || ['gmina', 'postalCode'];
+  }
+
+  // Get date fields for a multidate field
+  function getDateFields(field: Field): Array<{ key: string; label: string; required: boolean }> {
+    const config = field.config as MultiDateConfig | undefined;
+    return config?.dateFields || [];
+  }
+
+  // Get price config for a field
+  function getPriceConfig(field: Field): PriceConfig {
+    const config = field.config as PriceConfig | undefined;
+    return {
+      currency: config?.currency || 'PLN',
+      defaultFundingSources: config?.defaultFundingSources || ['UE', 'Wnioskodawca'],
+      showPercentages: config?.showPercentages ?? true,
+      showTotal: config?.showTotal ?? true
     };
-    return typeNames[fieldType] || fieldType;
   }
 
-  function getFieldDisplayType(field: Field): string {
-    if (field.key === 'location' || field.fieldName === 'location') {
-      return 'lokalizacja';
+  // Update price currency
+  function updatePriceCurrency(fieldIndex: number, currency: string): void {
+    const field = template.fields[fieldIndex];
+    const config = getPriceConfig(field);
+    updateFieldConfig(fieldIndex, { ...config, currency });
+  }
+
+  // Add funding source
+  function addPriceFundingSource(fieldIndex: number): void {
+    const field = template.fields[fieldIndex];
+    const config = getPriceConfig(field);
+    const newSources = [...config.defaultFundingSources, ''];
+    updateFieldConfig(fieldIndex, { ...config, defaultFundingSources: newSources });
+  }
+
+  // Remove funding source
+  function removePriceFundingSource(fieldIndex: number, sourceIndex: number): void {
+    const field = template.fields[fieldIndex];
+    const config = getPriceConfig(field);
+    const newSources = config.defaultFundingSources.filter((_, i) => i !== sourceIndex);
+    updateFieldConfig(fieldIndex, { ...config, defaultFundingSources: newSources });
+  }
+
+  // Update funding source
+  function updatePriceFundingSource(fieldIndex: number, sourceIndex: number, value: string): void {
+    const field = template.fields[fieldIndex];
+    const config = getPriceConfig(field);
+    const newSources = [...config.defaultFundingSources];
+    newSources[sourceIndex] = value;
+    updateFieldConfig(fieldIndex, { ...config, defaultFundingSources: newSources });
+  }
+
+  // Toggle price option
+  function togglePriceOption(fieldIndex: number, option: 'showPercentages' | 'showTotal'): void {
+    const field = template.fields[fieldIndex];
+    const config = getPriceConfig(field);
+    updateFieldConfig(fieldIndex, { ...config, [option]: !config[option] });
+  }
+
+  // Get selection config for a field
+  function getSelectionConfig(field: Field): SelectionConfig {
+    const config = field.config as SelectionConfig | undefined;
+    return {
+      mode: config?.mode || 'single',
+      options: config?.options || [],
+      allowCustom: config?.allowCustom ?? false,
+      maxSelections: config?.maxSelections,
+      maxSecondary: config?.maxSecondary,
+      isCategory: config?.isCategory ?? false
+    };
+  }
+
+  // Update selection mode
+  function updateSelectionMode(fieldIndex: number, mode: 'single' | 'multi' | 'hierarchical'): void {
+    const field = template.fields[fieldIndex];
+    const config = getSelectionConfig(field);
+    updateFieldConfig(fieldIndex, { ...config, mode });
+  }
+
+  // Update selection options
+  function updateSelectionOptions(fieldIndex: number, options: SelectionOption[]): void {
+    const field = template.fields[fieldIndex];
+    const config = getSelectionConfig(field);
+    updateFieldConfig(fieldIndex, { ...config, options });
+  }
+
+  // Toggle allow custom entries
+  function toggleSelectionAllowCustom(fieldIndex: number): void {
+    const field = template.fields[fieldIndex];
+    const config = getSelectionConfig(field);
+    updateFieldConfig(fieldIndex, { ...config, allowCustom: !config.allowCustom });
+  }
+
+  // Update max selections (for multi mode)
+  function updateSelectionMaxSelections(fieldIndex: number, max: number | undefined): void {
+    const field = template.fields[fieldIndex];
+    const config = getSelectionConfig(field);
+    updateFieldConfig(fieldIndex, { ...config, maxSelections: max });
+  }
+
+  // Update max secondary (for hierarchical mode)
+  function updateSelectionMaxSecondary(fieldIndex: number, max: number | undefined): void {
+    const field = template.fields[fieldIndex];
+    const config = getSelectionConfig(field);
+    updateFieldConfig(fieldIndex, { ...config, maxSecondary: max });
+  }
+
+  // Toggle isCategory flag (only one field can have it)
+  function toggleSelectionIsCategory(fieldIndex: number): void {
+    const field = template.fields[fieldIndex];
+    const config = getSelectionConfig(field);
+    const newValue = !config.isCategory;
+
+    // If enabling, first clear isCategory from any other field
+    let updatedFields = template.fields;
+    if (newValue) {
+      updatedFields = template.fields.map((f) => {
+        if (f.fieldType === 'selection' && f.key !== field.key) {
+          const fConfig = f.config as SelectionConfig | undefined;
+          if (fConfig?.isCategory) {
+            return { ...f, config: { ...fConfig, isCategory: false } };
+          }
+        }
+        return f;
+      });
     }
-    // Try new fieldType first, fall back to legacy type
-    const typeToUse = field.fieldType || field.type;
-    return getFieldTypeDisplayName(typeToUse as string);
+
+    // Update the current field
+    const finalFields = updatedFields.map((f, i) =>
+      i === fieldIndex ? { ...f, config: { ...config, isCategory: newValue } } : f
+    );
+
+    const updatedTemplate: Template = { ...template, fields: finalFields };
+    onUpdate(updatedTemplate);
   }
 
-  function hasEditableConfig(field: Field): boolean {
-    const fieldType = field.fieldType || field.type;
-    const editableTypes = ['richtext', 'files', 'gallery', 'multidate', 'address', 'links', 'price', 'category'];
-    return editableTypes.includes(fieldType as string);
+  // Migration functions
+  async function startMigration(fieldKey: string): Promise<void> {
+    migrationError = null;
+
+    try {
+      const response = await fetch(`/api/migrate-field?fieldKey=${encodeURIComponent(fieldKey)}`);
+      const data = await response.json();
+
+      if (data.success && data.preview) {
+        migrationPreview = data.preview;
+        showMigrationModal = true;
+      } else {
+        migrationError = data.error || 'Nie udało się pobrać informacji o migracji';
+      }
+    } catch (error) {
+      migrationError = 'Błąd połączenia z serwerem';
+      console.error('Migration preview error:', error);
+    }
   }
+
+  async function confirmMigration(): Promise<void> {
+    if (!migrationPreview) return;
+
+    isMigrating = true;
+    migrationError = null;
+
+    try {
+      const response = await fetch('/api/migrate-field', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ fieldKey: migrationPreview.fieldKey })
+      });
+
+      const data = await response.json();
+
+      if (data.success) {
+        // Reload the page to get the updated template
+        window.location.reload();
+      } else {
+        migrationError = data.error || 'Migracja nie powiodła się';
+        isMigrating = false;
+      }
+    } catch (error) {
+      migrationError = 'Błąd połączenia z serwerem';
+      isMigrating = false;
+      console.error('Migration error:', error);
+    }
+  }
+
+  function cancelMigration(): void {
+    showMigrationModal = false;
+    migrationPreview = null;
+    migrationError = null;
+  }
+
 </script>
 
 <div class="schema-builder">
+  <!-- Header with field count -->
+  <div class="schema-header">
+    <span class="field-count">{fieldCount} {fieldCount === 1 ? 'pole' : fieldCount < 5 ? 'pola' : 'pól'}</span>
+  </div>
+
   <div class="fields-container">
     {#if template?.fields && template.fields.length > 0}
       <div class="fields-list">
         {#each template.fields.filter(f => f.adminVisible) as field, i}
           {@const originalIndex = template.fields.findIndex(f => f.key === field.key)}
+          {@const fieldType = field.fieldType || field.type}
+          {@const isMandatory = isFieldMandatory(field)}
+
           <div
             class="field-row"
             class:draggable={canMoveField(field)}
@@ -609,12 +475,13 @@
             ondragleave={dragDrop.handleDragLeave}
             ondrop={(e) => handleFieldDrop(e, originalIndex)}
           >
-            <div class="field-name">
+            <!-- Left: Field label (outside card) -->
+            <div class="field-label-column">
               {#if editingFieldIndex === originalIndex}
                 <input
                   type="text"
                   value={field.displayLabel || field.label}
-                  class="field-name-edit"
+                  class="field-name-input"
                   onkeydown={(e) => {
                     if (e.key === 'Enter') {
                       const target = e.target as HTMLInputElement;
@@ -628,7 +495,7 @@
                     saveFieldName(originalIndex, target.value);
                   }}
                   autofocus
-                >
+                />
               {:else}
                 <span class="field-label" onclick={() => startEditingField(originalIndex)}>
                   {field.displayLabel || field.label}
@@ -636,293 +503,313 @@
               {/if}
             </div>
 
-            <div class="field-type">
-              <span class="field-type-label">{getFieldDisplayType(field)}</span>
-            </div>
-
-            <div class="field-actions">
-              <div class="icon-grid">
-                <button
-                  onclick={() => toggleEditingConfig(originalIndex)}
-                  class="icon-button edit-button"
-                  class:active={editingConfigIndexes.has(originalIndex)}
-                  disabled={!hasEditableConfig(field)}
-                  title={hasEditableConfig(field) ? "Edytuj konfigurację pola" : "To pole nie ma konfigurowalnych opcji"}
-                >
-                  <Icon name="Pen/Edit" size={20} />
-                </button>
-
-                <button
-                  onclick={() => toggleRequired(originalIndex)}
-                  disabled={isFieldMandatory(field)}
-                  class="icon-button required-button"
-                  class:active={field.required}
-                  title={isFieldMandatory(field) ? 'Pole obowiązkowe' : (field.required ? 'Pole wymagane - kliknij aby zmienić' : 'Pole opcjonalne - kliknij aby wymagać')}
-                >
-                  {@html RequiredIcon()}
-                </button>
-
-                <button
-                  onclick={() => toggleVisibility(originalIndex)}
-                  class="icon-button visibility-button"
-                  class:inactive={!field.visible}
-                  title={field.visible ? 'Ukryj pole' : 'Pokaż pole'}
-                >
-                  <Icon name="Eye" size={20} />
-                </button>
-              </div>
-
-              <button
-                onclick={() => moveFieldUp(originalIndex)}
-                disabled={originalIndex === 0 || !canMoveField(field) || (originalIndex > 0 && (template.fields[originalIndex - 1].key === 'title' || template.fields[originalIndex - 1].key === 'name'))}
-                class="icon-button move-button"
-                title="Przenieś w górę"
-              >
-                <Icon name="Chevron/Up" size={20} />
-              </button>
-
-              <button
-                onclick={() => moveFieldDown(originalIndex)}
-                disabled={originalIndex === template.fields.length - 1 || !canMoveField(field) || (originalIndex < template.fields.length - 1 && (template.fields[originalIndex + 1].key === 'title' || template.fields[originalIndex + 1].key === 'name'))}
-                class="icon-button move-button"
-                title="Przenieś w dół"
-              >
-                <Icon name="Chevron/Down" size={20} />
-              </button>
-            </div>
-          </div>
-
-          <!-- Configuration editor panel -->
-          {#if editingConfigIndexes.has(originalIndex)}
-            {@const fieldType = field.fieldType || field.type}
-            <div class="config-editor-panel">
-              {#if fieldType === 'richtext'}
-                <div class="field-config">
-                  <div class="config-row-inline">
-                    <label class="config-label">
-                      Maksymalna długość:
-                      <input type="number" bind:value={richTextMaxLength} min="100" step="100" class="config-input-inline" />
-                    </label>
-                  </div>
-                </div>
-              {:else if fieldType === 'files'}
-                <div class="field-config">
-                  <div class="config-section">
-                    <label class="config-label">Dozwolone typy plików:</label>
-                    <div class="checkbox-grid">
-                      {#each ['pdf', 'docx', 'xlsx', 'doc', 'xls', 'txt', 'rtf', 'odt', 'ods'] as fileType}
-                        <label class="checkbox-label">
-                          <input type="checkbox" value={fileType} bind:group={filesAllowedTypes} />
-                          {fileType.toUpperCase()}
-                        </label>
-                      {/each}
-                    </div>
-                  </div>
-                  <label class="config-label">
-                    Max rozmiar (MB):
-                    <input type="number" bind:value={filesMaxSize} min="1" max="100" class="config-input" />
-                  </label>
-                  <label class="config-label">
-                    Max plików:
-                    <input type="number" bind:value={filesMaxCount} min="1" max="20" class="config-input" />
-                  </label>
-                </div>
-              {:else if fieldType === 'gallery'}
-                <div class="field-config">
-                  <label class="config-label">
-                    Styl wyświetlania:
-                    <select bind:value={galleryStyle} class="config-select">
-                      <option value="carousel">Karuzela</option>
-                      <option value="grid">Siatka</option>
-                      <option value="masonry">Masonry</option>
+            <!-- Right: Card with type, icons, and content -->
+            <div class="field-card">
+              <div class="card-header">
+                <!-- Type dropdown -->
+                <div class="field-type-area">
+                  {#if isMandatory}
+                    <span class="field-type-badge">{getFieldDisplayType(field)}</span>
+                  {:else}
+                    <select
+                      class="field-type-select"
+                      value={fieldType}
+                      onchange={(e) => changeFieldType(originalIndex, e.currentTarget.value as FieldType)}
+                    >
+                      <option value="richtext">Tekst</option>
+                      <option value="files">Pliki</option>
+                      <option value="gallery">Galeria</option>
+                      <option value="multidate">Data</option>
+                      <option value="address">Adres</option>
+                      <option value="links">Linki</option>
+                      <option value="price">Kwota</option>
+                      <option value="selection">Lista wyboru</option>
+                      {#if fieldType === 'category' || fieldType === 'tags'}
+                        <!-- Show legacy options only for existing legacy fields -->
+                        <option value="category">Kategoria (legacy)</option>
+                        <option value="tags">Tagi (legacy)</option>
+                      {/if}
                     </select>
-                  </label>
-                  <label class="config-label">
-                    <input type="checkbox" bind:checked={galleryAllowImages} />
-                    Zezwól na obrazy
-                  </label>
-                  <label class="config-label">
-                    <input type="checkbox" bind:checked={galleryAllowVideos} />
-                    Zezwól na filmy (YouTube/Vimeo)
-                  </label>
-                  <label class="config-label">
-                    Max elementów:
-                    <input type="number" bind:value={galleryMaxItems} min="1" max="50" class="config-input" />
-                  </label>
-                </div>
-              {:else if fieldType === 'multidate'}
-                <div class="field-config">
-                  <div class="config-section">
-                    <label class="config-label">Pola dat:</label>
-                    {#each multiDateFields as dateField, i}
-                      <div class="date-field-row">
-                        <input
-                          type="text"
-                          bind:value={dateField.label}
-                          placeholder="Etykieta (np. Data złożenia)"
-                          class="config-input"
-                        />
-                        <input
-                          type="text"
-                          bind:value={dateField.key}
-                          placeholder="Klucz (np. submitted)"
-                          class="config-input"
-                        />
-                        <label class="checkbox-label">
-                          <input type="checkbox" bind:checked={dateField.required} />
-                          Wymagane
-                        </label>
-                        {#if multiDateFields.length > 1}
-                          <button
-                            type="button"
-                            onclick={() => removeDateField(i)}
-                            class="remove-btn"
-                          >
-                            ✕
-                          </button>
-                        {/if}
-                      </div>
-                    {/each}
-                    <button type="button" onclick={addDateField} class="add-btn">
-                      + Dodaj pole daty
-                    </button>
-                  </div>
-                  <label class="config-label">
-                    Układ:
-                    <select bind:value={multiDateLayout} class="config-select">
-                      <option value="horizontal">Poziomy</option>
-                      <option value="vertical">Pionowy</option>
-                    </select>
-                  </label>
-                </div>
-              {:else if fieldType === 'address'}
-                <div class="field-config">
-                  <div class="config-section">
-                    <label class="config-label">Wyświetlane pola:</label>
-                    <div class="checkbox-grid">
-                      {#each ['street', 'number', 'postalCode', 'city', 'gmina'] as addrField}
-                        <label class="checkbox-label">
-                          <input type="checkbox" value={addrField} bind:group={addressDisplayFields} />
-                          {addrField}
-                        </label>
-                      {/each}
-                    </div>
-                  </div>
-                </div>
-              {:else if fieldType === 'links'}
-                <div class="field-config">
-                  <label class="config-label">
-                    Max liczba linków:
-                    <input type="number" bind:value={linksMaxCount} min="1" max="20" class="config-input" />
-                  </label>
-                </div>
-              {:else if fieldType === 'price'}
-                <div class="field-config">
-                  <label class="config-label">
-                    Waluta:
-                    <input type="text" bind:value={priceCurrency} class="config-input" placeholder="PLN" />
-                  </label>
-                  <div class="config-section">
-                    <label class="config-label">Domyślne źródła finansowania:</label>
-                    {#each priceFundingSources as source, i}
-                      <div class="funding-source-row">
-                        <input
-                          type="text"
-                          bind:value={priceFundingSources[i]}
-                          placeholder="Źródło (np. UE)"
-                          class="config-input"
-                        />
-                        {#if priceFundingSources.length > 1}
-                          <button
-                            type="button"
-                            onclick={() => removeFundingSource(i)}
-                            class="remove-btn"
-                          >
-                            ✕
-                          </button>
-                        {/if}
-                      </div>
-                    {/each}
-                    <button type="button" onclick={addFundingSource} class="add-btn">
-                      + Dodaj źródło
-                    </button>
-                  </div>
-                  <label class="config-label">
-                    <input type="checkbox" bind:checked={priceShowPercentages} />
-                    Pokazuj procenty
-                  </label>
-                  <label class="config-label">
-                    <input type="checkbox" bind:checked={priceShowTotal} />
-                    Pokazuj sumę
-                  </label>
-                </div>
-              {:else if fieldType === 'category'}
-                <div class="field-config category-manager">
-                  <TagManager template={template} onUpdate={onUpdate} />
-                </div>
-              {/if}
-
-              <!-- Save/Cancel/Delete buttons -->
-              <div class="config-actions">
-                <div class="config-actions-left">
-                  {#if !isFieldMandatory(field)}
-                    {#if deleteConfirmIndex === originalIndex}
-                      <button
-                        type="button"
-                        onclick={() => removeField(originalIndex)}
-                        class="config-delete-confirm-btn"
-                      >
-                        Potwierdź usunięcie
-                      </button>
-                      <button
-                        type="button"
-                        onclick={cancelDeleteField}
-                        class="config-cancel-btn"
-                      >
-                        Anuluj
-                      </button>
-                    {:else}
-                      <button
-                        type="button"
-                        onclick={() => startDeleteField(originalIndex)}
-                        class="config-delete-btn"
-                      >
-                        <img src="/icons/Trash.svg" alt="Delete" style="width: 16px; height: 16px; margin-right: 6px;" />
-                        Usuń pole
-                      </button>
-                    {/if}
                   {/if}
                 </div>
-                <div class="config-actions-right">
+
+                <!-- Action icons -->
+                <div class="field-actions">
                   <button
-                    type="button"
-                    onclick={() => saveEditedConfig(originalIndex)}
-                    class="config-save-btn"
+                    onclick={() => toggleRequired(originalIndex)}
+                    disabled={isMandatory}
+                    class="icon-btn"
+                    class:active={field.required}
+                    title={isMandatory ? 'Pole systemowe' : (field.required ? 'Wymagane' : 'Opcjonalne')}
                   >
-                    Zapisz zmiany
+                    <Icon name="Circle/Exclamation" size={20} />
+                  </button>
+
+                  <button
+                    onclick={() => toggleVisibility(originalIndex)}
+                    class="icon-btn"
+                    class:inactive={!field.visible}
+                    title={field.visible ? 'Widoczne' : 'Ukryte'}
+                  >
+                    <Icon name="Eye" size={20} />
+                  </button>
+
+                  {#if !isMandatory}
+                    <button
+                      onclick={() => deleteConfirmIndex === originalIndex ? removeField(originalIndex) : startDeleteField(originalIndex)}
+                      class="icon-btn delete-btn"
+                      class:confirm={deleteConfirmIndex === originalIndex}
+                      title={deleteConfirmIndex === originalIndex ? 'Kliknij aby potwierdzić' : 'Usuń'}
+                    >
+                      <Icon name="Trash" size={20} />
+                    </button>
+                  {:else}
+                    <button class="icon-btn lock-btn" disabled title="Pole systemowe">
+                      <Icon name="Action/Lock" size={20} />
+                    </button>
+                  {/if}
+
+                  <button class="icon-btn drag-handle" title="Przeciągnij">
+                    <Icon name="Hand/Drag" size={20} />
+                  </button>
+                </div>
+
+                <!-- Reorder arrows -->
+                <div class="reorder-arrows">
+                  <button
+                    onclick={() => moveFieldUp(originalIndex)}
+                    disabled={originalIndex === 0 || !canMoveField(field) || (originalIndex > 0 && (template.fields[originalIndex - 1].key === 'title' || template.fields[originalIndex - 1].key === 'name'))}
+                    class="arrow-btn"
+                    title="W górę"
+                  >
+                    <Icon name="Chevron/Up" size={16} />
                   </button>
                   <button
-                    type="button"
-                    onclick={() => cancelEditingConfig(originalIndex)}
-                    class="config-cancel-btn"
+                    onclick={() => moveFieldDown(originalIndex)}
+                    disabled={originalIndex === template.fields.length - 1 || !canMoveField(field) || (originalIndex < template.fields.length - 1 && (template.fields[originalIndex + 1].key === 'title' || template.fields[originalIndex + 1].key === 'name'))}
+                    class="arrow-btn"
+                    title="W dół"
                   >
-                    Anuluj
+                    <Icon name="Chevron/Down" size={16} />
                   </button>
                 </div>
               </div>
+
+              <!-- Card content - expanded configuration -->
+              {#if fieldType === 'address'}
+                <div class="card-content">
+                  {#each ['gmina', 'street', 'number', 'postalCode'] as subField}
+                    {@const isEnabled = getAddressDisplayFields(field).includes(subField)}
+                    <button
+                      class="subfield-toggle"
+                      class:enabled={isEnabled}
+                      onclick={() => toggleAddressField(originalIndex, subField)}
+                    >
+                      <span class="toggle-icon">✓</span>
+                      <span class="toggle-label">{addressFieldLabels[subField]}</span>
+                    </button>
+                  {/each}
+                </div>
+              {:else if fieldType === 'multidate'}
+                <div class="card-content">
+                  {#each getDateFields(field) as dateField, dateIndex}
+                    <div class="date-field-item">
+                      <input
+                        type="text"
+                        class="date-label-input"
+                        value={dateField.label}
+                        placeholder="Nazwa daty"
+                        oninput={(e) => updateDateFieldLabel(originalIndex, dateIndex, e.currentTarget.value)}
+                      />
+                      <button
+                        class="remove-date-btn"
+                        onclick={() => removeDateField(originalIndex, dateIndex)}
+                        title="Usuń datę"
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  {/each}
+                  <button class="add-date-btn" onclick={() => addDateField(originalIndex)}>
+                    + Dodaj datę
+                  </button>
+                </div>
+              {:else if fieldType === 'category' || fieldType === 'tags'}
+                <div class="card-content legacy-content">
+                  <div class="legacy-notice">
+                    <span class="legacy-icon">⚠️</span>
+                    <span class="legacy-text">Pole typu legacy</span>
+                  </div>
+                  <button
+                    class="migrate-btn"
+                    onclick={() => startMigration(field.key || field.fieldName)}
+                  >
+                    🔄 Konwertuj do nowego systemu
+                  </button>
+                  <p class="migrate-hint">
+                    Konwersja zmieni to pole na "Lista wyboru" z trybem
+                    {fieldType === 'category' ? 'hierarchicznym' : 'wielokrotnym'}.
+                  </p>
+                  {#if fieldType === 'category'}
+                    <details class="tag-manager-details">
+                      <summary>Zarządzaj tagami (legacy)</summary>
+                      <TagManager template={template} onUpdate={onUpdate} />
+                    </details>
+                  {/if}
+                </div>
+              {:else if fieldType === 'gallery'}
+                <div class="card-content gallery-placeholder">
+                  <!-- Empty space for gallery config - matches design -->
+                </div>
+              {:else if fieldType === 'price'}
+                {@const priceConfig = getPriceConfig(field)}
+                <div class="card-content price-content">
+                  <div class="price-columns">
+                    <!-- Left column: Funding sources -->
+                    <div class="price-col-sources">
+                      <span class="price-label">Źródła:</span>
+                      <div class="funding-sources">
+                        {#each priceConfig.defaultFundingSources as source, sourceIndex}
+                          <div class="funding-source-item">
+                            <input
+                              type="text"
+                              class="funding-source-input"
+                              value={source}
+                              oninput={(e) => updatePriceFundingSource(originalIndex, sourceIndex, e.currentTarget.value)}
+                              placeholder="Źródło"
+                            />
+                            <button
+                              class="remove-source-btn"
+                              onclick={() => removePriceFundingSource(originalIndex, sourceIndex)}
+                              title="Usuń"
+                            >✕</button>
+                          </div>
+                        {/each}
+                        <button class="add-source-btn" onclick={() => addPriceFundingSource(originalIndex)}>
+                          + Dodaj źródło
+                        </button>
+                      </div>
+                    </div>
+                    <!-- Right column: Currency + options -->
+                    <div class="price-col-options">
+                      <div class="price-currency-row">
+                        <span class="price-label">Waluta:</span>
+                        <input
+                          type="text"
+                          class="price-currency-input"
+                          value={priceConfig.currency}
+                          oninput={(e) => updatePriceCurrency(originalIndex, e.currentTarget.value)}
+                          placeholder="PLN"
+                        />
+                      </div>
+                      <button
+                        class="price-option-toggle"
+                        class:enabled={priceConfig.showPercentages}
+                        onclick={() => togglePriceOption(originalIndex, 'showPercentages')}
+                      >
+                        <span class="toggle-icon">✓</span>
+                        <span class="toggle-label">Procenty</span>
+                      </button>
+                      <button
+                        class="price-option-toggle"
+                        class:enabled={priceConfig.showTotal}
+                        onclick={() => togglePriceOption(originalIndex, 'showTotal')}
+                      >
+                        <span class="toggle-icon">✓</span>
+                        <span class="toggle-label">Suma</span>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              {:else if fieldType === 'selection'}
+                {@const selectionConfig = getSelectionConfig(field)}
+                <div class="card-content selection-content">
+                  <div class="selection-columns">
+                    <!-- Left column: Options -->
+                    <div class="selection-col-options">
+                      <span class="selection-label">Opcje:</span>
+                      <SelectionOptionsEditor
+                        options={selectionConfig.options}
+                        onUpdate={(opts) => updateSelectionOptions(originalIndex, opts)}
+                      />
+                    </div>
+                    <!-- Right column: Mode + settings -->
+                    <div class="selection-col-settings">
+                      <div class="selection-mode-row">
+                        <span class="selection-label">Tryb:</span>
+                        <select
+                          class="selection-mode-select"
+                          value={selectionConfig.mode}
+                          onchange={(e) => updateSelectionMode(originalIndex, e.currentTarget.value as 'single' | 'multi' | 'hierarchical')}
+                        >
+                          <option value="single">Pojedynczy</option>
+                          <option value="multi">Wielokrotny</option>
+                          <option value="hierarchical">Hierarchiczny</option>
+                        </select>
+                      </div>
+                      {#if selectionConfig.mode === 'multi'}
+                        <div class="selection-limit-row">
+                          <span class="selection-label">Max:</span>
+                          <input
+                            type="number"
+                            class="selection-limit-input"
+                            value={selectionConfig.maxSelections || ''}
+                            oninput={(e) => updateSelectionMaxSelections(originalIndex, e.currentTarget.value ? parseInt(e.currentTarget.value) : undefined)}
+                            placeholder="∞"
+                            min="1"
+                          />
+                        </div>
+                      {:else if selectionConfig.mode === 'hierarchical'}
+                        <div class="selection-limit-row">
+                          <span class="selection-label">Max dod.:</span>
+                          <input
+                            type="number"
+                            class="selection-limit-input"
+                            value={selectionConfig.maxSecondary || ''}
+                            oninput={(e) => updateSelectionMaxSecondary(originalIndex, e.currentTarget.value ? parseInt(e.currentTarget.value) : undefined)}
+                            placeholder="∞"
+                            min="1"
+                          />
+                        </div>
+                      {/if}
+                      <button
+                        class="selection-option-toggle"
+                        class:enabled={selectionConfig.allowCustom}
+                        onclick={() => toggleSelectionAllowCustom(originalIndex)}
+                      >
+                        <span class="toggle-icon">✓</span>
+                        <span class="toggle-label">Własne wartości</span>
+                      </button>
+                      <!-- Category checkbox - only one field can have this -->
+                      <button
+                        class="selection-option-toggle category-toggle"
+                        class:enabled={selectionConfig.isCategory}
+                        class:disabled={hasCategoryField && !selectionConfig.isCategory}
+                        onclick={() => !(hasCategoryField && !selectionConfig.isCategory) && toggleSelectionIsCategory(originalIndex)}
+                        title={(hasCategoryField && !selectionConfig.isCategory) ? 'Inne pole jest już oznaczone jako kategoria' : 'Użyj jako kategorię na mapie (kolory pinów)'}
+                        disabled={hasCategoryField && !selectionConfig.isCategory}
+                      >
+                        <span class="toggle-icon">✓</span>
+                        <span class="toggle-label">Kategoria mapy</span>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              {/if}
             </div>
-          {/if}
+          </div>
         {/each}
 
-        <!-- Add field row -->
+        <!-- Add new field row -->
         {#if addingNewField}
           <div class="field-row new-field-row">
-            <div class="field-name">
+            <!-- Left: Field label input -->
+            <div class="field-label-column">
               <input
                 type="text"
                 bind:value={newFieldLabel}
                 placeholder="Nazwa pola"
-                class="field-name-edit"
+                class="field-name-input"
                 onkeydown={(e) => {
                   if (e.key === 'Enter' && newFieldLabel.trim()) {
                     saveNewField();
@@ -931,244 +818,56 @@
                   }
                 }}
                 autofocus
-              >
+              />
             </div>
 
-            <div class="field-type">
-              <select bind:value={newFieldType} class="field-type-select">
-                <option value="richtext">tekst sformatowany</option>
-                <option value="files">pliki</option>
-                <option value="gallery">galeria</option>
-                <option value="multidate">daty</option>
-                <option value="address">adres</option>
-                <option value="links">linki</option>
-                <option value="price">cena</option>
-                <option value="category" disabled={hasCategoryField}>kategoria {hasCategoryField ? '(już istnieje)' : ''}</option>
-                <option value="tags">tagi</option>
-              </select>
-            </div>
+            <!-- Right: Card with type and save/cancel -->
+            <div class="field-card new-field-card">
+              <div class="card-header">
+                <div class="field-type-area">
+                  <select bind:value={newFieldType} class="field-type-select">
+                    <option value="richtext">Tekst</option>
+                    <option value="files">Pliki</option>
+                    <option value="gallery">Galeria</option>
+                    <option value="multidate">Data</option>
+                    <option value="address">Adres</option>
+                    <option value="links">Linki</option>
+                    <option value="price">Kwota</option>
+                    <option value="selection">Lista wyboru</option>
+                  </select>
+                </div>
 
-            <!-- Field configuration options -->
-            {#if newFieldType === 'richtext'}
-              <div class="field-config">
-                <label class="config-label">
-                  Maksymalna długość:
-                  <input type="number" bind:value={richTextMaxLength} min="100" step="100" class="config-input" />
-                </label>
-              </div>
-            {:else if newFieldType === 'files'}
-              <div class="field-config">
-                <div class="config-section">
-                  <label class="config-label">Dozwolone typy plików:</label>
-                  <div class="checkbox-grid">
-                    {#each ['pdf', 'docx', 'xlsx', 'doc', 'xls', 'txt', 'rtf', 'odt', 'ods'] as fileType}
-                      <label class="checkbox-label">
-                        <input type="checkbox" value={fileType} bind:group={filesAllowedTypes} />
-                        {fileType.toUpperCase()}
-                      </label>
-                    {/each}
-                  </div>
-                </div>
-                <label class="config-label">
-                  Max rozmiar (MB):
-                  <input type="number" bind:value={filesMaxSize} min="1" max="100" class="config-input" />
-                </label>
-                <label class="config-label">
-                  Max plików:
-                  <input type="number" bind:value={filesMaxCount} min="1" max="20" class="config-input" />
-                </label>
-              </div>
-            {:else if newFieldType === 'gallery'}
-              <div class="field-config">
-                <label class="config-label">
-                  Styl wyświetlania:
-                  <select bind:value={galleryStyle} class="config-select">
-                    <option value="carousel">Karuzela</option>
-                    <option value="grid">Siatka</option>
-                    <option value="masonry">Masonry</option>
-                  </select>
-                </label>
-                <label class="config-label">
-                  <input type="checkbox" bind:checked={galleryAllowImages} />
-                  Zezwól na obrazy
-                </label>
-                <label class="config-label">
-                  <input type="checkbox" bind:checked={galleryAllowVideos} />
-                  Zezwól na filmy (YouTube/Vimeo)
-                </label>
-                <label class="config-label">
-                  Max elementów:
-                  <input type="number" bind:value={galleryMaxItems} min="1" max="50" class="config-input" />
-                </label>
-              </div>
-            {:else if newFieldType === 'multidate'}
-              <div class="field-config">
-                <div class="config-section">
-                  <label class="config-label">Pola dat:</label>
-                  {#each multiDateFields as dateField, i}
-                    <div class="date-field-row">
-                      <input
-                        type="text"
-                        bind:value={dateField.label}
-                        placeholder="Etykieta (np. Data złożenia)"
-                        class="config-input"
-                      />
-                      <input
-                        type="text"
-                        bind:value={dateField.key}
-                        placeholder="Klucz (np. submitted)"
-                        class="config-input"
-                      />
-                      <label class="checkbox-label">
-                        <input type="checkbox" bind:checked={dateField.required} />
-                        Wymagane
-                      </label>
-                      {#if multiDateFields.length > 1}
-                        <button
-                          type="button"
-                          onclick={() => removeDateField(i)}
-                          class="remove-btn"
-                        >
-                          ✕
-                        </button>
-                      {/if}
-                    </div>
-                  {/each}
-                  <button type="button" onclick={addDateField} class="add-btn">
-                    + Dodaj pole daty
-                  </button>
-                </div>
-                <label class="config-label">
-                  Układ:
-                  <select bind:value={multiDateLayout} class="config-select">
-                    <option value="horizontal">Poziomy</option>
-                    <option value="vertical">Pionowy</option>
-                  </select>
-                </label>
-              </div>
-            {:else if newFieldType === 'address'}
-              <div class="field-config">
-                <div class="config-section">
-                  <label class="config-label">Wyświetlane pola:</label>
-                  <div class="checkbox-grid">
-                    {#each ['street', 'number', 'postalCode', 'city', 'gmina'] as addrField}
-                      <label class="checkbox-label">
-                        <input type="checkbox" value={addrField} bind:group={addressDisplayFields} />
-                        {addrField}
-                      </label>
-                    {/each}
-                  </div>
-                </div>
-                <div class="config-section">
-                  <label class="config-label">Wymagane pola:</label>
-                  <div class="checkbox-grid">
-                    {#each addressDisplayFields as addrField}
-                      <label class="checkbox-label">
-                        <input type="checkbox" value={addrField} bind:group={addressRequiredFields} />
-                        {addrField}
-                      </label>
-                    {/each}
-                  </div>
-                </div>
-                <label class="config-label">
-                  <input type="checkbox" bind:checked={addressEnableGeocoding} />
-                  Włącz synchronizację z lokalizacją
-                </label>
-              </div>
-            {:else if newFieldType === 'links'}
-              <div class="field-config">
-                <label class="config-label">
-                  Max liczba linków:
-                  <input type="number" bind:value={linksMaxCount} min="1" max="20" class="config-input" />
-                </label>
-              </div>
-            {:else if newFieldType === 'price'}
-              <div class="field-config">
-                <label class="config-label">
-                  Waluta:
-                  <input type="text" bind:value={priceCurrency} class="config-input" placeholder="PLN" />
-                </label>
-                <div class="config-section">
-                  <label class="config-label">Domyślne źródła finansowania:</label>
-                  {#each priceFundingSources as source, i}
-                    <div class="funding-source-row">
-                      <input
-                        type="text"
-                        bind:value={priceFundingSources[i]}
-                        placeholder="Źródło (np. UE)"
-                        class="config-input"
-                      />
-                      {#if priceFundingSources.length > 1}
-                        <button
-                          type="button"
-                          onclick={() => removeFundingSource(i)}
-                          class="remove-btn"
-                        >
-                          ✕
-                        </button>
-                      {/if}
-                    </div>
-                  {/each}
-                  <button type="button" onclick={addFundingSource} class="add-btn">
-                    + Dodaj źródło
-                  </button>
-                </div>
-                <label class="config-label">
-                  <input type="checkbox" bind:checked={priceShowPercentages} />
-                  Pokazuj procenty
-                </label>
-                <label class="config-label">
-                  <input type="checkbox" bind:checked={priceShowTotal} />
-                  Pokazuj sumę
-                </label>
-              </div>
-            {:else if newFieldType === 'tags'}
-              <div class="field-config">
-                <label class="config-label">
-                  <input
-                    type="checkbox"
-                    bind:checked={allowMultiple}
-                    class="config-checkbox"
+                <div class="field-actions">
+                  <button
+                    onclick={saveNewField}
+                    disabled={!newFieldLabel.trim()}
+                    class="icon-btn save-btn"
+                    title="Zapisz"
                   >
-                  Wielokrotny wybór
-                </label>
+                    <Icon name="Checkmark" size={20} />
+                  </button>
+                  <button
+                    onclick={cancelNewField}
+                    class="icon-btn cancel-btn"
+                    title="Anuluj"
+                  >
+                    ✕
+                  </button>
+                </div>
               </div>
-            {/if}
-
-            <div class="field-actions new-field-actions">
-              <!-- Empty spacers to match the alignment -->
-              <div class="icon-button-spacer"></div>
-              <div class="icon-button-spacer"></div>
-              <div class="icon-button-spacer"></div>
-              <!-- Save and Cancel buttons in place of up/down arrows -->
-              <button
-                onclick={saveNewField}
-                disabled={!newFieldLabel.trim()}
-                class="icon-button save-button"
-                title="Zapisz pole"
-              >
-                <img src="/icons/Checkmark.svg" alt="Save" style="width: 16px; height: 16px;" />
-              </button>
-              <button
-                onclick={cancelNewField}
-                class="icon-button cancel-button"
-                title="Anuluj"
-              >
-                ✕
-              </button>
             </div>
           </div>
         {/if}
 
-        <!-- Add field button bar -->
-        <button class="add-field-bar" onclick={startAddingField} disabled={addingNewField}>
+        <!-- Add field button -->
+        <button class="add-field-btn" onclick={startAddingField} disabled={addingNewField}>
           <Icon name="Brightess/Plus" size={20} />
         </button>
       </div>
     {:else}
       <div class="empty-state">
         <p>Brak zdefiniowanych pól</p>
-        <button class="add-field-bar" onclick={startAddingField} disabled={addingNewField}>
+        <button class="add-field-btn" onclick={startAddingField} disabled={addingNewField}>
           <Icon name="Brightess/Plus" size={20} />
         </button>
       </div>
@@ -1176,26 +875,88 @@
   </div>
 </div>
 
+<!-- Migration Confirmation Modal -->
+{#if showMigrationModal && migrationPreview}
+  <div class="migration-modal-overlay" onclick={cancelMigration}>
+    <div class="migration-modal" onclick={(e) => e.stopPropagation()}>
+      <h3 class="migration-modal-title">
+        Konwertuj pole "{migrationPreview.fieldLabel}"
+      </h3>
+
+      <div class="migration-modal-content">
+        <p class="migration-info">Co się zmieni:</p>
+        <ul class="migration-changes">
+          <li>
+            Typ pola: <strong>{migrationPreview.fieldType}</strong> →
+            <strong>lista wyboru ({migrationPreview.targetMode === 'hierarchical' ? 'hierarchiczny' : 'wielokrotny'})</strong>
+          </li>
+          <li>
+            <strong>{migrationPreview.tagCount}</strong> tagów zostanie skopiowanych jako opcje pola
+          </li>
+          <li>
+            <strong>{migrationPreview.pinCount}</strong> pinów zostanie zaktualizowanych
+          </li>
+        </ul>
+
+        {#if migrationPreview.willRemoveTags}
+          <p class="migration-warning">
+            ⚠️ Nieużywane tagi zostaną usunięte z puli globalnej.
+          </p>
+        {/if}
+
+        <p class="migration-irreversible">
+          Ta operacja jest nieodwracalna.
+        </p>
+
+        {#if migrationError}
+          <p class="migration-error">{migrationError}</p>
+        {/if}
+      </div>
+
+      <div class="migration-modal-actions">
+        <button class="migration-cancel-btn" onclick={cancelMigration} disabled={isMigrating}>
+          Anuluj
+        </button>
+        <button class="migration-confirm-btn" onclick={confirmMigration} disabled={isMigrating}>
+          {#if isMigrating}
+            Migrowanie...
+          {:else}
+            Konwertuj
+          {/if}
+        </button>
+      </div>
+    </div>
+  </div>
+{/if}
+
 <style>
   .schema-builder {
     font-family: 'Space Mono', monospace;
-    font-size: 16px;
+    font-size: 13px;
     display: flex;
     flex-direction: column;
     height: 100%;
+  }
+
+  .schema-header {
+    padding: 4px 0;
+    margin-bottom: 4px;
+  }
+
+  .field-count {
+    font-size: 12px;
+    color: #666;
   }
 
   .fields-container {
     flex: 1;
     overflow-y: auto;
     overflow-x: hidden;
-    /* Make scrollbar overlay content instead of pushing it */
     scrollbar-gutter: stable;
   }
 
-  /* Custom scrollbar styling for better alignment */
   .fields-container::-webkit-scrollbar {
-    width: 12px;
+    width: 8px;
   }
 
   .fields-container::-webkit-scrollbar-track {
@@ -1204,38 +965,19 @@
 
   .fields-container::-webkit-scrollbar-thumb {
     background: rgba(0, 0, 0, 0.2);
-    border-radius: 6px;
-    border: 3px solid transparent;
-    background-clip: padding-box;
-  }
-
-  .fields-container::-webkit-scrollbar-thumb:hover {
-    background: rgba(0, 0, 0, 0.3);
-    border: 3px solid transparent;
-    background-clip: padding-box;
+    border-radius: 4px;
   }
 
   .fields-list {
     display: flex;
     flex-direction: column;
+    gap: 4px;
+    margin-left: 100px; /* Space for labels to overflow into */
   }
 
+  /* Field Row - card only, label positioned absolutely */
   .field-row {
-    display: grid;
-    grid-template-columns: 2fr 1fr auto;
-    align-items: start;
-    padding: 4px 0;
-    min-height: 36px;
-    transition: background-color 0.1s ease;
-    gap: 12px;
-  }
-
-  .field-row:hover:not(.new-field-row) {
-    background-color: rgba(0, 0, 0, 0.02);
-  }
-
-  .new-field-row {
-    background-color: rgba(0, 0, 0, 0.02);
+    position: relative;
   }
 
   .field-row.draggable {
@@ -1248,508 +990,905 @@
 
   .field-row.dragging {
     opacity: 0.5;
-    background-color: rgba(0, 122, 204, 0.1);
   }
 
-  .field-row.drag-over {
-    background-color: rgba(0, 122, 204, 0.1);
-    border-top: 2px solid #007acc;
+  .field-row.drag-over .field-card {
+    background: rgba(0, 122, 204, 0.1);
+    box-shadow: inset 0 2px 0 0 #007acc;
   }
 
-  .field-name {
-    display: flex;
-    align-items: flex-start;
-    font-size: 16px;
-    color: #000;
-    padding-top: 8px;
-  }
-
-  .field-type {
-    display: flex;
-    align-items: flex-start;
-    font-size: 16px;
-    color: #999;
-    text-align: left;
-    justify-self: start;
-    padding-top: 8px;
-  }
-
-  .field-actions {
-    display: flex;
-    gap: 0;
-    justify-self: end;
-    align-items: flex-start;
-  }
-
-  .icon-grid {
-    display: grid;
-    grid-template-columns: repeat(3, 36px);
-    gap: 0;
-    align-content: start;
+  /* Label - absolutely positioned to the left of card */
+  .field-label-column {
+    position: absolute;
+    right: calc(100% + 8px);
+    top: 6px;
+    width: 92px;
+    text-align: right;
+    word-wrap: break-word;
+    overflow-wrap: break-word;
   }
 
   .field-label {
+    font-size: 13px;
+    font-weight: 500;
+    color: #000;
     cursor: pointer;
-    padding: 2px 4px;
-    border-radius: 2px;
-    transition: background-color 0.1s ease;
-    font-family: inherit;
+    display: block;
+    line-height: 1.3;
+    text-align: right;
   }
 
   .field-label:hover {
-    background: rgba(0, 0, 0, 0.05);
+    text-decoration: underline;
   }
 
-  .field-name-edit {
+  .field-name-input {
     font-family: inherit;
-    font-size: 16px;
-    padding: 4px 8px;
+    font-size: 13px;
+    font-weight: 500;
+    padding: 2px 4px;
     border: 1px solid #ccc;
-    border-radius: 5px;
+    border-radius: 4px;
     outline: none;
     background: white;
-    min-width: 120px;
+    width: 100%;
     color: #000;
+    text-align: right;
   }
 
-  .field-name-edit:focus {
+  .field-name-input:focus {
     border-color: #007acc;
   }
 
-  .field-type-label {
-    font-family: inherit;
-    font-size: 16px;
-    color: #999;
+  /* Right column: Field Card - consistent width */
+  .field-card {
+    background: #f5f5f5;
+    border-radius: 6px;
+    padding: 6px 8px;
+    transition: all 0.15s ease;
+  }
+
+  .field-card:hover {
+    background: #efefef;
+  }
+
+  .new-field-card {
+    background: #fff;
+    border: 1px dashed #ccc;
+  }
+
+  /* Card Header */
+  .card-header {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+
+  /* Type Area */
+  .field-type-area {
+    flex: 0 0 auto;
+  }
+
+  .field-type-badge {
+    display: inline-block;
+    padding: 4px 8px;
+    background: white;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    font-size: 12px;
+    color: #666;
   }
 
   .field-type-select {
     font-family: inherit;
-    font-size: 16px;
+    font-size: 12px;
     padding: 4px 8px;
-    border: 1px solid #ccc;
-    border-radius: 5px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
     outline: none;
     background: white;
-    max-width: 100px;
-    width: 100px;
-    color: #999;
+    color: #666;
+    cursor: pointer;
+    min-width: 80px;
   }
 
-  .new-field-row .field-type-select {
-    color: #999;
+  .field-type-select:hover {
+    border-color: #aaa;
   }
 
   .field-type-select:focus {
     border-color: #007acc;
   }
 
-  .icon-button {
-    width: 36px;
-    height: 36px;
+  /* Field Actions */
+  .field-actions {
+    display: flex;
+    align-items: center;
+    gap: 0;
+    margin-left: auto;
+  }
+
+  .icon-btn {
+    width: 26px;
+    height: 26px;
     border: none;
     background: transparent;
     cursor: pointer;
-    border-radius: 5px;
+    border-radius: 4px;
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 16px;
-    transition: background-color 0.1s ease;
+    color: #888;
+    transition: all 0.15s ease;
+  }
+
+  .icon-btn:hover:not(:disabled) {
+    background: rgba(0, 0, 0, 0.08);
+    color: #333;
+  }
+
+  .icon-btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+
+  .icon-btn.active {
     color: #000;
   }
 
-  .icon-button:hover:not(:disabled) {
-    background: rgba(0, 0, 0, 0.05);
+  .icon-btn.inactive {
+    opacity: 0.4;
   }
 
-  .icon-button:disabled {
+  .icon-btn.delete-btn:hover {
+    color: #dc2626;
+    background: rgba(220, 38, 38, 0.1);
+  }
+
+  .icon-btn.delete-btn.confirm {
+    color: #dc2626;
+    background: rgba(220, 38, 38, 0.15);
+  }
+
+  .icon-btn.lock-btn {
+    color: #888;
+  }
+
+  .icon-btn.save-btn {
+    color: #22c55e;
+  }
+
+  .icon-btn.save-btn:hover:not(:disabled) {
+    background: rgba(34, 197, 94, 0.1);
+  }
+
+  .icon-btn.cancel-btn {
+    color: #ef4444;
+    font-size: 14px;
+    font-weight: bold;
+  }
+
+  .icon-btn.cancel-btn:hover {
+    background: rgba(239, 68, 68, 0.1);
+  }
+
+  .drag-handle {
+    cursor: grab;
+  }
+
+  .drag-handle:active {
+    cursor: grabbing;
+  }
+
+  /* Reorder Arrows */
+  .reorder-arrows {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+  }
+
+  .arrow-btn {
+    width: 20px;
+    height: 16px;
+    border: none;
+    background: transparent;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #888;
+    transition: color 0.15s ease;
+  }
+
+  .arrow-btn:hover:not(:disabled) {
+    color: #333;
+  }
+
+  .arrow-btn:disabled {
     opacity: 0.3;
     cursor: not-allowed;
   }
 
-  .icon-button.inactive {
-    opacity: 0.5;
-  }
-
-  .save-button {
-    color: #22c55e;
-  }
-
-  .cancel-button {
-    color: #ef4444;
-  }
-
-  .icon-button-spacer {
-    width: 36px;
-    height: 36px;
-  }
-
-  .new-field-actions {
-    display: flex;
-    gap: 4px;
-    justify-content: flex-end;
-    align-items: center;
-    flex-wrap: nowrap;
-    min-width: 180px;
-  }
-
-  .required-button {
-    color: #999;
-  }
-
-  .required-button.active {
-    color: #000;
-  }
-
-  .required-button:disabled {
-    color: #000;
-    opacity: 1;
-  }
-
-  .edit-button {
-    color: #000;
-  }
-
-  .edit-button.active {
-    background: #000000;
-    color: #ffffff;
-  }
-
-  .edit-button.active:hover {
-    background: #1a1a1a;
-  }
-
-  .config-editor-panel {
-    grid-column: 1 / -1;
-    padding: 0;
-    background: transparent;
-    border: none;
-    border-radius: 0;
-    margin: 0 0 15px 0;
-  }
-
-  .config-extra-options {
-    margin-top: 20px;
-    padding-top: 0;
-  }
-
-  .config-option-row {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 12px;
-  }
-
-  .config-option-label {
-    font-size: 14px;
-    color: #666;
-    font-family: inherit;
-  }
-
-  .config-option-buttons {
-    display: flex;
-    gap: 4px;
-  }
-
-  .config-actions {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    gap: 8px;
-    margin-top: 20px;
-    padding-top: 0;
-  }
-
-  .config-actions-left {
-    display: flex;
-    gap: 8px;
-    align-items: center;
-  }
-
-  .config-actions-right {
-    display: flex;
-    gap: 8px;
-    align-items: center;
-  }
-
-  .config-save-btn {
-    background: #000000;
-    color: white;
-    border: none;
-    padding: 8px 16px;
-    border-radius: 4px;
-    font-size: 14px;
-    font-family: inherit;
-    cursor: pointer;
-    transition: background 0.1s ease;
-  }
-
-  .config-save-btn:hover {
-    background: #1a1a1a;
-  }
-
-  .config-cancel-btn {
-    background: transparent;
-    color: #666;
-    border: 1px solid #ccc;
-    padding: 8px 16px;
-    border-radius: 4px;
-    font-size: 14px;
-    font-family: inherit;
-    cursor: pointer;
-    transition: all 0.1s ease;
-  }
-
-  .config-cancel-btn:hover {
-    background: rgba(0, 0, 0, 0.05);
-    border-color: #999;
-  }
-
-  .config-delete-btn {
-    background: transparent;
-    color: #dc2626;
-    border: 1px solid rgba(220, 38, 38, 0.3);
-    padding: 8px 16px;
-    border-radius: 4px;
-    font-size: 14px;
-    font-family: inherit;
-    cursor: pointer;
-    transition: all 0.1s ease;
-    display: flex;
-    align-items: center;
-  }
-
-  .config-delete-btn:hover {
-    background: rgba(220, 38, 38, 0.05);
-    border-color: #dc2626;
-  }
-
-  .config-delete-confirm-btn {
-    background: #dc2626;
-    color: white;
-    border: none;
-    padding: 8px 16px;
-    border-radius: 4px;
-    font-size: 14px;
-    font-family: inherit;
-    cursor: pointer;
-    transition: all 0.1s ease;
-  }
-
-  .config-delete-confirm-btn:hover {
-    background: #b91c1c;
-  }
-
-  .empty-state {
-    padding: 24px;
-    text-align: center;
-    color: #000;
+  /* Card Content (expanded config) */
+  .card-content {
+    margin-top: 8px;
+    padding-left: 4px;
     display: flex;
     flex-direction: column;
-    gap: 16px;
+    gap: 2px;
   }
 
-  .empty-state p {
-    margin: 0;
-    font-size: 14px;
+  /* Address sub-field toggles */
+  .subfield-toggle {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 2px 0;
+    background: none;
+    border: none;
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 12px;
+    color: #333;
   }
 
-  .add-field-bar {
-    width: 100%;
-    padding: 12px;
+  .subfield-toggle:hover {
+    color: #000;
+  }
+
+  .subfield-toggle .toggle-icon {
+    width: 14px;
+    height: 14px;
+    border: 1.5px solid #999;
+    border-radius: 2px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 10px;
+    background: white;
+    transition: all 0.15s ease;
+  }
+
+  .subfield-toggle:hover .toggle-icon {
+    border-color: #666;
+  }
+
+  .subfield-toggle.enabled .toggle-icon {
+    background: #22c55e;
+    border-color: #22c55e;
+    color: white;
+  }
+
+  .subfield-toggle:not(.enabled) .toggle-icon {
+    color: transparent;
+  }
+
+  .subfield-toggle .toggle-label {
+    color: inherit;
+  }
+
+  .subfield-toggle:not(.enabled) .toggle-label {
+    color: #666;
+  }
+
+  /* Multidate fields */
+  .date-field-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 4px;
+  }
+
+  .date-label-input {
+    font-family: inherit;
+    font-size: 12px;
+    padding: 4px 6px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    outline: none;
+    background: white;
+    width: 180px;
+  }
+
+  .date-label-input:focus {
+    border-color: #007acc;
+  }
+
+  .remove-date-btn {
+    width: 20px;
+    height: 20px;
     border: none;
     background: transparent;
-    color: #666;
     cursor: pointer;
-    border-radius: 5px;
-    font-family: inherit;
-    font-size: 16px;
-    text-align: center;
-    transition: all 0.1s ease;
-    margin-top: 12px;
+    color: #999;
+    font-size: 12px;
+    border-radius: 3px;
     display: flex;
     align-items: center;
     justify-content: center;
   }
 
-  .add-field-bar:hover:not(:disabled) {
-    color: #000;
+  .remove-date-btn:hover {
+    background: rgba(220, 38, 38, 0.1);
+    color: #dc2626;
+  }
+
+  .add-date-btn {
+    display: inline-block;
+    padding: 4px 8px;
+    background: transparent;
+    border: 1px dashed #ccc;
+    border-radius: 4px;
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 12px;
+    color: #666;
+    transition: all 0.15s ease;
+  }
+
+  .add-date-btn:hover {
+    border-color: #999;
+    color: #333;
     background: rgba(0, 0, 0, 0.02);
   }
 
-  .add-field-bar:disabled {
+  /* Category content */
+  .category-content {
+    margin-top: 6px;
+  }
+
+  /* Gallery placeholder */
+  .gallery-placeholder {
+    min-height: 40px;
+  }
+
+  /* Price field config */
+  .price-content {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .price-columns {
+    display: flex;
+    gap: 24px;
+  }
+
+  .price-col-sources {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .price-col-options {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .price-currency-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 4px;
+  }
+
+  .price-label {
+    font-size: 12px;
+    color: #666;
+  }
+
+  .price-currency-input {
+    font-family: inherit;
+    font-size: 12px;
+    padding: 4px 6px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    outline: none;
+    background: white;
+    width: 50px;
+  }
+
+  .price-currency-input:focus {
+    border-color: #007acc;
+  }
+
+  .funding-sources {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .funding-source-item {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+  }
+
+  .funding-source-input {
+    font-family: inherit;
+    font-size: 12px;
+    padding: 4px 6px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    outline: none;
+    background: white;
+    width: 180px;
+  }
+
+  .funding-source-input:focus {
+    border-color: #007acc;
+  }
+
+  .remove-source-btn {
+    width: 18px;
+    height: 18px;
+    border: none;
+    background: transparent;
+    cursor: pointer;
+    color: #999;
+    font-size: 11px;
+    border-radius: 3px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .remove-source-btn:hover {
+    background: rgba(220, 38, 38, 0.1);
+    color: #dc2626;
+  }
+
+  .add-source-btn {
+    display: inline-block;
+    padding: 4px 8px;
+    background: transparent;
+    border: 1px dashed #ccc;
+    border-radius: 4px;
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 11px;
+    color: #666;
+    transition: all 0.15s ease;
+  }
+
+  .add-source-btn:hover {
+    border-color: #999;
+    color: #333;
+  }
+
+  .price-option-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 2px 0;
+    background: none;
+    border: none;
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 12px;
+    color: #333;
+  }
+
+  .price-option-toggle:hover {
+    color: #000;
+  }
+
+  .price-option-toggle .toggle-icon {
+    width: 14px;
+    height: 14px;
+    border: 1.5px solid #999;
+    border-radius: 2px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 10px;
+    background: white;
+    transition: all 0.15s ease;
+  }
+
+  .price-option-toggle:hover .toggle-icon {
+    border-color: #666;
+  }
+
+  .price-option-toggle.enabled .toggle-icon {
+    background: #22c55e;
+    border-color: #22c55e;
+    color: white;
+  }
+
+  .price-option-toggle:not(.enabled) .toggle-icon {
+    color: transparent;
+  }
+
+  .price-option-toggle:not(.enabled) .toggle-label {
+    color: #666;
+  }
+
+  /* Selection field config */
+  .selection-content {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .selection-columns {
+    display: flex;
+    gap: 24px;
+  }
+
+  .selection-col-options {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    flex: 1;
+  }
+
+  .selection-col-settings {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    min-width: 140px;
+  }
+
+  .selection-label {
+    font-size: 12px;
+    color: #666;
+  }
+
+  .selection-mode-row,
+  .selection-limit-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .selection-mode-select {
+    font-family: inherit;
+    font-size: 12px;
+    padding: 4px 6px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    outline: none;
+    background: white;
+    cursor: pointer;
+  }
+
+  .selection-mode-select:focus {
+    border-color: #007acc;
+  }
+
+  .selection-limit-input {
+    font-family: inherit;
+    font-size: 12px;
+    padding: 4px 6px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    outline: none;
+    background: white;
+    width: 50px;
+  }
+
+  .selection-limit-input:focus {
+    border-color: #007acc;
+  }
+
+  .selection-option-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 2px 0;
+    background: none;
+    border: none;
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 12px;
+    color: #333;
+  }
+
+  .selection-option-toggle:hover {
+    color: #000;
+  }
+
+  .selection-option-toggle .toggle-icon {
+    width: 14px;
+    height: 14px;
+    border: 1.5px solid #999;
+    border-radius: 2px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 10px;
+    background: white;
+    transition: all 0.15s ease;
+  }
+
+  .selection-option-toggle:hover .toggle-icon {
+    border-color: #666;
+  }
+
+  .selection-option-toggle.enabled .toggle-icon {
+    background: #22c55e;
+    border-color: #22c55e;
+    color: white;
+  }
+
+  .selection-option-toggle:not(.enabled) .toggle-icon {
+    color: transparent;
+  }
+
+  .selection-option-toggle:not(.enabled) .toggle-label {
+    color: #666;
+  }
+
+  .selection-option-toggle.disabled {
     opacity: 0.5;
     cursor: not-allowed;
   }
 
-  .field-config {
-    padding: 0;
+  .selection-option-toggle.disabled:hover {
+    color: #333;
+  }
+
+  .selection-option-toggle.disabled .toggle-icon {
+    border-color: #ccc;
+  }
+
+  .selection-option-toggle.category-toggle.enabled .toggle-icon {
+    background: #2563eb;
+    border-color: #2563eb;
+  }
+
+  /* Add field button */
+  .add-field-btn {
+    width: 100%;
+    padding: 8px;
+    border: 1px dashed #ccc;
     background: transparent;
-    border-radius: 0;
-    margin: 8px 0 0 0;
-  }
-
-  .field-config:last-child {
-    margin-bottom: 20px;
-  }
-
-  .config-label {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    font-size: 14px;
     color: #666;
     cursor: pointer;
-  }
-
-  .config-checkbox {
-    margin: 0;
-  }
-
-  .category-manager {
-    padding: 0;
-    background: transparent;
-    border-radius: 0;
-    margin: 0;
-  }
-
-  /* Configuration panel styles */
-  .config-section {
-    margin-bottom: 16px;
-    padding: 0;
-  }
-
-  .config-input {
-    padding: 6px 8px;
-    border: 1px solid #ccc;
-    border-radius: 4px;
-    font-size: 14px;
+    border-radius: 6px;
     font-family: inherit;
-    width: 100%;
-    box-sizing: border-box;
-  }
-
-  .config-input:focus {
-    outline: none;
-    border-color: #007acc;
-  }
-
-  .config-row-inline {
+    font-size: 13px;
+    text-align: center;
+    transition: all 0.15s ease;
     display: flex;
     align-items: center;
+    justify-content: center;
+  }
+
+  .add-field-btn:hover:not(:disabled) {
+    border-color: #999;
+    color: #333;
+    background: rgba(0, 0, 0, 0.02);
+  }
+
+  .add-field-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  /* Empty state */
+  .empty-state {
+    padding: 24px;
+    text-align: center;
+    color: #666;
+    display: flex;
+    flex-direction: column;
     gap: 12px;
   }
 
-  .config-input-inline {
-    padding: 6px 8px;
-    border: 1px solid #ccc;
-    border-radius: 4px;
-    font-size: 14px;
-    font-family: inherit;
-    width: 120px;
-  }
-
-  .config-input-inline:focus {
-    outline: none;
-    border-color: #007acc;
-  }
-
-  .config-select {
-    padding: 6px 8px;
-    border: 1px solid #ccc;
-    border-radius: 4px;
-    font-size: 14px;
-    font-family: inherit;
-    background: white;
-  }
-
-  .config-select:focus {
-    outline: none;
-    border-color: #007acc;
-  }
-
-  .checkbox-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
-    gap: 8px;
-    margin-top: 8px;
-  }
-
-  .checkbox-label {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    font-size: 13px;
-    color: #333;
-    cursor: pointer;
-  }
-
-  .checkbox-label input[type="checkbox"] {
-    cursor: pointer;
-  }
-
-  .date-field-row,
-  .funding-source-row {
-    display: grid;
-    grid-template-columns: 1fr 1fr auto auto;
-    gap: 8px;
-    margin-bottom: 8px;
-    align-items: center;
-  }
-
-  .add-btn {
-    background: #000000;
-    color: white;
-    border: none;
-    padding: 6px 12px;
-    border-radius: 4px;
-    font-size: 13px;
-    cursor: pointer;
-    margin-top: 8px;
-  }
-
-  .add-btn:hover {
-    background: #1a1a1a;
-  }
-
-  .remove-btn {
-    background: #dc2626;
-    color: white;
-    border: none;
-    padding: 6px 10px;
-    border-radius: 4px;
-    font-size: 13px;
-    cursor: pointer;
-    line-height: 1;
-  }
-
-  .remove-btn:hover {
-    background: #b91c1c;
+  .empty-state p {
+    margin: 0;
+    font-size: 12px;
   }
 
   /* Mobile responsive */
   @media (max-width: 640px) {
-    .field-row {
-      grid-template-columns: 1fr;
-      gap: 8px;
-      padding: 12px 0;
-    }
-
-    .field-actions {
-      justify-self: start;
-    }
-
-    .field-type {
+    .fields-list {
       margin-left: 0;
     }
 
-    .date-field-row,
-    .funding-source-row {
-      grid-template-columns: 1fr;
+    .field-label-column {
+      position: static;
+      width: auto;
+      padding-bottom: 2px;
+      text-align: left;
     }
 
-    .checkbox-grid {
-      grid-template-columns: repeat(auto-fill, minmax(80px, 1fr));
+    .field-label {
+      text-align: left;
     }
+
+    .field-name-input {
+      text-align: left;
+    }
+
+    .field-row {
+      display: flex;
+      flex-direction: column;
+    }
+
+    .card-header {
+      flex-wrap: wrap;
+      gap: 4px;
+    }
+
+    .field-actions {
+      margin-left: 0;
+    }
+
+    .reorder-arrows {
+      flex-direction: row;
+    }
+  }
+
+  /* Legacy field content */
+  .legacy-content {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .legacy-notice {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    color: #b45309;
+    font-size: 12px;
+  }
+
+  .legacy-icon {
+    font-size: 14px;
+  }
+
+  .migrate-btn {
+    padding: 8px 12px;
+    background: #2563eb;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 12px;
+    font-weight: 500;
+    transition: background-color 0.15s;
+  }
+
+  .migrate-btn:hover {
+    background: #1d4ed8;
+  }
+
+  .migrate-hint {
+    font-size: 11px;
+    color: #666;
+    margin: 0;
+    line-height: 1.4;
+  }
+
+  .tag-manager-details {
+    margin-top: 8px;
+  }
+
+  .tag-manager-details summary {
+    cursor: pointer;
+    font-size: 11px;
+    color: #666;
+    padding: 4px 0;
+  }
+
+  .tag-manager-details summary:hover {
+    color: #333;
+  }
+
+  /* Migration Modal */
+  .migration-modal-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.5);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+  }
+
+  .migration-modal {
+    background: white;
+    border: 1px solid #000;
+    padding: 24px;
+    max-width: 480px;
+    width: 90%;
+  }
+
+  .migration-modal-title {
+    margin: 0 0 16px 0;
+    font-size: 16px;
+    font-weight: 600;
+  }
+
+  .migration-modal-content {
+    margin-bottom: 20px;
+  }
+
+  .migration-info {
+    margin: 0 0 8px 0;
+    font-weight: 500;
+  }
+
+  .migration-changes {
+    margin: 0 0 12px 0;
+    padding-left: 20px;
+    font-size: 13px;
+    line-height: 1.6;
+  }
+
+  .migration-changes li {
+    margin-bottom: 4px;
+  }
+
+  .migration-warning {
+    padding: 8px 12px;
+    background: #fef3c7;
+    border: 1px solid #f59e0b;
+    font-size: 12px;
+    margin: 12px 0;
+  }
+
+  .migration-irreversible {
+    font-size: 12px;
+    color: #dc2626;
+    font-weight: 500;
+    margin: 12px 0 0 0;
+  }
+
+  .migration-error {
+    color: #dc2626;
+    font-size: 12px;
+    margin: 8px 0;
+    padding: 8px;
+    background: #fef2f2;
+    border: 1px solid #fecaca;
+  }
+
+  .migration-modal-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+  }
+
+  .migration-cancel-btn,
+  .migration-confirm-btn {
+    padding: 8px 16px;
+    border: 1px solid #000;
+    font-family: inherit;
+    font-size: 13px;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+
+  .migration-cancel-btn {
+    background: white;
+    color: #000;
+  }
+
+  .migration-cancel-btn:hover:not(:disabled) {
+    background: #f3f4f6;
+  }
+
+  .migration-confirm-btn {
+    background: #2563eb;
+    color: white;
+    border-color: #2563eb;
+  }
+
+  .migration-confirm-btn:hover:not(:disabled) {
+    background: #1d4ed8;
+  }
+
+  .migration-cancel-btn:disabled,
+  .migration-confirm-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
   }
 </style>

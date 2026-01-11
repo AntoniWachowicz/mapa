@@ -5,7 +5,7 @@
    * Supports multiple field types: price, multidate, address, links, tags, richtext, etc.
    */
 
-  import type { SavedObject, Template, PriceData, CategoryFieldData } from '$lib/types';
+  import type { SavedObject, Template, PriceData, CategoryFieldData, SelectionFieldData, SelectionConfig, SelectionOption } from '$lib/types';
 
   interface Props {
     field: any;
@@ -34,7 +34,7 @@
     onEditSave?: () => void;
     onEditCancel?: () => void;
     onEditValueChange?: (newValue: any) => void;
-    onToggleExpansion?: (objectId: string, fieldKey: string) => void;
+    onToggleRowExpansion?: (objectId: string) => void;
     onShowTooltip?: (event: MouseEvent, content: any) => void;
     onHideTooltip?: () => void;
     onQuickGeocode?: (objectId: string) => void;
@@ -65,7 +65,7 @@
     onEditSave,
     onEditCancel,
     onEditValueChange,
-    onToggleExpansion,
+    onToggleRowExpansion,
     onShowTooltip,
     onHideTooltip,
     onQuickGeocode,
@@ -84,8 +84,8 @@
     }
   }
 
-  function handleToggleExpansion() {
-    onToggleExpansion?.(object.id, field.key);
+  function handleToggleRowExpansion() {
+    onToggleRowExpansion?.(object.id);
   }
 
   function handleEditStart() {
@@ -256,7 +256,7 @@
     <div
       class="cell-content"
       class:expanded={isExpanded}
-      onclick={handleToggleExpansion}
+      onclick={handleToggleRowExpansion}
       ondblclick={handleEditStart}
       onmouseenter={handleMouseEnter}
       onmouseleave={handleMouseLeave}
@@ -423,7 +423,7 @@
             {/each}
           </div>
         {/if}
-      {:else if field.type === 'tags'}
+      {:else if field.type === 'tags' || field.type === 'category'}
         {#if fieldValue && typeof fieldValue === 'object' && fieldValue !== null && 'majorTag' in fieldValue}
           {@const tagData = fieldValue as CategoryFieldData}
           {@const majorTag = template.tags?.find(t => t.id === tagData.majorTag)}
@@ -431,6 +431,62 @@
             <span class="tag-display" style="background-color: {majorTag.color}">
               {majorTag.displayName || majorTag.name}
             </span>
+          {:else}
+            <span class="missing-data">—</span>
+          {/if}
+        {:else}
+          <span class="missing-data">—</span>
+        {/if}
+      {:else if field.type === 'selection'}
+        {#if fieldValue && typeof fieldValue === 'object' && fieldValue !== null}
+          {@const selData = fieldValue as SelectionFieldData}
+          {@const selConfig = (field.config as SelectionConfig) || { mode: 'single', options: [] }}
+          {@const mode = selConfig.mode || 'single'}
+          {@const getOption = (id: string) => selConfig.options?.find(o => o.id === id)}
+          {@const getColor = (id: string) => getOption(id)?.color || '#6b7280'}
+          {@const getLabel = (id: string) => getOption(id)?.value || id}
+          {@const isCustom = (id: string) => (selData.customEntries || []).includes(id)}
+          {#if mode === 'single'}
+            {#if selData.selected}
+              <span class="selection-badge" style="background-color: {getColor(selData.selected)}" class:custom={isCustom(selData.selected)}>
+                {getLabel(selData.selected)}
+              </span>
+            {:else}
+              <span class="missing-data">—</span>
+            {/if}
+          {:else if mode === 'multi'}
+            {#if selData.selections && selData.selections.length > 0}
+              <div class="selection-badges">
+                {#each selData.selections as selId}
+                  <span class="selection-badge small" style="background-color: {getColor(selId)}" class:custom={isCustom(selId)}>
+                    {getLabel(selId)}
+                  </span>
+                {/each}
+              </div>
+            {:else}
+              <span class="missing-data">—</span>
+            {/if}
+          {:else if mode === 'hierarchical'}
+            {#if selData.primary || (selData.secondary && selData.secondary.length > 0)}
+              <div class="selection-hierarchical">
+                {#if selData.primary}
+                  <span class="selection-badge primary" style="background-color: {getColor(selData.primary)}">
+                    {getLabel(selData.primary)}
+                  </span>
+                {/if}
+                {#if selData.secondary && selData.secondary.length > 0}
+                  <div class="selection-badges secondary">
+                    {#each selData.secondary as secId}
+                      <span class="selection-badge small" style="background-color: {getColor(secId)}" class:custom={isCustom(secId)}>
+                        {getLabel(secId)}
+                      </span>
+                    {/each}
+                  </div>
+                {/if}
+              </div>
+            {:else}
+              <span class="missing-data">—</span>
+            {/if}
           {/if}
         {:else}
           <span class="missing-data">—</span>
@@ -449,9 +505,15 @@
   /* Cell styles */
   td {
     border-bottom: 1px solid var(--color-border);
+    border-right: 1px solid rgba(0, 0, 0, 0.1);
     padding: 0;
     vertical-align: top;
     position: relative;
+    box-sizing: border-box;
+  }
+
+  td:last-child {
+    border-right: none;
   }
 
   td.sorted-column {
@@ -459,13 +521,16 @@
   }
 
   .cell-content {
-    padding: var(--space-2);
+    padding: 0.375rem 0.5rem;
     cursor: pointer;
-    min-height: 40px;
     display: flex;
     align-items: flex-start;
     position: relative;
     overflow: hidden;
+    /* Compact: max 2 lines */
+    max-height: 2.6rem;
+    line-height: 1.3;
+    font-family: "Space Mono", monospace;
   }
 
   .cell-content:hover {
@@ -473,6 +538,7 @@
   }
 
   .cell-content.expanded {
+    max-height: none;
     background-color: var(--color-surface-active);
   }
 
@@ -481,11 +547,23 @@
     word-break: break-word;
     white-space: pre-wrap;
     flex: 1;
+    font-size: 0.8125rem;
+    /* Clamp to 2 lines when not expanded */
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+
+  .cell-content.expanded .field-value {
+    -webkit-line-clamp: unset;
+    overflow: visible;
   }
 
   .missing-data {
     color: var(--color-text-secondary);
     font-style: italic;
+    font-size: 0.8125rem;
   }
 
   /* Compact view for multi-value fields */
@@ -493,14 +571,15 @@
     flex: 1;
     display: flex;
     flex-direction: column;
-    gap: 2px;
+    gap: 0.0625rem;
   }
 
   .compact-line {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    line-height: 1.4;
+    line-height: 1.3;
+    font-size: 0.8125rem;
   }
 
   /* Sub-fields display */
@@ -508,24 +587,24 @@
     flex: 1;
     display: flex;
     flex-direction: column;
-    gap: 4px;
+    gap: 0.125rem;
   }
 
   .sub-field-row {
     display: flex;
     gap: var(--space-2);
-    line-height: 1.4;
+    line-height: 1.3;
   }
 
   .sub-label {
     color: var(--color-text-secondary);
-    font-size: 13px;
+    font-size: 0.75rem;
     white-space: nowrap;
   }
 
   .sub-value {
     font-family: 'Space Mono', monospace;
-    font-size: 13px;
+    font-size: 0.8125rem;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -548,8 +627,8 @@
 
   .total-row {
     border-top: 1px solid var(--color-border);
-    padding-top: 4px;
-    margin-top: 2px;
+    padding-top: 0.125rem;
+    margin-top: 0.125rem;
     font-weight: 500;
   }
 
@@ -558,7 +637,7 @@
     flex: 1;
     display: flex;
     flex-direction: column;
-    gap: var(--space-2);
+    gap: var(--space-1);
   }
 
   .address-actions {
@@ -569,11 +648,11 @@
 
   .quick-geocode-address-btn,
   .sync-address-btn {
-    padding: 4px 8px;
-    font-size: 12px;
+    padding: 0.125rem 0.375rem;
+    font-size: 0.6875rem;
     border: 1px solid var(--color-border);
     background: var(--color-surface);
-    border-radius: 4px;
+    border-radius: 0.25rem;
     cursor: pointer;
     transition: all 0.15s ease;
   }
@@ -585,18 +664,57 @@
   }
 
   .geocoding-status {
-    font-size: 12px;
+    font-size: 0.75rem;
     color: var(--color-text-secondary);
   }
 
   /* Tags field */
   .tag-display {
     display: inline-block;
-    padding: 4px 12px;
-    border-radius: 12px;
-    font-size: 13px;
+    padding: 0.125rem 0.5rem;
+    border-radius: 0.625rem;
+    font-size: 0.75rem;
     font-weight: 500;
     color: white;
+  }
+
+  /* Selection field */
+  .selection-badge {
+    display: inline-block;
+    padding: 0.125rem 0.5rem;
+    border-radius: 0.25rem;
+    font-size: 0.75rem;
+    font-weight: 500;
+    color: white;
+  }
+
+  .selection-badge.small {
+    padding: 0.0625rem 0.375rem;
+    font-size: 0.6875rem;
+  }
+
+  .selection-badge.primary {
+    border: 2px solid rgba(0, 0, 0, 0.2);
+  }
+
+  .selection-badge.custom {
+    font-style: italic;
+  }
+
+  .selection-badges {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.25rem;
+  }
+
+  .selection-badges.secondary {
+    margin-top: 0.25rem;
+  }
+
+  .selection-hierarchical {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
   }
 
   /* Edit mode styles */
@@ -610,15 +728,15 @@
   .edit-field-input,
   .edit-field-textarea {
     width: 100%;
-    padding: 6px 8px;
+    padding: 0.375rem 0.5rem;
     border: 2px solid var(--color-primary);
-    border-radius: 4px;
+    border-radius: 0.25rem;
     font-family: inherit;
-    font-size: 14px;
+    font-size: 0.875rem;
   }
 
   .edit-field-textarea {
-    min-height: 80px;
+    min-height: 5rem;
     resize: vertical;
   }
 
@@ -628,7 +746,7 @@
   .edit-links-container {
     display: flex;
     flex-direction: column;
-    gap: 6px;
+    gap: 0.375rem;
   }
 
   .edit-price-row,
@@ -640,18 +758,18 @@
   }
 
   .edit-label {
-    font-size: 12px;
+    font-size: 0.75rem;
     color: var(--color-text-secondary);
     white-space: nowrap;
-    min-width: 80px;
+    min-width: 5rem;
   }
 
   .edit-field-input-small {
     flex: 1;
-    padding: 4px 6px;
+    padding: 0.25rem 0.375rem;
     border: 1px solid var(--color-border);
-    border-radius: 3px;
-    font-size: 13px;
+    border-radius: 0.1875rem;
+    font-size: 0.8125rem;
   }
 
   .edit-field-input-small:focus {
@@ -667,11 +785,11 @@
 
   .edit-save-btn,
   .edit-cancel-btn {
-    padding: 4px 12px;
+    padding: 0.25rem 0.75rem;
     border: none;
-    border-radius: 4px;
+    border-radius: 0.25rem;
     cursor: pointer;
-    font-size: 14px;
+    font-size: 0.875rem;
     font-weight: 500;
     transition: all 0.15s ease;
   }

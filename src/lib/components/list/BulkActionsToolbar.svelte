@@ -31,27 +31,29 @@
 <style>
   .bulk-toolbar {
     display: flex;
-    gap: 12px;
+    gap: 0.75rem;
     align-items: center;
     background: #eff6ff;
     border: 1px solid #bfdbfe;
-    border-radius: 6px;
-    padding: 12px 16px;
-    margin-bottom: 16px;
+    border-radius: 0;
+    padding: 0.75rem 1rem;
+    margin-bottom: 1rem;
   }
 
   .bulk-count {
-    font-size: 14px;
+    font-family: "Space Mono", monospace;
+    font-size: 0.875rem;
     font-weight: 500;
     color: #1e40af;
     margin-right: auto;
   }
 
   .btn {
-    padding: 8px 16px;
+    padding: 0.5rem 1rem;
     border: none;
-    border-radius: 4px;
-    font-size: 14px;
+    border-radius: 0;
+    font-family: "Space Mono", monospace;
+    font-size: 0.875rem;
     font-weight: 500;
     cursor: pointer;
     transition: all 0.2s;

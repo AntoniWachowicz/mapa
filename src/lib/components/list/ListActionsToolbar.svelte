@@ -46,29 +46,34 @@
   .btn {
     display: inline-flex;
     align-items: center;
-    gap: 6px;
-    padding: 10px 16px;
+    gap: 0.375rem;
+    padding: 0.625rem 1rem;
     border: none;
-    border-radius: 6px;
-    font-size: 14px;
+    border-radius: 0;
+    font-family: "Space Mono", monospace;
+    font-size: 0.875rem;
     font-weight: 500;
     cursor: pointer;
     transition: all 0.2s;
   }
 
   .btn-primary {
-    background: #3b82f6;
+    background: #000000;
     color: white;
   }
 
   .btn-primary:hover {
-    background: #2563eb;
+    background: #1a1a1a;
     transform: translateY(-1px);
-    box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
   }
 
   .btn-primary:active {
     transform: translateY(0);
-    box-shadow: 0 2px 4px rgba(59, 130, 246, 0.2);
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+  }
+
+  .btn-primary :global(.icon) {
+    filter: brightness(0) invert(1);
   }
 </style>

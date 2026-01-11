@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { SavedObject, Template, Tag, FieldValue, PriceData, GalleryData, MultiDateData, AddressData, FileData, LinkData, TagsFieldData, CategoryFieldData } from '$lib/types';
+  import type { SavedObject, Template, Tag, FieldValue, PriceData, GalleryData, MultiDateData, AddressData, FileData, LinkData, TagsFieldData, CategoryFieldData, SelectionFieldData, SelectionConfig, SelectionOption, Field } from '$lib/types';
   import Icon from '$lib/Icon.svelte';
 
   interface Props {
@@ -16,13 +16,66 @@
   const titleField = $derived(template.fields.find(f => f.fieldType === 'title' || f.key === 'title'));
   const titleValue = $derived(titleField ? (object.data[titleField.key || titleField.fieldName] as string) : '');
 
-  const categoryField = $derived(template.fields.find(f => f.fieldType === 'category' || f.type === 'category'));
-  const categoryData = $derived(categoryField ? object.data[categoryField.key || categoryField.fieldName] : null);
-  const categoryTag = $derived(categoryData && typeof categoryData === 'object' && 'majorTag' in categoryData
-    ? template.tags.find(t => t.id === (categoryData as CategoryFieldData).majorTag || t.name === (categoryData as CategoryFieldData).majorTag)
-    : null);
-  const categoryColor = $derived(categoryTag?.color || '#E57373');
-  const categoryLabel = $derived(categoryTag?.displayName || categoryTag?.name || 'Kategoria');
+  // Category field: either legacy 'category' type or a selection field with isCategory flag
+  const categoryField = $derived(template.fields.find(f =>
+    f.fieldType === 'category' ||
+    f.type === 'category' ||
+    (f.fieldType === 'selection' && (f.config as SelectionConfig | undefined)?.isCategory)
+  ));
+
+  // Get category color and label based on field type
+  const categoryInfo = $derived(() => {
+    if (!categoryField) return { color: '#E57373', label: 'Kategoria' };
+
+    const fieldKey = categoryField.key || categoryField.fieldName;
+    const fieldData = object.data[fieldKey];
+
+    // Legacy category field - uses template.tags
+    if (categoryField.fieldType === 'category' || categoryField.type === 'category') {
+      if (fieldData && typeof fieldData === 'object' && 'majorTag' in fieldData) {
+        const majorTagId = (fieldData as CategoryFieldData).majorTag;
+        const tag = template.tags.find(t => t.id === majorTagId || t.name === majorTagId);
+        return {
+          color: tag?.color || '#E57373',
+          label: tag?.displayName || tag?.name || 'Kategoria'
+        };
+      }
+      return { color: '#E57373', label: 'Kategoria' };
+    }
+
+    // Selection field with isCategory - uses field.config.options
+    if (categoryField.fieldType === 'selection') {
+      const config = categoryField.config as SelectionConfig | undefined;
+      const options = config?.options || [];
+      const mode = config?.mode || 'single';
+      const selData = fieldData as SelectionFieldData | undefined;
+
+      if (!selData) return { color: '#E57373', label: 'Kategoria' };
+
+      let primaryId: string | null = null;
+      if (mode === 'single' && selData.selected) {
+        primaryId = selData.selected;
+      } else if (mode === 'hierarchical' && selData.primary) {
+        primaryId = selData.primary;
+      } else if (mode === 'multi' && selData.selections && selData.selections.length > 0) {
+        primaryId = selData.selections[0]; // Use first selection for multi mode
+      }
+
+      if (primaryId) {
+        const option = options.find(o => o.id === primaryId);
+        return {
+          color: option?.color || '#E57373',
+          label: option?.value || primaryId
+        };
+      }
+      return { color: '#E57373', label: 'Kategoria' };
+    }
+
+    return { color: '#E57373', label: 'Kategoria' };
+  });
+
+  const categoryColor = $derived(categoryInfo().color);
+  const categoryLabel = $derived(categoryInfo().label);
 
   const richTextField = $derived(template.fields.find(f => f.fieldType === 'richtext'));
   const richTextValue = $derived(richTextField ? (object.data[richTextField.key || richTextField.fieldName] as string) : '');
@@ -47,6 +100,12 @@
 
   const tagsField = $derived(template.fields.find(f => f.fieldType === 'tags'));
   const tagsValue = $derived(tagsField ? (object.data[tagsField.key || tagsField.fieldName] as TagsFieldData) : null);
+
+  // Selection fields - can be multiple (exclude the one marked as isCategory since it's shown in the rotated label)
+  const selectionFields = $derived(template.fields.filter(f =>
+    (f.fieldType === 'selection' || f.type === 'selection') &&
+    !(f.config as SelectionConfig | undefined)?.isCategory
+  ));
 
   // Rich text expansion state
   let isRichTextExpanded = $state(false);
@@ -186,6 +245,72 @@
     return tagsValue.selectedTags
       .map(tagId => template.tags.find(t => t.id === tagId || t.name === tagId))
       .filter(t => t !== undefined) as Tag[];
+  }
+
+  // Get selection field display data
+  function getSelectionDisplay(field: Field): { label: string; items: { id: string; value: string; color: string; isPrimary: boolean; isCustom: boolean }[] } | null {
+    const fieldKey = field.key || field.fieldName;
+    const selData = object.data[fieldKey] as SelectionFieldData;
+    if (!selData) return null;
+
+    const config = (field.config as SelectionConfig) || { mode: 'single', options: [] };
+    const mode = config.mode || 'single';
+    const options = config.options || [];
+
+    const getOption = (id: string) => options.find(o => o.id === id);
+    const getColor = (id: string) => getOption(id)?.color || '#6b7280';
+    const getLabel = (id: string) => getOption(id)?.value || id;
+    const isCustom = (id: string) => (selData.customEntries || []).includes(id);
+
+    const items: { id: string; value: string; color: string; isPrimary: boolean; isCustom: boolean }[] = [];
+
+    if (mode === 'single' && selData.selected) {
+      items.push({
+        id: selData.selected,
+        value: getLabel(selData.selected),
+        color: getColor(selData.selected),
+        isPrimary: true,
+        isCustom: isCustom(selData.selected)
+      });
+    } else if (mode === 'multi' && selData.selections && selData.selections.length > 0) {
+      selData.selections.forEach(id => {
+        items.push({
+          id,
+          value: getLabel(id),
+          color: getColor(id),
+          isPrimary: false,
+          isCustom: isCustom(id)
+        });
+      });
+    } else if (mode === 'hierarchical') {
+      if (selData.primary) {
+        items.push({
+          id: selData.primary,
+          value: getLabel(selData.primary),
+          color: getColor(selData.primary),
+          isPrimary: true,
+          isCustom: false
+        });
+      }
+      if (selData.secondary && selData.secondary.length > 0) {
+        selData.secondary.forEach(id => {
+          items.push({
+            id,
+            value: getLabel(id),
+            color: getColor(id),
+            isPrimary: false,
+            isCustom: isCustom(id)
+          });
+        });
+      }
+    }
+
+    if (items.length === 0) return null;
+
+    return {
+      label: field.label || field.fieldName || field.key || 'Wybór',
+      items
+    };
   }
 
   // Strip HTML from rich text
@@ -333,6 +458,28 @@
         {/each}
       </div>
     {/if}
+
+    <!-- Selection fields -->
+    {#each selectionFields as selField}
+      {@const selDisplay = getSelectionDisplay(selField)}
+      {#if selDisplay}
+        <div class="selection-section">
+          <div class="selection-label">{selDisplay.label}</div>
+          <div class="selection-items">
+            {#each selDisplay.items as item}
+              <span
+                class="selection-badge"
+                class:primary={item.isPrimary}
+                class:custom={item.isCustom}
+                style="background-color: {item.color};"
+              >
+                {item.value}
+              </span>
+            {/each}
+          </div>
+        </div>
+      {/if}
+    {/each}
   </div>
 
   <!-- Edit button -->
@@ -577,7 +724,6 @@
     margin-left: auto;
     margin-right: 8px;
     white-space: nowrap;
-    tabular-nums: true;
     font-variant-numeric: tabular-nums;
   }
 
@@ -586,7 +732,6 @@
     text-align: right;
     min-width: 35px;
     white-space: nowrap;
-    tabular-nums: true;
     font-variant-numeric: tabular-nums;
   }
 
@@ -666,6 +811,43 @@
     font-weight: 500;
     color: white;
     display: inline-block;
+  }
+
+  /* Selection section */
+  .selection-section {
+    margin-bottom: var(--margin);
+  }
+
+  .selection-label {
+    font-family: 'DM Sans', sans-serif;
+    font-size: 12px;
+    font-weight: 500;
+    color: #666;
+    margin-bottom: 8px;
+  }
+
+  .selection-items {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+
+  .selection-badge {
+    padding: 6px 12px;
+    border-radius: 0;
+    font-family: 'DM Sans', sans-serif;
+    font-size: 13px;
+    font-weight: 500;
+    color: white;
+    display: inline-block;
+  }
+
+  .selection-badge.primary {
+    border: 2px solid rgba(0, 0, 0, 0.2);
+  }
+
+  .selection-badge.custom {
+    font-style: italic;
   }
 
   /* Edit button */

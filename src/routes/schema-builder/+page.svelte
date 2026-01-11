@@ -45,7 +45,7 @@
 
 <style>
   .schema-container {
-    padding: var(--space-6);
+    padding: var(--space-4);
     height: calc(100vh - var(--nav-height));
     max-width: var(--content-max-width);
     margin: 0 auto;
@@ -53,26 +53,21 @@
 
   .schema-layout {
     display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: var(--space-6);
+    grid-template-columns: 1fr 420px;
+    gap: var(--space-4);
     height: 100%;
   }
 
   .builder-panel {
     background: var(--color-background);
-    border-radius: var(--radius-lg);
-    border: 1px solid var(--color-border);
-    padding: var(--space-6);
+    padding: var(--space-2);
     overflow-y: auto;
   }
 
   .preview-panel {
-    background: var(--color-surface);
-    border-radius: var(--radius-lg);
-    border: 1px solid var(--color-border-light);
+    background: transparent;
     overflow: hidden;
   }
-
 
   @media (max-width: 1024px) {
     .schema-layout {

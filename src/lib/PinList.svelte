@@ -7,7 +7,7 @@
 </svelte:head>
 
 <script lang="ts">
-  import type { SavedObject, Template, CategoryFieldData, TagsFieldData, Tag } from './types.js';
+  import type { SavedObject, Template, CategoryFieldData, TagsFieldData, Tag, SelectionConfig, SelectionFieldData } from './types.js';
   import Icon from './Icon.svelte';
 
   interface Props {
@@ -54,12 +54,12 @@
   // Helper function to extract YouTube video ID from various URL formats
   function getYouTubeVideoId(url: string): string | null {
     if (!url) return null;
-    
+
     const patterns = [
       /(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/)([^&\n?#]+)/,
       /youtube\.com\/v\/([^&\n?#]+)/
     ];
-    
+
     for (const pattern of patterns) {
       const match = url.match(pattern);
       if (match && match[1]) {
@@ -67,6 +67,82 @@
       }
     }
     return null;
+  }
+
+  // Get category info from either legacy category field or selection field with isCategory
+  function getCategoryInfo(obj: SavedObject): { color: string; label: string; secondaryItems: { color: string; label: string }[] } {
+    // Find category field: legacy 'category' or selection with isCategory
+    const categoryField = template.fields.find(f =>
+      f.fieldType === 'category' ||
+      f.type === 'category' ||
+      (f.fieldType === 'selection' && (f.config as SelectionConfig | undefined)?.isCategory)
+    );
+
+    if (!categoryField) {
+      return { color: '#E57373', label: 'Kategoria', secondaryItems: [] };
+    }
+
+    const fieldKey = categoryField.key || categoryField.fieldName;
+    const fieldData = obj.data[fieldKey];
+
+    // Legacy category field - uses template.tags
+    if (categoryField.fieldType === 'category' || categoryField.type === 'category') {
+      const catData = fieldData as CategoryFieldData | undefined;
+      if (!catData?.majorTag) {
+        return { color: '#E57373', label: 'Kategoria', secondaryItems: [] };
+      }
+
+      const majorTag = availableTags.find(t => t.id === catData.majorTag || t.name === catData.majorTag);
+      const secondaryItems = (catData.minorTags || [])
+        .map(tagId => availableTags.find(t => t.id === tagId || t.name === tagId))
+        .filter((t): t is Tag => t !== undefined)
+        .map(t => ({ color: t.color, label: t.displayName || t.name }));
+
+      return {
+        color: majorTag?.color || '#E57373',
+        label: majorTag?.displayName || majorTag?.name || 'Kategoria',
+        secondaryItems
+      };
+    }
+
+    // Selection field with isCategory - uses field.config.options
+    if (categoryField.fieldType === 'selection') {
+      const config = categoryField.config as SelectionConfig | undefined;
+      const options = config?.options || [];
+      const mode = config?.mode || 'single';
+      const selData = fieldData as SelectionFieldData | undefined;
+
+      if (!selData) {
+        return { color: '#E57373', label: 'Kategoria', secondaryItems: [] };
+      }
+
+      let primaryId: string | null = null;
+      let secondaryIds: string[] = [];
+
+      if (mode === 'single' && selData.selected) {
+        primaryId = selData.selected;
+      } else if (mode === 'hierarchical') {
+        primaryId = selData.primary || null;
+        secondaryIds = selData.secondary || [];
+      } else if (mode === 'multi' && selData.selections && selData.selections.length > 0) {
+        primaryId = selData.selections[0];
+        secondaryIds = selData.selections.slice(1);
+      }
+
+      const primaryOption = primaryId ? options.find(o => o.id === primaryId) : null;
+      const secondaryItems = secondaryIds
+        .map(id => options.find(o => o.id === id))
+        .filter((o): o is typeof options[0] => o !== undefined)
+        .map(o => ({ color: o.color || '#6b7280', label: o.value }));
+
+      return {
+        color: primaryOption?.color || '#E57373',
+        label: primaryOption?.value || 'Kategoria',
+        secondaryItems
+      };
+    }
+
+    return { color: '#E57373', label: 'Kategoria', secondaryItems: [] };
   }
 </script>
 
@@ -80,11 +156,9 @@
   {:else}
     <div class="pins-grid">
       {#each objects as obj}
-        {@const categoryField = template.fields.find(f => f.type === 'category')}
-        {@const categoryData = categoryField?.key ? obj.data[categoryField.key] as CategoryFieldData : null}
-        {@const majorTag = categoryData?.majorTag ? availableTags.find(t => t.id === categoryData.majorTag || t.name === categoryData.majorTag) : null}
-        {@const categoryColor = majorTag?.color || '#E57373'}
-        {@const categoryLabel = majorTag?.displayName || majorTag?.name || 'Kategoria'}
+        {@const catInfo = getCategoryInfo(obj)}
+        {@const categoryColor = catInfo.color}
+        {@const categoryLabel = catInfo.label}
 
         <div class="list-card" class:incomplete={obj.hasIncompleteData}>
           <!-- Main content -->
@@ -105,7 +179,7 @@
 
             <!-- Data fields as simple text -->
             <div class="card-fields">
-              {#each template.fields.filter(f => f.visible && f.key !== 'title' && f.type !== 'category' && f.type !== 'tags' && f.key !== 'location') as field}
+              {#each template.fields.filter(f => f.visible && f.key !== 'title' && f.type !== 'category' && f.fieldType !== 'category' && f.type !== 'tags' && f.fieldType !== 'tags' && f.key !== 'location' && !((f.fieldType === 'selection' || f.type === 'selection') && (f.config as SelectionConfig | undefined)?.isCategory)) as field}
                 {@const value = field.key ? obj.data[field.key] : undefined}
                 {#if value && value !== '' && field.type !== 'gallery'}
                   <div class="field-row">
@@ -116,19 +190,16 @@
               {/each}
             </div>
 
-            <!-- Minor tags -->
-            {#if categoryData?.minorTags && categoryData.minorTags.length > 0}
+            <!-- Secondary tags/selections -->
+            {#if catInfo.secondaryItems.length > 0}
               <div class="card-tags">
-                {#each categoryData.minorTags.slice(0, 3) as minorTagId}
-                  {@const minorTag = availableTags.find(t => t.id === minorTagId)}
-                  {#if minorTag}
-                    <span class="tag" style="background-color: {minorTag.color};">
-                      {minorTag.displayName || minorTag.name}
-                    </span>
-                  {/if}
+                {#each catInfo.secondaryItems.slice(0, 3) as item}
+                  <span class="tag" style="background-color: {item.color};">
+                    {item.label}
+                  </span>
                 {/each}
-                {#if categoryData.minorTags.length > 3}
-                  <span class="tag-more">+{categoryData.minorTags.length - 3}</span>
+                {#if catInfo.secondaryItems.length > 3}
+                  <span class="tag-more">+{catInfo.secondaryItems.length - 3}</span>
                 {/if}
               </div>
             {/if}
@@ -326,14 +397,6 @@
     word-break: break-word;
   }
 
-  .field-value.link {
-    color: #2563EB;
-    text-decoration: underline;
-  }
-
-  .field-value.link:hover {
-    text-decoration: none;
-  }
 
   /* Tags */
   .card-tags {

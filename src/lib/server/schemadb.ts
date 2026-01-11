@@ -1,5 +1,5 @@
 import { connectToDatabase } from './database.js';
-import type { Template, SavedObject, ProjectData, Tag, CategoryFieldData, GeoJSON, Field } from '../types.js';
+import type { Template, SavedObject, ProjectData, Tag, CategoryFieldData, TagsFieldData, GeoJSON, Field, SelectionConfig, SelectionOption, SelectionFieldData } from '../types.js';
 
 // Version 2 Protected Fields - Always present
 const PROTECTED_FIELDS: Field[] = [
@@ -448,7 +448,7 @@ export async function getTagUsageStats(): Promise<{ [tagId: string]: { majorCoun
   try {
     const objects = await getObjects();
     const stats: { [tagId: string]: { majorCount: number; minorCount: number } } = {};
-    
+
     for (const obj of objects) {
       const tagData = obj.data.tags as CategoryFieldData;
       if (tagData) {
@@ -459,7 +459,7 @@ export async function getTagUsageStats(): Promise<{ [tagId: string]: { majorCoun
           }
           stats[tagData.majorTag].majorCount++;
         }
-        
+
         // Count minor tag usage
         if (tagData.minorTags && Array.isArray(tagData.minorTags)) {
           for (const minorTagId of tagData.minorTags) {
@@ -471,10 +471,215 @@ export async function getTagUsageStats(): Promise<{ [tagId: string]: { majorCoun
         }
       }
     }
-    
+
     return stats;
   } catch (error) {
     console.error('Error getting tag usage stats:', error);
     return {};
+  }
+}
+
+// Migration function: Convert legacy category/tags field to selection field
+export interface MigrationResult {
+  success: boolean;
+  migratedPins: number;
+  removedTags: string[];
+  error?: string;
+}
+
+export interface MigrationPreview {
+  fieldKey: string;
+  fieldLabel: string;
+  fieldType: 'category' | 'tags';
+  targetMode: 'hierarchical' | 'multi';
+  tagCount: number;
+  pinCount: number;
+  willRemoveTags: boolean;
+}
+
+export async function getMigrationPreview(fieldKey: string): Promise<MigrationPreview | null> {
+  try {
+    const template = await getTemplate();
+    const objects = await getObjects();
+
+    // Find the field by key or fieldName
+    const field = template.fields.find(f =>
+      f.key === fieldKey || f.fieldName === fieldKey
+    );
+
+    if (!field) {
+      return null;
+    }
+
+    const fieldType = field.fieldType || field.type;
+    if (fieldType !== 'category' && fieldType !== 'tags') {
+      return null;
+    }
+
+    // Count pins that have data for this field
+    const actualFieldKey = field.key || field.fieldName;
+    let pinCount = 0;
+    for (const obj of objects) {
+      const fieldData = obj.data[actualFieldKey];
+      if (fieldData && typeof fieldData === 'object') {
+        pinCount++;
+      }
+    }
+
+    // Check if there are other legacy fields
+    const otherLegacyFields = template.fields.filter(f => {
+      const fKey = f.key || f.fieldName;
+      const fType = f.fieldType || f.type;
+      return fKey !== actualFieldKey && (fType === 'category' || fType === 'tags');
+    });
+
+    return {
+      fieldKey: actualFieldKey,
+      fieldLabel: field.label || field.displayLabel || actualFieldKey,
+      fieldType: fieldType as 'category' | 'tags',
+      targetMode: fieldType === 'category' ? 'hierarchical' : 'multi',
+      tagCount: template.tags.filter(t => t.visible !== false).length,
+      pinCount,
+      willRemoveTags: otherLegacyFields.length === 0
+    };
+  } catch (error) {
+    console.error('Error getting migration preview:', error);
+    return null;
+  }
+}
+
+export async function migrateFieldToSelection(fieldKey: string): Promise<MigrationResult> {
+  try {
+    const db = await connectToDatabase();
+    const objectsCollection = db.collection('objects');
+
+    // 1. Get current template
+    const template = await getTemplate();
+
+    // 2. Find the field by key or fieldName
+    const fieldIndex = template.fields.findIndex(f =>
+      f.key === fieldKey || f.fieldName === fieldKey
+    );
+
+    if (fieldIndex === -1) {
+      return { success: false, migratedPins: 0, removedTags: [], error: 'Nie znaleziono pola' };
+    }
+
+    const field = template.fields[fieldIndex];
+    const fieldType = field.fieldType || field.type;
+    const actualFieldKey = field.key || field.fieldName;
+
+    // 3. Validate it's a legacy field type
+    if (fieldType !== 'category' && fieldType !== 'tags') {
+      return { success: false, migratedPins: 0, removedTags: [], error: 'Pole nie jest typu category lub tags' };
+    }
+
+    // 4. Determine target mode
+    const targetMode = fieldType === 'category' ? 'hierarchical' : 'multi';
+
+    // 5. Build SelectionConfig from template.tags
+    const options: SelectionOption[] = template.tags.map(tag => ({
+      id: tag.id,
+      value: tag.displayName || tag.name,
+      color: tag.color,
+      order: tag.order,
+      archived: tag.visible === false
+    }));
+
+    const config: SelectionConfig = {
+      mode: targetMode,
+      options,
+      allowCustom: false
+    };
+
+    // Add maxSecondary from tagConfig if available
+    if (targetMode === 'hierarchical' && field.tagConfig?.maxMinorTags) {
+      config.maxSecondary = field.tagConfig.maxMinorTags;
+    }
+
+    // 6. Update field definition
+    const updatedField: Field = {
+      ...field,
+      fieldType: 'selection',
+      type: 'selection',
+      config
+    };
+
+    // Remove legacy tagConfig
+    delete updatedField.tagConfig;
+
+    template.fields[fieldIndex] = updatedField;
+
+    // 7. Transform all pin data
+    const objects = await getObjects();
+    let migratedPins = 0;
+
+    for (const obj of objects) {
+      const oldData = obj.data[actualFieldKey];
+      if (!oldData || typeof oldData !== 'object') continue;
+
+      let newData: SelectionFieldData;
+
+      if ('majorTag' in oldData) {
+        // CategoryFieldData → SelectionFieldData (hierarchical)
+        const catData = oldData as CategoryFieldData;
+        newData = {
+          primary: catData.majorTag,
+          secondary: catData.minorTags || [],
+          customEntries: []
+        };
+      } else if ('selectedTags' in oldData) {
+        // TagsFieldData → SelectionFieldData (multi)
+        const tagsData = oldData as TagsFieldData;
+        newData = {
+          selections: tagsData.selectedTags || [],
+          customEntries: []
+        };
+      } else {
+        // Unknown format, skip
+        continue;
+      }
+
+      // Update the pin in database directly
+      const { ObjectId } = await import('mongodb');
+      await objectsCollection.updateOne(
+        { _id: new ObjectId(obj.id) },
+        { $set: { [`data.${actualFieldKey}`]: newData } }
+      );
+
+      migratedPins++;
+    }
+
+    // 8. Check if we should clean up template.tags
+    const otherLegacyFields = template.fields.filter((f, i) => {
+      if (i === fieldIndex) return false;
+      const fType = f.fieldType || f.type;
+      return fType === 'category' || fType === 'tags';
+    });
+
+    let removedTags: string[] = [];
+
+    if (otherLegacyFields.length === 0) {
+      // No other legacy fields - remove all tags from global pool
+      removedTags = template.tags.map(t => t.id);
+      template.tags = [];
+    }
+
+    // 9. Save updated template
+    await updateTemplate(template);
+
+    return {
+      success: true,
+      migratedPins,
+      removedTags
+    };
+  } catch (error) {
+    console.error('Error migrating field to selection:', error);
+    return {
+      success: false,
+      migratedPins: 0,
+      removedTags: [],
+      error: error instanceof Error ? error.message : 'Nieznany błąd'
+    };
   }
 }

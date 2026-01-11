@@ -16,7 +16,7 @@
     sortDirection: 'asc' | 'desc';
     columnWidths: Record<string, number>;
     selectedRows: Set<string>;
-    expandedCells: Set<string>;
+    expandedRows: Set<string>;
     editingCell: { objectId: string; fieldKey: string } | null;
     editingValue: any;
     hoverCell: { objectId: string; fieldKey: string } | null;
@@ -45,7 +45,7 @@
     onEditSave?: () => void;
     onEditCancel?: () => void;
     onEditValueChange?: (newValue: any) => void;
-    onToggleExpansion?: (objectId: string, fieldKey: string) => void;
+    onToggleRowExpansion?: (objectId: string) => void;
     onShowTooltip?: (event: MouseEvent, content: any) => void;
     onHideTooltip?: () => void;
     onQuickGeocode?: (objectId: string) => void;
@@ -61,7 +61,7 @@
     sortDirection,
     columnWidths,
     selectedRows,
-    expandedCells,
+    expandedRows,
     editingCell,
     editingValue = $bindable(),
     hoverCell,
@@ -86,7 +86,7 @@
     onEditSave,
     onEditCancel,
     onEditValueChange,
-    onToggleExpansion,
+    onToggleRowExpansion,
     onShowTooltip,
     onHideTooltip,
     onQuickGeocode,
@@ -149,7 +149,7 @@
             {@const isMissingLocation = !obj.location || obj.missingFields?.includes('location')}
             <tr class:incomplete={obj.hasIncompleteData} class:missing-location={isMissingLocation}>
               <!-- Checkbox column -->
-              <td class="checkbox-column" class:missing-location-cell={isMissingLocation}>
+              <td class="checkbox-column" style="width: 2.5rem;" class:missing-location-cell={isMissingLocation}>
                 <input
                   type="checkbox"
                   checked={selectedRows.has(obj.id)}
@@ -157,7 +157,7 @@
                 />
               </td>
               <!-- Location column -->
-              <td class="location-column" class:missing-location-cell={isMissingLocation}>
+              <td class="location-column" style="width: 9rem;" class:missing-location-cell={isMissingLocation}>
                 {#if obj.location && obj.location.coordinates}
                   <div class="cell-content coordinates-display">
                     <div class="coordinate-line">{obj.location.coordinates[1].toFixed(6)}</div>
@@ -187,8 +187,7 @@
                 {/if}
               </td>
               {#each visibleFields as field}
-                {@const cellId = `${obj.id}-${field.key}`}
-                {@const isExpanded = expandedCells.has(cellId)}
+                {@const isRowExpanded = expandedRows.has(obj.id)}
                 <TableCell
                   {field}
                   value={obj.data[field.key]}
@@ -196,7 +195,7 @@
                   {template}
                   isEditing={editingCell?.objectId === obj.id && editingCell?.fieldKey === field.key}
                   bind:editingValue
-                  {isExpanded}
+                  isExpanded={isRowExpanded}
                   isSorted={sortField === field.key}
                   width={columnWidths[field.key] || 200}
                   {hoverCell}
@@ -212,7 +211,7 @@
                   onEditSave={onEditSave}
                   onEditCancel={onEditCancel}
                   onEditValueChange={onEditValueChange}
-                  onToggleExpansion={onToggleExpansion}
+                  onToggleRowExpansion={onToggleRowExpansion}
                   onShowTooltip={onShowTooltip}
                   onHideTooltip={onHideTooltip}
                   onQuickGeocode={onQuickGeocode}
@@ -226,10 +225,10 @@
           <!-- Placeholder rows to fill screen -->
           {#each Array(placeholderRowCount).fill(null) as _, index}
             <tr class="placeholder-row" class:even={index % 2 === 0}>
-              <td class="checkbox-column">
+              <td class="checkbox-column" style="width: 2.5rem;">
                 <div class="cell-content placeholder-cell"></div>
               </td>
-              <td class="location-column">
+              <td class="location-column" style="width: 9rem;">
                 <div class="cell-content placeholder-cell"></div>
               </td>
               {#each visibleFields as field}
@@ -270,6 +269,7 @@
   .body-table {
     width: 100%;
     border-collapse: collapse;
+    table-layout: fixed;
   }
 
   .body-table tbody tr:nth-child(even) {
@@ -289,7 +289,7 @@
   }
 
   .body-table tbody tr.missing-location {
-    border-left: 3px solid #dc2626;
+    border-left: 0.1875rem solid #dc2626;
   }
 
   .body-table tbody tr.missing-location .checkbox-column {
@@ -297,17 +297,12 @@
   }
 
   .body-table td {
-    padding: 8px 12px;
+    /* No padding here - TableCell handles its own padding */
+    padding: 0;
     font-family: "Space Mono", monospace;
-    font-size: var(--text-sm);
+    font-size: 0.8125rem;
     vertical-align: top;
     box-sizing: border-box;
-    border-right: 1px solid rgba(0, 0, 0, 0.1);
-    border-bottom: 1px solid var(--color-border);
-  }
-
-  .body-table td:last-child {
-    border-right: none;
   }
 
   .body-table td.sorted-column {
@@ -323,52 +318,58 @@
   }
 
   .checkbox-column {
-    width: 40px !important;
-    min-width: 40px !important;
-    max-width: 40px !important;
+    width: 2.5rem !important;
+    min-width: 2.5rem !important;
+    max-width: 2.5rem !important;
     text-align: center;
     cursor: pointer;
+    padding: 0.375rem 0.5rem !important;
+    border-right: 1px solid rgba(0, 0, 0, 0.1);
+    border-bottom: 1px solid var(--color-border);
   }
 
   .checkbox-column input[type="checkbox"] {
     cursor: pointer;
-    transform: scale(1.2);
+    transform: scale(1.1);
   }
 
   .location-column {
-    width: 200px;
-    min-width: 200px;
+    width: 9rem;
+    min-width: 9rem;
+    padding: 0.375rem 0.5rem !important;
+    border-right: 1px solid rgba(0, 0, 0, 0.1);
+    border-bottom: 1px solid var(--color-border);
   }
 
   .cell-content {
-    min-height: 1.2rem;
-    padding: 0;
     cursor: pointer;
     line-height: 1.3;
     vertical-align: top;
+    font-size: 0.8125rem;
   }
 
   .coordinates-display {
     display: flex;
     flex-direction: column;
-    gap: 2px;
+    gap: 0;
   }
 
   .coordinate-line {
     font-family: 'Space Mono', monospace;
-    font-size: 13px;
+    font-size: 0.75rem;
     line-height: 1.3;
   }
 
   .missing-location-row {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 0.5rem;
   }
 
   .missing-location-text {
     color: var(--color-text-muted);
     font-style: italic;
+    font-size: 0.75rem;
   }
 
   .missing-location-cell {
@@ -376,12 +377,12 @@
   }
 
   .quick-geocode-btn {
-    padding: 2px 6px;
-    font-size: 11px;
+    padding: 0.125rem 0.375rem;
+    font-size: 0.625rem;
     background: #10b981;
     color: white;
     border: none;
-    border-radius: 3px;
+    border-radius: 0.1875rem;
     cursor: pointer;
     transition: all 0.15s ease;
     font-family: "Space Mono", monospace;
@@ -393,7 +394,7 @@
   }
 
   .geocoding-status-inline {
-    font-size: 12px;
+    font-size: 0.75rem;
     color: #f59e0b;
   }
 
@@ -402,6 +403,7 @@
     padding: var(--space-8);
     color: var(--color-text-muted);
     font-style: italic;
+    font-size: 0.875rem;
   }
 
   /* Placeholder rows */
@@ -418,7 +420,7 @@
   }
 
   .placeholder-cell {
-    height: 100%;
+    height: 2.6rem;
     background: transparent;
   }
 

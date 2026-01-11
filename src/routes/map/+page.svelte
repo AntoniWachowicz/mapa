@@ -568,6 +568,7 @@
       onPinPositionUpdate={handlePinPositionUpdate}
       bind:panToPinCallback
       tags={template.tags || []}
+      fields={template.fields || []}
     />
 
     <!-- Detail Panel Container -->

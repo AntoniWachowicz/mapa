@@ -172,7 +172,7 @@
                 class="icon-button"
                 title="Edytuj kategorię"
               >
-                <img src="/icons/Pen.svg" alt="Edit" style="width: 16px; height: 16px;" />
+                <img src="/icons/Pen.svg" alt="Edit" style="width: 14px; height: 14px;" />
               </button>
 
               <button
@@ -180,7 +180,7 @@
                 class="icon-button"
                 title="Usuń kategorię"
               >
-                <img src="/icons/Trash.svg" alt="Delete" style="width: 16px; height: 16px;" />
+                <img src="/icons/Trash.svg" alt="Delete" style="width: 14px; height: 14px;" />
               </button>
 
               <button
@@ -189,7 +189,7 @@
                 class="icon-button"
                 title="Przenieś w górę"
               >
-                <img src="/icons/Chevron/Up.svg" alt="Up" style="width: 16px; height: 16px;" />
+                <img src="/icons/Chevron/Up.svg" alt="Up" style="width: 14px; height: 14px;" />
               </button>
 
               <button
@@ -198,7 +198,7 @@
                 class="icon-button"
                 title="Przenieś w dół"
               >
-                <img src="/icons/Chevron/Down.svg" alt="Down" style="width: 16px; height: 16px;" />
+                <img src="/icons/Chevron/Down.svg" alt="Down" style="width: 14px; height: 14px;" />
               </button>
             </div>
           {/if}
@@ -213,7 +213,7 @@
       onclick={() => showAddForm = true}
       class="add-category-btn"
     >
-      <img src="/icons/Circle/Add.svg" alt="Add" style="width: 24px; height: 24px; margin-right: 6px;" />
+      <img src="/icons/Circle/Add.svg" alt="Add" style="width: 18px; height: 18px; margin-right: 4px;" />
       Dodaj Kategorię
     </button>
   {:else}
@@ -302,19 +302,19 @@
   
   .add-category-btn {
     width: 100%;
-    padding: 8px 12px;
+    padding: 2px 0;
     background: transparent;
     color: #666;
     border: none;
     border-radius: 4px;
-    font-size: 14px;
+    font-size: 12px;
     font-family: 'Space Mono', monospace;
     cursor: pointer;
     transition: all 0.2s ease;
     display: flex;
     align-items: center;
-    justify-content: center;
-    margin-top: 8px;
+    justify-content: flex-start;
+    margin-top: 0;
   }
 
   .add-category-btn:hover {
@@ -340,17 +340,17 @@
   .form-group label {
     display: block;
     margin-bottom: 4px;
-    font-size: 14px;
+    font-size: 12px;
     font-weight: 500;
     color: #374151;
   }
-  
+
   .tag-input {
     width: 100%;
-    padding: 8px 12px;
+    padding: 6px 8px;
     border: 1px solid rgba(0, 0, 0, 0.1);
-    border-radius: 6px;
-    font-size: 14px;
+    border-radius: 4px;
+    font-size: 12px;
     background: white;
   }
 
@@ -380,12 +380,12 @@
   }
 
   .save-button {
-    padding: 6px 12px;
+    padding: 4px 8px;
     background: #000000;
     color: white;
     border: none;
     border-radius: 4px;
-    font-size: 14px;
+    font-size: 12px;
     font-family: 'Space Mono', monospace;
     cursor: pointer;
     transition: all 0.2s ease;
@@ -398,17 +398,17 @@
   }
 
   .save-button.small {
-    padding: 4px 8px;
-    font-size: 12px;
+    padding: 3px 6px;
+    font-size: 11px;
   }
 
   .cancel-button {
-    padding: 6px 12px;
+    padding: 4px 8px;
     background: transparent;
     color: #666;
     border: 1px solid rgba(0, 0, 0, 0.1);
     border-radius: 4px;
-    font-size: 14px;
+    font-size: 12px;
     font-family: 'Space Mono', monospace;
     cursor: pointer;
     transition: all 0.2s ease;
@@ -422,16 +422,16 @@
   }
 
   .cancel-button.small {
-    padding: 4px 8px;
-    font-size: 12px;
+    padding: 3px 6px;
+    font-size: 11px;
   }
   
   .tag-item {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 10px 0;
-    margin-bottom: 4px;
+    padding: 2px 0;
+    margin-bottom: 0;
     background: transparent;
     border: none;
     border-radius: 0;
@@ -450,41 +450,42 @@
   }
   
   .tag-preview {
-    width: 20px;
-    height: 20px;
-    border-radius: 4px;
+    width: 16px;
+    height: 16px;
+    border-radius: 3px;
     border: 1px solid rgba(0, 0, 0, 0.1);
   }
-  
+
   .tag-preview.archived {
     opacity: 0.5;
   }
-  
+
   .tag-names {
     display: flex;
-    flex-direction: column;
-    gap: 2px;
+    flex-direction: row;
+    align-items: baseline;
+    gap: 4px;
   }
-  
+
   .tag-display-name {
     font-weight: 500;
     color: #1f2937;
-    font-size: 14px;
-  }
-  
-  .tag-db-name {
     font-size: 12px;
+  }
+
+  .tag-db-name {
+    font-size: 11px;
     color: #6b7280;
   }
-  
+
   .tag-actions {
     display: flex;
-    gap: 4px;
+    gap: 2px;
   }
-  
+
   .icon-button {
-    width: 32px;
-    height: 32px;
+    width: 24px;
+    height: 24px;
     border: none;
     background: transparent;
     border-radius: 4px;
@@ -547,36 +548,36 @@
     border: none;
     color: #6b7280;
     cursor: pointer;
-    font-size: 14px;
-    padding: 8px 0;
+    font-size: 12px;
+    padding: 6px 0;
   }
-  
+
   .archived-toggle:hover {
     color: #374151;
   }
-  
+
   .archived-tags {
-    margin-top: 12px;
+    margin-top: 8px;
   }
-  
+
   .archived-tag-item {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 8px 0;
-    margin-bottom: 4px;
+    padding: 4px 0;
+    margin-bottom: 2px;
     background: transparent;
     border: none;
     border-radius: 0;
   }
-  
+
   .restore-button {
-    padding: 6px 12px;
+    padding: 4px 8px;
     background: #000000;
     color: white;
     border: none;
     border-radius: 4px;
-    font-size: 12px;
+    font-size: 11px;
     cursor: pointer;
     transition: all 0.2s ease;
   }

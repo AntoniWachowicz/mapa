@@ -12,6 +12,7 @@
     ProjectData,
     SavedObject,
     CategoryFieldData,
+    SelectionFieldData,
     Tag,
     FileData,
     GalleryData,
@@ -34,12 +35,24 @@
   import ExcelImportPreviewModal from './components/modals/ExcelImportPreviewModal.svelte';
   import RichTextInput from './fields/RichTextInput.svelte';
   import LinksInput from './fields/LinksInput.svelte';
+  import TagInput from './fields/TagInput.svelte';
   import MultiDateInput from './fields/MultiDateInput.svelte';
   import AddressInput from './fields/AddressInput.svelte';
   import PriceInput from './fields/PriceInput.svelte';
   import FilesInput from './fields/FilesInput.svelte';
   import GalleryInput from './fields/GalleryInput.svelte';
-  
+  import { validatePinData, hasCompleteLocation } from './utils/pinValidation.js';
+  import * as excelService from './features/excel/excelHandlers.js';
+  import { createInitialFormData, createEmptyFormData, createResetFormData } from './utils/formInitialization.js';
+  import { uploadImage } from './services/imageUploadService.js';
+  import { geocodeAddress, reverseGeocode } from './services/geocodingService.js';
+  import * as formAccessors from './utils/formFieldAccessors.js';
+  import { createImportModalState } from './features/excelImport/importModalState.svelte.js';
+  import { executeAsyncOperation, handleAsyncError } from './utils/asyncErrorHandler.js';
+  import { getFieldName, getFieldType } from './utils/fieldHelpers.js';
+  import DynamicFieldRenderer from './components/fields/DynamicFieldRenderer.svelte';
+  import { validateRowSelection, processImportRows, formatImportSuccessMessage } from './features/excel/importRowProcessor.js';
+
   interface Props {
     template: Template;
     objects: SavedObject[];
@@ -60,21 +73,11 @@
   let formData = $state<ProjectData>({});
   let editingObject = $state<SavedObject | null>(null);
   let isGeocodingAddress = $state(false);
-  let showImportModal = $state(false);
-  let importedData = $state<any[]>([]);
-  let selectedImportRows = $state<Set<number>>(new Set());
-  let isImporting = $state(false);
-  let importProgress = $state({ current: 0, total: 0, message: '' });
-  let importController = $state<AbortController | null>(null);
 
-  // Column mapping state
-  let showColumnMappingModal = $state(false);
-  let excelHeaders = $state<string[]>([]);
-  let excelSampleData = $state<Record<string, any>[]>([]);
-  let columnMapping = $state<Record<string, string>>({});  // { "Excel Column": "fieldKey" | "latitude" | "longitude" | "geocode" | "ignore" }
-  // Store temp file ID from server (file is stored server-side)
-  let currentTempId = $state<string | null>(null);
-  let showCreateFieldModal = $state(false);
+  // Import modal state manager
+  const importModal = createImportModalState();
+
+  // New field creation state (for creating fields from column mapping)
   let newFieldData = $state({ name: '', label: '', type: 'text', required: false, forColumn: '' });
 
   // Sync external editingObject to internal state
@@ -88,74 +91,7 @@
   // Initialize form data when template changes (only if not editing)
   $effect(() => {
     if (template?.fields && !editingObject) {
-      const newFormData: ProjectData = {};
-      template.fields.forEach((field) => {
-        const fieldType = field.fieldType || field.type;
-        const fieldName = field.fieldName || field.key;
-
-        switch (fieldType) {
-          case 'title':
-          case 'richtext':
-            newFormData[fieldName] = '';
-            break;
-
-          case 'files':
-            newFormData[fieldName] = [];
-            break;
-
-          case 'gallery':
-            newFormData[fieldName] = { items: [] } as GalleryData;
-            break;
-
-          case 'multidate':
-            const multiDateConfig = field.config as MultiDateConfig;
-            // Pre-populate with null dates for all configured date fields
-            const initialDates: MultiDateData = {};
-            multiDateConfig?.dateFields?.forEach(dateField => {
-              initialDates[dateField.key] = null;
-            });
-            newFormData[fieldName] = initialDates;
-            break;
-
-          case 'address':
-            const addressConfig = field.config as AddressConfig;
-            // Pre-populate with empty strings for all configured address fields
-            const initialAddress: AddressData = {};
-            addressConfig?.displayFields?.forEach(fieldKey => {
-              initialAddress[fieldKey as keyof AddressData] = '';
-            });
-            newFormData[fieldName] = initialAddress;
-            break;
-
-          case 'links':
-            newFormData[fieldName] = [];
-            break;
-
-          case 'price':
-            const priceConfig = field.config as PriceConfig;
-            // Pre-populate funding sources from config
-            const initialFunding = priceConfig?.defaultFundingSources?.map(source => ({
-              source: source,
-              amount: 0
-            })) || [];
-            newFormData[fieldName] = {
-              currency: priceConfig?.currency || 'PLN',
-              funding: initialFunding,
-              showTotal: priceConfig?.showTotal ?? true,
-              showBreakdown: priceConfig?.showPercentages ?? true
-            } as PriceData;
-            break;
-
-          case 'tags':
-          case 'category':
-            newFormData[fieldName] = { selectedTags: [], majorTag: null, minorTags: [] } as any;
-            break;
-
-          default:
-            newFormData[fieldName] = '';
-        }
-      });
-      formData = newFormData;
+      formData = createInitialFormData(template);
     }
   });
   
@@ -183,82 +119,16 @@
   async function saveObject(): Promise<void> {
     if (!template?.fields) return;
 
-    // Robust validation
-    const emptyRequiredFields: string[] = [];
+    // Validate form data using extracted utility
+    const validation = validatePinData(template, formData, selectedCoordinates, editingObject);
 
-    for (const field of template.fields) {
-      if (field.required && field.visible) {
-        const fieldType = field.fieldType || field.type;
-        const fieldName = field.fieldName || field.key;
-
-        // Special handling for location field
-        if (fieldType === 'location' || field.key === 'location') {
-          // Only require location for new objects, not when editing incomplete ones
-          if (!selectedCoordinates && !editingObject) {
-            emptyRequiredFields.push(field.label || field.displayLabel);
-          }
-          continue;
-        }
-
-        const value = formData[fieldName];
-
-        // NEW FIELD TYPES VALIDATION
-        if (fieldType === 'title' || fieldType === 'richtext') {
-          if (!value || (typeof value === 'string' && value.trim() === '')) {
-            emptyRequiredFields.push(field.label);
-          }
-        } else if (fieldType === 'files') {
-          if (!Array.isArray(value) || value.length === 0) {
-            emptyRequiredFields.push(field.label);
-          }
-        } else if (fieldType === 'gallery') {
-          const gallery = value as GalleryData;
-          if (!gallery || !gallery.items || gallery.items.length === 0) {
-            emptyRequiredFields.push(field.label);
-          }
-        } else if (fieldType === 'multidate') {
-          const config = field.config as MultiDateConfig;
-          const dates = value as MultiDateData;
-          const hasRequiredDates = config?.dateFields
-            ?.filter(df => df.required)
-            .every(df => dates && dates[df.key]);
-          if (!hasRequiredDates) {
-            emptyRequiredFields.push(field.label);
-          }
-        } else if (fieldType === 'address' && field.config) {
-          const addrConfig = field.config as AddressConfig;
-          const addr = value as AddressData;
-          const hasRequiredAddr = addrConfig?.requiredFields
-            ?.every(rf => addr && addr[rf]);
-          if (!hasRequiredAddr) {
-            emptyRequiredFields.push(field.label);
-          }
-        } else if (fieldType === 'links') {
-          if (!Array.isArray(value) || value.length === 0) {
-            emptyRequiredFields.push(field.label);
-          }
-        } else if (fieldType === 'price') {
-          const priceData = value as PriceData;
-          if (!priceData || !priceData.funding || priceData.funding.length === 0) {
-            emptyRequiredFields.push(field.label);
-          }
-        }
-        else if (field.type === 'tags' || field.type === 'category') {
-          const tagData = value as CategoryFieldData;
-          if (!tagData || !tagData.majorTag) {
-            emptyRequiredFields.push(field.displayLabel || field.label);
-          }
-        }
-      }
-    }
-    
-    if (emptyRequiredFields.length > 0) {
-      alert(`Proszę wypełnić: ${emptyRequiredFields.join(', ')}`);
+    if (!validation.isValid) {
+      alert(`Proszę wypełnić: ${validation.emptyRequiredFields.join(', ')}`);
       return;
     }
 
     // Check if saving without location (will be marked as incomplete)
-    const hasLocation = !!selectedCoordinates;
+    const hasLocation = hasCompleteLocation(selectedCoordinates);
     const hasIncompleteData = !hasLocation;
 
     // Warn user if saving without location
@@ -281,56 +151,46 @@
     }
     
     // Reset form
-    const resetData: ProjectData = {};
-    template.fields.forEach((field) => {
-      resetData[field.key] = '';
-    });
-    formData = resetData;
+    formData = createEmptyFormData(template);
 
     
   }
   
+  // Form field accessors - wrappers for utility functions
   function handleTextInput(key: string, event: Event): void {
-    const target = event.target as HTMLInputElement;
-    if (target) formData[key] = target.value;
+    formData = formAccessors.handleTextInput(formData, key, event);
   }
-  
+
   function handleNumberInput(key: string, event: Event): void {
-    const target = event.target as HTMLInputElement;
-    if (target) formData[key] = Number(target.value);
+    formData = formAccessors.handleNumberInput(formData, key, event);
   }
-  
+
   function handleCheckboxChange(key: string, event: Event): void {
-    const target = event.target as HTMLInputElement;
-    if (target) formData[key] = target.checked;
+    formData = formAccessors.handleCheckboxChange(formData, key, event);
   }
-  
+
   function getFieldValue(key: string): string | number {
-    const value = formData[key];
-    if (typeof value === 'boolean') return '';
-    if (typeof value === 'object') return ''; // Handle CategoryFieldData
-    return value || '';
+    return formAccessors.getFieldValue(formData, key);
   }
 
   function getComplexFieldValue(key: string): any {
-    return formData[key];
+    return formAccessors.getComplexFieldValue(formData, key);
   }
 
   function getCheckboxValue(key: string): boolean {
-    const value = formData[key];
-    return typeof value === 'boolean' ? value : false;
+    return formAccessors.getCheckboxValue(formData, key);
   }
-  
+
   function getTagValue(key: string): CategoryFieldData {
-    const value = formData[key] as CategoryFieldData;
-    return value || { majorTag: null, minorTags: [] };
+    return formAccessors.getTagValue(formData, key);
   }
-  
+
   function handleTagChange(key: string, tagData: CategoryFieldData): void {
-    formData = {
-      ...formData,
-      [key]: tagData
-    };
+    formData = formAccessors.handleTagChange(formData, key, tagData);
+  }
+
+  function getSelectionValue(key: string): SelectionFieldData {
+    return formAccessors.getSelectionValue(formData, key);
   }
   
   // Get available tags (visible ones)
@@ -343,15 +203,7 @@
 
   function cancelEdit(): void {
     editingObject = null;
-    const resetData: ProjectData = {};
-    template.fields.forEach((field) => {
-      if (field.type === 'tags') {
-        resetData[field.key] = { majorTag: null, minorTags: [] } as CategoryFieldData;
-      } else {
-        resetData[field.key] = '';
-      }
-    });
-    formData = resetData;
+    formData = createResetFormData(template);
   }
 
 
@@ -368,38 +220,15 @@
   async function handleImageUpload(fieldKey: string, event: Event): Promise<void> {
     const input = event.target as HTMLInputElement;
     const file = input.files?.[0];
-    
+
     if (!file) return;
-    
-    if (!file.type.startsWith('image/')) {
-      alert('Proszę wybrać plik obrazu');
-      return;
-    }
-    
-    if (file.size > 5 * 1024 * 1024) {
-      alert('Plik jest za duży. Maksymalny rozmiar to 5MB');
-      return;
-    }
-    
-    try {
-      const formData = new FormData();
-      formData.append('image', file);
-      
-      const response = await fetch('/api/upload', {
-        method: 'POST',
-        body: formData
-      });
-      
-      const result = await response.json();
-      
-      if (result.success) {
-        handleTextInput(fieldKey, { target: { value: result.imageUrl } } as any);
-      } else {
-        alert('Błąd podczas przesyłania obrazu');
-      }
-    } catch (error) {
-      console.error('Upload error:', error);
-      alert('Błąd podczas przesyłania obrazu');
+
+    const result = await uploadImage(file);
+
+    if (result.success && result.imageUrl) {
+      handleTextInput(fieldKey, { target: { value: result.imageUrl } } as any);
+    } else {
+      alert(result.error || 'Błąd podczas przesyłania obrazu');
     }
   }
 
@@ -407,24 +236,12 @@
   // Coordinates are now handled separately via selectedCoordinates in GeoJSON format
   async function handleAddressGeocode(fieldKey: string): Promise<void> {
     const addressValue = formData[fieldKey] as string;
-    if (!addressValue || !addressValue.trim()) {
-      return;
-    }
-
     isGeocodingAddress = true;
 
     try {
-      const response = await fetch('/api/geocode', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({ address: addressValue.trim() })
-      });
+      const result = await geocodeAddress(addressValue);
 
-      const result = await response.json();
-
-      if (result.success && result.coordinates) {
+      if (result.success) {
         // Update address with formatted version
         if (result.formattedAddress) {
           formData = {
@@ -438,9 +255,6 @@
       } else {
         alert(result.error || 'Nie udało się znaleźć adresu');
       }
-    } catch (error) {
-      console.error('Geocoding error:', error);
-      alert('Błąd podczas wyszukiwania adresu');
     } finally {
       isGeocodingAddress = false;
     }
@@ -449,69 +263,29 @@
   // Reverse geocoding when coordinates change
   async function handleCoordinatesReverseGeocode(): Promise<void> {
     if (!selectedCoordinates) return;
-    
+
     const addressField = template.fields.find(f => f.type === 'address' && f.addressSync);
     if (!addressField) return;
-    
-    try {
-      const response = await fetch('/api/reverse-geocode', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          lat: selectedCoordinates.lat,
-          lng: selectedCoordinates.lng
-        })
-      });
-      
-      const result = await response.json();
-      
-      if (result.success && result.address) {
-        formData = {
-          ...formData,
-          [addressField.key]: result.address
-        };
-      }
-    } catch (error) {
-      console.error('Reverse geocoding error:', error);
+
+    const result = await reverseGeocode(selectedCoordinates.lat, selectedCoordinates.lng);
+
+    if (result.success && result.address) {
+      formData = {
+        ...formData,
+        [addressField.key]: result.address
+      };
     }
   }
 
   // Excel template download handler
   async function handleTemplateDownload(): Promise<void> {
-    if (!template) {
-      alert('Brak zdefiniowanego schematu');
-      return;
-    }
-    
-    try {
-      const response = await fetch('/api/excel-template', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({ template })
-      });
-      
-      if (response.ok) {
-        const blob = await response.blob();
-        const url = window.URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.style.display = 'none';
-        a.href = url;
-        a.download = `szablon-pinezki-${new Date().toISOString().split('T')[0]}.xlsx`;
-        document.body.appendChild(a);
-        a.click();
-        window.URL.revokeObjectURL(url);
-        document.body.removeChild(a);
-      } else {
-        alert('Błąd podczas pobierania szablonu');
+    await executeAsyncOperation(
+      () => excelService.downloadExcelTemplate(template),
+      {
+        errorContext: 'Template download',
+        errorMessage: 'Błąd podczas pobierania szablonu'
       }
-    } catch (error) {
-      console.error('Template download error:', error);
-      alert('Błąd podczas pobierania szablonu');
-    }
+    );
   }
 
   // Excel import handler - now shows mapping modal first
@@ -521,252 +295,113 @@
 
     if (!file) return;
 
-    if (!file.name.endsWith('.xlsx') && !file.name.endsWith('.xls')) {
-      alert('Proszę wybrać plik Excel (.xlsx lub .xls)');
-      return;
-    }
+    const controller = importModal.startImportOperation('Analizowanie pliku Excel...');
 
-    isImporting = true;
-    importProgress = { current: 0, total: 0, message: 'Analizowanie pliku Excel...' };
-    importController = new AbortController();
-
-    try {
-      const formData = new FormData();
-      formData.append('excel', file);
-
-      // Analyze the Excel file (server stores it temporarily)
-      const response = await fetch('/api/analyze-excel', {
-        method: 'POST',
-        body: formData,
-        signal: importController.signal
-      });
-
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
+    const result = await executeAsyncOperation(
+      () => excelService.analyzeExcelFile(file, controller.signal),
+      {
+        errorContext: 'Analysis',
+        errorMessage: 'Błąd podczas analizy pliku Excel',
+        onFinally: () => {
+          importModal.completeImportOperation();
+          input.value = '';
+        }
       }
+    );
 
-      const result = await response.json();
+    if (result) {
+      // Store temp ID (file is stored on server)
+      importModal.currentTempId = result.tempId;
+      importModal.excelHeaders = result.headers;
+      importModal.excelSampleData = result.sampleData;
+      importModal.columnMapping = {}; // Reset mapping
 
-      if (result.success) {
-        // Store temp ID (file is stored on server)
-        currentTempId = result.tempId;
-        excelHeaders = result.headers;
-        excelSampleData = result.sampleData;
-        columnMapping = {}; // Reset mapping
-
-        // Show column mapping modal
-        showColumnMappingModal = true;
-      } else {
-        alert('Błąd podczas analizy pliku Excel');
-      }
-    } catch (error: any) {
-      if (error.name === 'AbortError') {
-        console.log('Analysis cancelled by user');
-      } else {
-        console.error('Analysis error:', error);
-        alert('Błąd podczas analizy pliku Excel: ' + error.message);
-      }
-    } finally {
-      isImporting = false;
-      importController = null;
-      // Clear input
-      input.value = '';
+      // Show column mapping modal
+      importModal.showColumnMappingModal = true;
     }
   }
 
   // Proceed with import after column mapping
   async function proceedWithImport(): Promise<void> {
-    if (!currentTempId) {
+    if (!importModal.currentTempId) {
       alert('Błąd: Brak danych pliku Excel. Proszę wybrać plik ponownie.');
       return;
     }
 
-    isImporting = true;
-    importProgress = { current: 0, total: 0, message: 'Importowanie danych...' };
-    importController = new AbortController();
+    const controller = importModal.startImportOperation('Importowanie danych...');
 
-    try {
-      // Convert column mapping from modal format (_latitude, _longitude, _geocode, _skip) to API format (latitude, longitude, geocode, ignore)
-      const apiColumnMapping: Record<string, string> = {};
-      for (const [excelCol, modalValue] of Object.entries(columnMapping)) {
-        if (modalValue === '_latitude') {
-          apiColumnMapping[excelCol] = 'latitude';
-        } else if (modalValue === '_longitude') {
-          apiColumnMapping[excelCol] = 'longitude';
-        } else if (modalValue === '_geocode') {
-          apiColumnMapping[excelCol] = 'geocode';
-        } else if (modalValue === '_skip' || modalValue === '') {
-          apiColumnMapping[excelCol] = 'ignore';
-        } else {
-          // Regular field mapping
-          apiColumnMapping[excelCol] = modalValue;
+    const result = await executeAsyncOperation(
+      () => excelService.importExcelWithMapping(
+        importModal.currentTempId!,
+        importModal.columnMapping,
+        controller.signal
+      ),
+      {
+        errorContext: 'Import',
+        errorMessage: 'Błąd podczas importu pliku Excel',
+        onFinally: () => {
+          importModal.completeImportOperation();
+          importModal.currentTempId = null;
         }
       }
+    );
 
-      // Send JSON with tempId (file is already on server)
-      const response = await fetch('/api/import-excel', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ tempId: currentTempId, columnMapping: apiColumnMapping }),
-        signal: importController.signal
-      });
+    if (result) {
+      importModal.importedData = result.data;
+      importModal.selectedImportRows = new Set();
+      importModal.showColumnMappingModal = false;
+      importModal.showImportModal = true;
 
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
+      if (result.incompleteDataCount && result.incompleteDataCount > 0) {
+        alert(`Uwaga: ${result.incompleteDataCount} pinezek będzie miało niekompletne dane (wymagane dodatkowe uzupełnienie w aplikacji)`);
       }
-
-      const result = await response.json();
-
-      if (result.success) {
-        importedData = result.data;
-        selectedImportRows = new Set();
-        showColumnMappingModal = false;
-        showImportModal = true;
-
-        if (result.incompleteDataCount > 0) {
-          alert(`Uwaga: ${result.incompleteDataCount} pinezek będzie miało niekompletne dane (wymagane dodatkowe uzupełnienie w aplikacji)`);
-        }
-      } else {
-        alert('Błąd podczas importu pliku Excel');
-      }
-    } catch (error: any) {
-      if (error.name === 'AbortError') {
-        console.log('Import cancelled by user');
-      } else {
-        console.error('Import error:', error);
-        alert('Błąd podczas importu pliku Excel: ' + error.message);
-      }
-    } finally {
-      isImporting = false;
-      importController = null;
-      currentTempId = null;
     }
   }
 
   // Cancel import handler
   function cancelImport(): void {
-    if (importController) {
-      importController.abort();
+    if (importModal.importController) {
+      importModal.importController.abort();
     }
   }
 
   // Excel export handler
   async function handleExcelExport(): Promise<void> {
-    if (!template || !objects || objects.length === 0) {
-      alert('Brak danych do eksportu');
-      return;
-    }
-    
-    try {
-      const response = await fetch('/api/export-excel', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          objects: objects,
-          template: template
-        })
-      });
-      
-      if (response.ok) {
-        // Download file
-        const blob = await response.blob();
-        const url = window.URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.style.display = 'none';
-        a.href = url;
-        a.download = `pinezki-export-${new Date().toISOString().split('T')[0]}.xlsx`;
-        document.body.appendChild(a);
-        a.click();
-        window.URL.revokeObjectURL(url);
-        document.body.removeChild(a);
-      } else {
-        alert('Błąd podczas eksportu do Excel');
+    await executeAsyncOperation(
+      () => excelService.exportToExcel(objects, template),
+      {
+        errorContext: 'Export',
+        errorMessage: 'Błąd podczas eksportu do Excel'
       }
-    } catch (error) {
-      console.error('Export error:', error);
-      alert('Błąd podczas eksportu do Excel');
-    }
+    );
   }
 
   // Import selected rows from Excel
   async function importSelectedRows(): Promise<void> {
-    if (selectedImportRows.size === 0) {
+    if (!validateRowSelection(importModal.selectedImportRows)) {
       alert('Proszę wybrać wiersze do zaimportowania');
       return;
     }
-    
-    const selectedRowsCount = selectedImportRows.size;
-    let importedCount = 0;
-    
-    try {
-      // Sort row indices to process in order
-      const sortedRowIndices = Array.from(selectedImportRows).sort((a, b) => a - b);
-      
-      for (const rowIndex of sortedRowIndices) {
-        const rowData = importedData[rowIndex];
-        if (rowData && rowData.coordinates) {
-          // Create new object
-          const newData: ProjectData = {};
-          let hasIncompleteData = rowData.hasIncompleteData || false;
 
-          // Map original data to template fields
-          // Note: coordinates are no longer stored in form data, they're in GeoJSON location
-          template.fields.forEach(field => {
-            if (field.type === 'tags') {
-              // Tags can't be imported from Excel - mark as incomplete
-              newData[field.key] = { majorTag: null, minorTags: [] };
-              if (field.required) {
-                hasIncompleteData = true;
-              }
-            } else {
-              // Try to find matching field in imported data
-              const matchingKey = Object.keys(rowData.originalData).find(key => 
-                key.toLowerCase().includes(field.key.toLowerCase()) ||
-                field.key.toLowerCase().includes(key.toLowerCase()) ||
-                key.toLowerCase() === (field.displayLabel || field.label).toLowerCase()
-              );
-              
-              if (matchingKey && rowData.originalData[matchingKey] !== undefined && rowData.originalData[matchingKey] !== '') {
-                let value = rowData.originalData[matchingKey];
-                newData[field.key] = String(value);
-              } else {
-                newData[field.key] = '';
-                
-                if (field.required) {
-                  hasIncompleteData = true;
-                }
-              }
-            }
-          });
-          
-          // Save the object with incomplete data flag
-          const savedData = await onSave(newData, hasIncompleteData);
-          
-          // If the save function returns the saved object with ID, mark it as incomplete
-          // Note: This assumes onSave returns the saved object or we need to track it differently
-          importedCount++;
-        }
+    const result = await executeAsyncOperation(
+      () => processImportRows(
+        importModal.selectedImportRows,
+        importModal.importedData,
+        template,
+        onSave
+      ),
+      {
+        errorContext: 'Import rows',
+        errorMessage: 'Błąd podczas importowania wybranych wierszy'
       }
-      
-      showImportModal = false;
-      importedData = [];
-      selectedImportRows = new Set();
-      
-      const incompleteCount = importedData.filter((row, index) => 
-        sortedRowIndices.includes(index) && row.hasIncompleteData
-      ).length;
-      
-      if (incompleteCount > 0) {
-        alert(`Pomyślnie zaimportowano ${importedCount} pinezek. ${incompleteCount} pinezek ma niekompletne dane i zostanie oznaczone na mapie.`);
-      } else {
-        alert(`Pomyślnie zaimportowano ${importedCount} pinezek.`);
-      }
-      
-    } catch (error) {
-      console.error('Import rows error:', error);
-      alert('Błąd podczas importowania wybranych wierszy: ' + (error instanceof Error ? error.message : 'Nieznany błąd'));
+    );
+
+    if (result) {
+      importModal.showImportModal = false;
+      importModal.importedData = [];
+      importModal.selectedImportRows = new Set();
+
+      alert(formatImportSuccessMessage(result));
     }
   }
 </script>
@@ -792,13 +427,13 @@
           onchange={handleExcelImport}
           style="display: none;"
           id="excel-import"
-          disabled={isImporting}
+          disabled={importModal.isImporting}
         >
-        <label for="excel-import" class="import-btn" class:disabled={isImporting}>
-<Icon name="Document" size={16} /> {isImporting ? 'Importowanie...' : 'Importuj z Excel'}
+        <label for="excel-import" class="import-btn" class:disabled={importModal.isImporting}>
+<Icon name="Document" size={16} /> {importModal.isImporting ? 'Importowanie...' : 'Importuj z Excel'}
         </label>
         <small class="help-text">
-          {#if isImporting}
+          {#if importModal.isImporting}
             Trwa przetwarzanie pliku... 
             <button type="button" onclick={cancelImport} class="cancel-import-btn">
               Anuluj
@@ -857,62 +492,19 @@
                 {/if}
               </div>
 
-            <!-- NEW FIELD TYPES -->
-            {:else if (field.fieldType || field.type) === 'richtext'}
-              <RichTextInput
-                value={String(getFieldValue(field.fieldName || field.key))}
-                config={field.config as RichTextConfig}
-                required={field.required}
-                oninput={(val) => formData[field.fieldName || field.key] = val}
-              />
-
-            {:else if (field.fieldType || field.type) === 'links'}
-              <LinksInput
-                value={getComplexFieldValue(field.fieldName || field.key) as LinkData[]}
-                config={field.config as LinksConfig}
-                required={field.required}
-                oninput={(val) => formData[field.fieldName || field.key] = val}
-              />
-
-            {:else if (field.fieldType || field.type) === 'multidate'}
-              <MultiDateInput
-                value={getComplexFieldValue(field.fieldName || field.key) as MultiDateData}
-                config={field.config as MultiDateConfig}
-                required={field.required}
-                oninput={(val) => formData[field.fieldName || field.key] = val}
-              />
-
-            {:else if (field.fieldType || field.type) === 'address' && field.config}
-              <AddressInput
-                value={getComplexFieldValue(field.fieldName || field.key) as AddressData}
-                config={field.config as AddressConfig}
-                required={field.required}
-                oninput={(val) => formData[field.fieldName || field.key] = val}
-                onGeocode={() => handleAddressGeocode(field.fieldName || field.key)}
-              />
-
-            {:else if (field.fieldType || field.type) === 'price'}
-              <PriceInput
-                value={getComplexFieldValue(field.fieldName || field.key) as PriceData}
-                config={field.config as PriceConfig}
-                required={field.required}
-                oninput={(val) => formData[field.fieldName || field.key] = val}
-              />
-
-            {:else if (field.fieldType || field.type) === 'files'}
-              <FilesInput
-                value={getComplexFieldValue(field.fieldName || field.key) as FileData[]}
-                config={field.config as FilesConfig}
-                required={field.required}
-                oninput={(val) => formData[field.fieldName || field.key] = val}
-              />
-
-            {:else if (field.fieldType || field.type) === 'gallery'}
-              <GalleryInput
-                value={getComplexFieldValue(field.fieldName || field.key) as GalleryData}
-                config={field.config as GalleryConfig}
-                required={field.required}
-                oninput={(val) => formData[field.fieldName || field.key] = val}
+            <!-- NEW FIELD TYPES - Use DynamicFieldRenderer for complex fields -->
+            {:else if ['richtext', 'links', 'multidate', 'price', 'files', 'gallery', 'tags', 'category', 'selection'].includes(getFieldType(field)) || (getFieldType(field) === 'address' && field.config)}
+              <DynamicFieldRenderer
+                {field}
+                {formData}
+                {availableTags}
+                onFieldChange={(fieldName, value) => formData[fieldName] = value}
+                onGeocode={handleAddressGeocode}
+                {getFieldValue}
+                {getComplexFieldValue}
+                {getTagValue}
+                {getSelectionValue}
+                {isGeocodingAddress}
               />
 
             {:else if field.type === 'address'}
@@ -943,90 +535,6 @@
                     </small>
                   </div>
                 {/if}
-              </div>
-            {:else if field.type === 'tags' || (field.fieldType || field.type) === 'category'}
-              <!-- Tag/Category Selection UI -->
-              {@const tagData = getTagValue(field.fieldName || field.key)}
-              {@const maxMinorTags = field.tagConfig?.maxMinorTags || 3}
-
-              <div class="tag-field">
-                <!-- Major Tag Selection -->
-                <div class="sub-field">
-                  <span class="sub-field-label">Główny tag (wymagany)</span>
-                  <select 
-                    value={tagData.majorTag || ''}
-                    onchange={(e) => {
-                      const target = e.target as HTMLSelectElement;
-                      const newTagData = { ...tagData, majorTag: target.value || null };
-                      handleTagChange(field.fieldName || field.key, newTagData);
-                    }}
-                    class="tag-select"
-                    required={field.required}
-                  >
-                    <option value="">Wybierz główny tag...</option>
-                    {#each availableTags as tag}
-                      <option value={tag.id}>{tag.displayName || tag.name}</option>
-                    {/each}
-                  </select>
-                  
-                  {#if tagData.majorTag}
-                    {@const selectedTag = availableTags.find(t => t.id === tagData.majorTag)}
-                    {#if selectedTag}
-                      <div class="tag-preview major" style="background-color: {selectedTag.color}">
-                        {selectedTag.displayName || selectedTag.name}
-                      </div>
-                    {/if}
-                  {/if}
-                </div>
-
-                <!-- Minor Tags Selection -->
-                <div class="minor-tags-section">
-                  <div class="sub-field">
-                    <span class="sub-field-label">Dodatkowe tagi (max {maxMinorTags})</span>
-                    <div class="minor-tags-container">
-                  <div class="minor-tags-grid">
-                    {#each availableTags as tag}
-                      {@const isSelected = tagData.minorTags.includes(tag.id)}
-                      {@const isMajor = tagData.majorTag === tag.id}
-                      {@const canSelect = !isMajor && (isSelected || tagData.minorTags.length < maxMinorTags)}
-                      
-                      <label class="tag-checkbox" class:disabled={!canSelect}>
-                        <input 
-                          type="checkbox"
-                          checked={isSelected}
-                          disabled={!canSelect}
-                          onchange={(e) => {
-                            const target = e.target as HTMLInputElement;
-                            let newMinorTags = [...tagData.minorTags];
-                            
-                            if (target.checked) {
-                              if (!newMinorTags.includes(tag.id)) {
-                                newMinorTags.push(tag.id);
-                              }
-                            } else {
-                              newMinorTags = newMinorTags.filter(id => id !== tag.id);
-                            }
-                            
-                            const newTagData = { ...tagData, minorTags: newMinorTags };
-                            handleTagChange(field.fieldName || field.key, newTagData);
-                          }}
-                        >
-                        <div class="tag-preview minor" style="background-color: {tag.color}" class:major={isMajor}>
-                          {tag.displayName || tag.name}
-                          {#if isMajor}
-                            <span class="major-indicator">Główny</span>
-                          {/if}
-                        </div>
-                      </label>
-                    {/each}
-                  </div>
-                  
-                      <div class="tag-counter">
-                        {tagData.minorTags.length} / {maxMinorTags} wybranych
-                      </div>
-                    </div>
-                  </div>
-                </div>
               </div>
             {/if}
           </div>
@@ -1066,34 +574,34 @@
 
 <!-- Column Mapping Modal -->
 <ColumnMappingModal
-  open={showColumnMappingModal}
+  open={importModal.showColumnMappingModal}
   {template}
-  {excelHeaders}
-  {excelSampleData}
+  excelHeaders={importModal.excelHeaders}
+  excelSampleData={importModal.excelSampleData}
   excelAllData={[]}
-  {columnMapping}
-  importInProgress={isImporting}
+  columnMapping={importModal.columnMapping}
+  importInProgress={importModal.isImporting}
   onclose={() => {
-    showColumnMappingModal = false;
-    currentTempId = null;
+    importModal.showColumnMappingModal = false;
+    importModal.currentTempId = null;
   }}
   onimport={proceedWithImport}
-  oncolumnmappingchange={(mapping) => columnMapping = mapping}
+  oncolumnmappingchange={(mapping) => importModal.columnMapping = mapping}
   onnewfield={(columnName) => {
     newFieldData = { name: '', label: columnName, type: 'text', required: false, forColumn: columnName };
-    showCreateFieldModal = true;
+    importModal.showCreateFieldModal = true;
   }}
   getFieldDisplayName={(field) => field.displayLabel || field.label}
 />
 
 <!-- Excel Import Preview Modal -->
 <ExcelImportPreviewModal
-  open={showImportModal}
-  {importedData}
-  selectedRows={selectedImportRows}
-  onclose={() => showImportModal = false}
+  open={importModal.showImportModal}
+  importedData={importModal.importedData}
+  selectedRows={importModal.selectedImportRows}
+  onclose={() => importModal.showImportModal = false}
   onimport={importSelectedRows}
-  onselectionchange={(newSelection) => selectedImportRows = newSelection}
+  onselectionchange={(newSelection) => importModal.selectedImportRows = newSelection}
 />
 
 <style>
@@ -1151,107 +659,11 @@
     box-sizing: border-box;
   }
 
-  .sub-field {
-    margin-bottom: 8px;
-  }
-
-  .sub-field-label {
-    font-family: 'DM Sans', sans-serif;
-    font-weight: 400;
-    color: #666;
-    font-size: 12px;
-    display: block;
-    margin-bottom: 4px;
-  }
-
-  .form-field input,
-  .form-field select {
-    width: 100%;
-    padding: 8px 12px;
-    border: 1px solid #000000;
-    border-radius: 0;
-    font-family: 'DM Sans', sans-serif;
-    font-size: 14px;
-    background: #FFFFFF;
-    color: #000000;
-    transition: all 0.2s;
-    box-sizing: border-box;
-  }
-
-  .form-field input:focus,
-  .form-field select:focus {
-    outline: none;
-    border-color: #000000;
-    box-shadow: 0 0 0 1px #000000;
-  }
+  /* Form field styles moved to individual field components */
 
   .form-field input[readonly] {
     background: #F5F5F5;
     color: #666;
-  }
-
-  .form-field textarea {
-    width: 100%;
-    padding: 8px 12px;
-    border: 1px solid #000000;
-    border-radius: 0;
-    font-family: 'DM Sans', sans-serif;
-    font-size: 14px;
-    background: #FFFFFF;
-    color: #000000;
-    transition: all 0.2s;
-    box-sizing: border-box;
-    resize: vertical;
-    min-height: 80px;
-    line-height: 1.5;
-  }
-
-  .form-field textarea:focus {
-    outline: none;
-    border-color: #000000;
-    box-shadow: 0 0 0 1px #000000;
-  }
-
-  .currency-field, .percentage-field {
-    display: flex;
-    align-items: center;
-    position: relative;
-  }
-
-  .currency-field input, .percentage-field input {
-    padding-right: 40px;
-  }
-
-  .currency-symbol, .percentage-symbol {
-    position: absolute;
-    right: 12px;
-    color: #6b7280;
-    font-weight: 600;
-    pointer-events: none;
-  }
-
-  .image-preview {
-    margin-top: 8px;
-    border-radius: 8px;
-    overflow: hidden;
-    max-width: 300px;
-    border: 1px solid #e5e7eb;
-  }
-
-  .image-preview img {
-    width: 100%;
-    height: auto;
-    max-height: 200px;
-    object-fit: cover;
-    display: block;
-  }
-
-  .youtube-preview {
-    margin-top: 8px;
-    padding: 8px 12px;
-    background: #f3f4f6;
-    border-radius: 6px;
-    border: 1px solid #d1d5db;
   }
 
   .help-text {
@@ -1259,16 +671,6 @@
     font-size: 12px;
     font-style: italic;
     margin: 0;
-  }
-
-  .input-with-button {
-    display: flex;
-    gap: 8px;
-    align-items: center;
-  }
-
-  .input-with-button input {
-    flex: 1;
   }
 
   .location-display {
@@ -1345,124 +747,7 @@
     background: #F5F5F5;
   }
   
-  /* Tag field styles */
-  .tag-field {
-    margin-top: 8px;
-    padding: 12px;
-    background: #FAFAFA;
-    border: 1px solid #000000;
-    border-radius: 0;
-  }
-
-  .major-tag-section {
-    margin-bottom: 12px;
-  }
-
-  .minor-tags-container {
-    width: 100%;
-  }
-
-  .tag-select {
-    width: 100%;
-    padding: 8px 12px;
-    border: 1px solid #000000;
-    border-radius: 0;
-    background: #FFFFFF;
-    font-family: 'DM Sans', sans-serif;
-    font-size: 14px;
-    margin-bottom: 8px;
-  }
-
-  .tag-select:focus {
-    outline: none;
-    border-color: #000000;
-    box-shadow: 0 0 0 1px #000000;
-  }
-
-  .tag-preview {
-    padding: 6px 12px;
-    border-radius: 0;
-    color: white;
-    font-family: 'DM Sans', sans-serif;
-    font-size: 13px;
-    font-weight: 500;
-    display: inline-block;
-    margin-top: 6px;
-  }
-
-  .tag-preview.major {
-    border: 2px solid rgba(0, 0, 0, 0.3);
-  }
-
-  .tag-preview.minor {
-    font-size: 12px;
-    padding: 4px 8px;
-    position: relative;
-  }
-
-  .tag-preview.minor.major {
-    opacity: 0.5;
-    position: relative;
-  }
-
-  .major-indicator {
-    position: absolute;
-    top: -8px;
-    right: -8px;
-    background: #dc2626;
-    color: white;
-    font-size: 10px;
-    padding: 2px 4px;
-    border-radius: 0;
-    line-height: 1;
-    font-family: 'DM Sans', sans-serif;
-  }
-
-  .minor-tags-section {
-    margin-top: 12px;
-  }
-
-  .minor-tags-grid {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-    margin-bottom: 12px;
-  }
-
-  .tag-checkbox {
-    display: flex !important;
-    align-items: center;
-    cursor: pointer;
-    margin: 0 !important;
-    padding: 6px;
-    border-radius: 0;
-    transition: background-color 0.2s;
-  }
-
-  .tag-checkbox:hover {
-    background: rgba(0, 0, 0, 0.05);
-  }
-
-  .tag-checkbox.disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-
-  .tag-checkbox.disabled:hover {
-    background: none;
-  }
-
-  .tag-checkbox input[type="checkbox"] {
-    margin-right: 8px;
-    width: auto !important;
-  }
-
-  .tag-counter {
-    font-family: 'DM Sans', sans-serif;
-    font-size: 12px;
-    color: #666;
-    text-align: right;
-  }
+  /* Tag field styles moved to TagInput.svelte */
 
   /* Import/Export Controls */
   .import-export-controls {
@@ -1560,133 +845,11 @@
     margin: 0;
   }
 
-  /* Address Field */
-  .address-field {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-  }
-
-  .address-input-with-button {
-    display: flex;
-    gap: 8px;
-    align-items: center;
-  }
-
-  .address-input-with-button input {
-    flex: 1;
-  }
-
-  .geocode-btn {
-    background: #2563EB;
-    color: white;
-    border: 1px solid #000000;
-    padding: 10px 14px;
-    border-radius: 0;
-    cursor: pointer;
-    font-family: 'DM Sans', sans-serif;
-    font-size: 13px;
-    font-weight: 500;
-    transition: all 0.2s ease;
-    white-space: nowrap;
-    min-width: 140px;
-  }
-
-  .geocode-btn:hover:not(:disabled) {
-    background: #1d4ed8;
-    transform: translateY(-1px);
-  }
-
-  .geocode-btn:disabled {
-    background: #d1d5db;
-    color: #9ca3af;
-    cursor: not-allowed;
-    transform: none;
-  }
-
-  .sync-status {
-    padding: 6px 12px;
-    background: #ecfdf5;
-    border: 1px solid #10b981;
-    border-radius: 0;
-  }
-
-  /* Image Field Enhancements */
-  .image-field {
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-  }
-
-  .image-input-options {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    flex-wrap: wrap;
-  }
-
-  .image-input-options input[type="url"] {
-    flex: 1;
-    min-width: 200px;
-  }
-
-  .input-separator {
-    font-family: 'DM Sans', sans-serif;
-    font-size: 13px;
-    color: #666;
-    font-style: italic;
-  }
-
-  .file-input {
-    display: none;
-  }
-
-  .file-upload-btn {
-    background: #f59e0b;
-    color: white;
-    padding: 8px 12px;
-    border: 1px solid #000000;
-    border-radius: 0;
-    cursor: pointer;
-    font-family: 'DM Sans', sans-serif;
-    font-size: 13px;
-    font-weight: 500;
-    transition: all 0.2s ease;
-    text-decoration: none;
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    white-space: nowrap;
-  }
-
-  .file-upload-btn:hover {
-    background: #d97706;
-    transform: translateY(-1px);
-  }
-
-  .image-preview {
-    margin-top: 8px;
-    border-radius: 0;
-    overflow: hidden;
-    max-width: 300px;
-    border: 2px solid #000000;
-  }
-
-  .image-preview img {
-    width: 100%;
-    height: auto;
-    max-height: 200px;
-    object-fit: cover;
-    display: block;
-  }
-
-  .youtube-preview {
-    margin-top: 8px;
-    padding: 8px 12px;
-    background: #f3f4f6;
-    border: 1px solid #000000;
-    border-radius: 0;
-  }
+  /* Field-specific CSS moved to individual field components:
+     - AddressInput.svelte
+     - GalleryInput.svelte
+     - FilesInput.svelte
+     - etc. */
 
   .location-display {
     display: flex;
@@ -1726,387 +889,5 @@
     cursor: not-allowed;
   }
 
-  /* Modal Styles - Base styles from modal.css, component-specific overrides below */
-  .modal-overlay {
-    --modal-padding: 20px;
-  }
-
-  .modal-content {
-    border: 2px solid #000000;
-    border-radius: 0; /* Override default rounded corners */
-    width: 800px;
-    display: flex;
-    flex-direction: column;
-  }
-
-  .modal-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 20px 24px;
-    border-bottom: 1px solid #000000;
-  }
-
-  .modal-header h3 {
-    margin: 0;
-    font-family: 'Space Grotesk', sans-serif;
-    font-size: 18px;
-    font-weight: 700;
-    color: #000000;
-  }
-
-  .close-btn {
-    background: none;
-    border: none;
-    font-size: 24px;
-    cursor: pointer;
-    color: #666;
-    padding: 4px;
-    border-radius: 0;
-    transition: all 0.2s ease;
-  }
-
-  .close-btn:hover {
-    background: #F5F5F5;
-    color: #000000;
-  }
-
-  .modal-body {
-    padding: 24px;
-    flex: 1;
-    overflow: auto;
-    font-family: 'DM Sans', sans-serif;
-  }
-
-  .modal-footer {
-    display: flex;
-    justify-content: flex-end;
-    gap: 12px;
-    padding: 20px 24px;
-    border-top: 1px solid #000000;
-    background: #FAFAFA;
-    border-radius: 0;
-  }
-
-  /* Import Table */
-  .import-data-table {
-    margin-top: 16px;
-  }
-
-  .table-controls {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 12px;
-    padding: 12px;
-    background: #FAFAFA;
-    border: 1px solid #000000;
-    border-radius: 0;
-  }
-
-  .select-all-btn {
-    background: #6366f1;
-    color: white;
-    border: 1px solid #000000;
-    padding: 6px 12px;
-    border-radius: 0;
-    cursor: pointer;
-    font-family: 'DM Sans', sans-serif;
-    font-size: 12px;
-    font-weight: 500;
-  }
-
-  .select-all-btn:hover {
-    background: #5856eb;
-  }
-
-  .selection-count {
-    font-family: 'DM Sans', sans-serif;
-    font-size: 14px;
-    color: #666;
-    font-weight: 500;
-  }
-
-  .import-table-scroll {
-    max-height: 400px;
-    overflow: auto;
-    border: 2px solid #000000;
-    border-radius: 0;
-  }
-
-  .import-table {
-    width: 100%;
-    border-collapse: collapse;
-  }
-
-  .import-table th {
-    background: #FAFAFA;
-    padding: 12px;
-    text-align: left;
-    font-family: 'Space Grotesk', sans-serif;
-    font-weight: 600;
-    color: #000000;
-    border-bottom: 2px solid #000000;
-    position: sticky;
-    top: 0;
-  }
-
-  .import-table td {
-    font-family: 'DM Sans', sans-serif;
-    padding: 12px;
-    border-bottom: 1px solid #E5E5E5;
-    vertical-align: top;
-  }
-
-  .import-table tr.selected {
-    background: #EFF6FF;
-  }
-
-  .import-table tr:hover {
-    background: #F8FAFC;
-  }
-
-  .coordinates {
-    font-family: 'Space Mono', monospace;
-    font-size: 12px;
-    background: #ecfdf5;
-    padding: 4px 8px;
-    border-radius: 0;
-    color: #065f46;
-    border: 1px solid #10b981;
-  }
-
-  .no-coordinates {
-    font-family: 'DM Sans', sans-serif;
-    font-size: 12px;
-    color: #ef4444;
-    font-style: italic;
-  }
-
-  .row-data {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-    max-width: 300px;
-  }
-
-  .data-item {
-    font-family: 'DM Sans', sans-serif;
-    font-size: 12px;
-    padding: 2px 0;
-  }
-
-  .data-item strong {
-    color: #000000;
-  }
-
-  .import-confirm-btn {
-    background: #10b981;
-    color: white;
-    border: 1px solid #000000;
-    padding: 10px 20px;
-    border-radius: 0;
-    cursor: pointer;
-    font-family: 'DM Sans', sans-serif;
-    font-weight: 600;
-    font-size: 14px;
-    transition: all 0.2s ease;
-  }
-
-  .import-confirm-btn:hover {
-    background: #059669;
-    transform: translateY(-1px);
-  }
-
-  .import-confirm-btn:disabled {
-    background: #d1d5db;
-    color: #9ca3af;
-    cursor: not-allowed;
-    transform: none;
-  }
-
-  /* Warning and Incomplete Data Styles */
-  .warning-box {
-    background: #fef3c7;
-    border: 2px solid #f59e0b;
-    border-radius: 0;
-    padding: 12px;
-    margin-bottom: 16px;
-    font-family: 'DM Sans', sans-serif;
-    font-size: 14px;
-    color: #92400e;
-  }
-
-  .import-table tr.incomplete {
-    background-color: #fef3c7 !important;
-  }
-
-  .import-table tr.incomplete:hover {
-    background-color: #fde68a !important;
-  }
-
-  .import-table tr.incomplete.selected {
-    background-color: #fed7aa !important;
-  }
-
-  .incomplete-indicator {
-    margin-left: 8px;
-    font-size: 14px;
-    color: #f59e0b;
-  }
-
-  .incomplete-notice {
-    font-family: 'DM Sans', sans-serif;
-    color: #92400e !important;
-    font-size: 11px !important;
-    margin-top: 4px;
-    padding: 4px 8px;
-    background: #fed7aa;
-    border-radius: 0;
-    border: 1px solid #f59e0b;
-  }
-
-  /* Column Mapping Modal Styles */
-  .mapping-table {
-    margin-top: 16px;
-    border: 2px solid #000000;
-    border-radius: 0;
-  }
-
-  .mapping-header {
-    display: grid;
-    grid-template-columns: 1fr 1.5fr 1.5fr;
-    gap: 12px;
-    background: #FAFAFA;
-    padding: 12px;
-    border-bottom: 2px solid #000000;
-    font-family: 'Space Grotesk', sans-serif;
-    font-weight: 600;
-    font-size: 13px;
-  }
-
-  .mapping-rows {
-    max-height: 400px;
-    overflow-y: auto;
-  }
-
-  .mapping-row {
-    display: grid;
-    grid-template-columns: 1fr 1.5fr 1.5fr;
-    gap: 12px;
-    padding: 12px;
-    border-bottom: 1px solid #E5E5E5;
-    transition: background-color 0.2s;
-  }
-
-  .mapping-row:hover {
-    background: #F8FAFC;
-  }
-
-  .mapping-row:last-child {
-    border-bottom: none;
-  }
-
-  .mapping-col {
-    font-family: 'DM Sans', sans-serif;
-    font-size: 13px;
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-  }
-
-  .col-excel strong {
-    color: #000000;
-    font-weight: 600;
-  }
-
-  .sample-data {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-  }
-
-  .sample-item {
-    font-family: 'DM Sans', sans-serif;
-    font-size: 12px;
-    padding: 4px 8px;
-    background: #F5F5F5;
-    border: 1px solid #E5E5E5;
-    border-radius: 0;
-    color: #666;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-
-  .sample-item.empty {
-    font-style: italic;
-    color: #999;
-  }
-
-  .mapping-select {
-    width: 100%;
-    padding: 8px 12px;
-    border: 1px solid #000000;
-    border-radius: 0;
-    background: #FFFFFF;
-    font-family: 'DM Sans', sans-serif;
-    font-size: 13px;
-    cursor: pointer;
-  }
-
-  .mapping-select:focus {
-    outline: none;
-    border-color: #2563EB;
-    box-shadow: 0 0 0 1px #2563EB;
-  }
-
-  .mapping-preview {
-    font-family: 'DM Sans', sans-serif;
-    font-size: 12px;
-    padding: 6px 8px;
-    background: #EFF6FF;
-    border: 1px solid #2563EB;
-    border-radius: 0;
-    color: #1d4ed8;
-    font-weight: 500;
-  }
-
-  .mapping-summary {
-    margin-top: 24px;
-    padding: 16px;
-    background: #FAFAFA;
-    border: 2px solid #000000;
-    border-radius: 0;
-  }
-
-  .mapping-summary h4 {
-    margin: 0 0 12px 0;
-    font-family: 'Space Grotesk', sans-serif;
-    font-weight: 700;
-    font-size: 15px;
-    color: #000000;
-  }
-
-  .mapping-summary ul {
-    margin: 0;
-    padding-left: 20px;
-  }
-
-  .mapping-summary li {
-    font-family: 'DM Sans', sans-serif;
-    font-size: 13px;
-    margin-bottom: 6px;
-    color: #666;
-  }
-
-  .mapping-summary li.success {
-    color: #059669;
-    font-weight: 600;
-  }
-
-  .mapping-summary li.warning {
-    color: #f59e0b;
-    font-weight: 600;
-  }
+  /* Modal styles moved to ColumnMappingModal.svelte and ExcelImportPreviewModal.svelte */
 </style>

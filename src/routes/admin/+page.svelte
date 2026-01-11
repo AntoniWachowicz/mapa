@@ -2,6 +2,10 @@
   import { onMount } from 'svelte';
   import type { MapConfig, GeoJSON } from '$lib/types.js';
   import { ZYWIECKI_RAJ_BOUNDARY, calculatePolygonBounds, BOUNDARY_REGISTRY, getBoundaryById } from '$lib/boundaries.js';
+  import { createDatabaseManager } from '$lib/features/admin/databaseManager.svelte.js';
+  import { createWorldBoundsOverlay } from '$lib/features/admin/boundaryHelpers.js';
+  import { createMarkerManager } from '$lib/features/admin/markerManager.svelte.js';
+  import CoordinateDisplay from '$lib/components/admin/CoordinateDisplay.svelte';
   
   interface PageData {
     mapConfig: MapConfig;
@@ -31,15 +35,6 @@
   let L: any;
   let boundsRectangle: any = null;
   let boundsOverlay: any = null;
-  let centerMarker: any = null;
-  let swMarker: any = null;
-  let neMarker: any = null;
-  let nwMarker: any = null;
-  let seMarker: any = null;
-
-  // Dragging state
-  let isDragging = $state(false);
-  let dragCorner = $state<'sw' | 'ne' | 'nw' | 'se' | null>(null);
 
   // Template export state
   let exportingTemplate = $state(false);
@@ -50,21 +45,11 @@
   let uploadMessage = $state('');
   let uploadFileInput: HTMLInputElement;
 
-  // Cleanup state
-  let cleaningUp = $state(false);
-  let cleanupMessage = $state('');
+  // Database operations manager
+  const dbManager = createDatabaseManager();
 
-  // Database reset state
-  let resetting = $state(false);
-  let resetMessage = $state('');
-  let showResetConfirm = $state(false);
-
-  // Database seeding state
-  let seeding = $state(false);
-  let seedMessage = $state('');
-  let showSeedConfirm = $state(false);
-  let clearBeforeSeed = $state(false);
-  let objectCount = $state<number | null>(null);
+  // Marker manager
+  const markerManager = createMarkerManager();
 
   // Custom overlay toggle
   let showCustomOverlay = $state(true);
@@ -209,19 +194,7 @@
     ];
 
     // Create overlay to darken area outside bounds
-    const mapBounds = map.getBounds();
-    const worldBounds = [
-      [mapBounds.getSouth() - 10, mapBounds.getWest() - 10],
-      [mapBounds.getNorth() + 10, mapBounds.getEast() + 10]
-    ];
-
-    const outerRing = [
-      [worldBounds[0][0], worldBounds[0][1]], // SW
-      [worldBounds[1][0], worldBounds[0][1]], // NW
-      [worldBounds[1][0], worldBounds[1][1]], // NE
-      [worldBounds[0][0], worldBounds[1][1]], // SE
-      [worldBounds[0][0], worldBounds[0][1]]  // back to SW
-    ];
+    const { outerRing } = createWorldBoundsOverlay(map);
 
     // Draw boundary based on type
     if (config.boundaryType === 'polygon' && config.polygonBoundary) {
@@ -303,14 +276,21 @@
       }).addTo(map);
 
       // Add draggable corner markers only in rectangle mode
-      swMarker = createDraggableMarker([config.swLat, config.swLng], 'sw');
-      neMarker = createDraggableMarker([config.neLat, config.neLng], 'ne');
-      nwMarker = createDraggableMarker([config.neLat, config.swLng], 'nw');
-      seMarker = createDraggableMarker([config.swLat, config.neLng], 'se');
+      markerManager.initializeMarkers(
+        L,
+        map,
+        config.swLat,
+        config.swLng,
+        config.neLat,
+        config.neLng,
+        () => {}, // onDragStart
+        (corner, lat, lng) => updateBoundsFromCorner(corner, lat, lng), // onDrag
+        () => updateMapVisualization() // onDragEnd
+      );
     }
 
     // Add center marker
-    centerMarker = L.marker([center.lat, center.lng], {
+    const centerMkr = L.marker([center.lat, center.lng], {
       icon: L.divIcon({
         className: 'center-marker',
         html: '🎯',
@@ -318,6 +298,7 @@
         iconAnchor: [12, 12]
       })
     }).addTo(map);
+    markerManager.setCenterMarker(centerMkr);
 
     // Update zoom levels and constraints based on bounds
     updateZoomLevels();
@@ -332,35 +313,6 @@
     }, 100);
   }
 
-  function createDraggableMarker(position: [number, number], corner: 'sw' | 'ne' | 'nw' | 'se') {
-    const marker = L.marker(position, {
-      icon: L.divIcon({
-        className: `corner-marker ${corner}-marker`,
-        html: `<div class="corner-handle"></div>`,
-        iconSize: [20, 20],
-        iconAnchor: [10, 10]
-      }),
-      draggable: true
-    }).addTo(map);
-
-    marker.on('dragstart', () => {
-      isDragging = true;
-      dragCorner = corner;
-    });
-
-    marker.on('drag', (e: any) => {
-      const { lat, lng } = e.target.getLatLng();
-      updateBoundsFromCorner(corner, lat, lng);
-    });
-
-    marker.on('dragend', () => {
-      isDragging = false;
-      dragCorner = null;
-      updateMapVisualization();
-    });
-
-    return marker;
-  }
 
   function updateBoundsFromCorner(corner: 'sw' | 'ne' | 'nw' | 'se', lat: number, lng: number) {
     switch (corner) {
@@ -396,19 +348,7 @@
 
     // Update overlay in real-time
     if (boundsOverlay) {
-      const mapBounds = map.getBounds();
-      const worldBounds = [
-        [mapBounds.getSouth() - 10, mapBounds.getWest() - 10],
-        [mapBounds.getNorth() + 10, mapBounds.getEast() + 10]
-      ];
-
-      const outerRing = [
-        [worldBounds[0][0], worldBounds[0][1]],
-        [worldBounds[1][0], worldBounds[0][1]],
-        [worldBounds[1][0], worldBounds[1][1]],
-        [worldBounds[0][0], worldBounds[1][1]],
-        [worldBounds[0][0], worldBounds[0][1]]
-      ];
+      const { outerRing } = createWorldBoundsOverlay(map);
 
       const innerRing = [
         [config.swLat, config.swLng],
@@ -422,13 +362,15 @@
     }
 
     // Update all marker positions except the one being dragged
-    if (swMarker && corner !== 'sw') swMarker.setLatLng([config.swLat, config.swLng]);
-    if (neMarker && corner !== 'ne') neMarker.setLatLng([config.neLat, config.neLng]);
-    if (nwMarker && corner !== 'nw') nwMarker.setLatLng([config.neLat, config.swLng]);
-    if (seMarker && corner !== 'se') seMarker.setLatLng([config.swLat, config.neLng]);
-
-    // Update center marker
-    if (centerMarker) centerMarker.setLatLng([center.lat, center.lng]);
+    markerManager.updateMarkerPositions(
+      config.swLat,
+      config.swLng,
+      config.neLat,
+      config.neLng,
+      center.lat,
+      center.lng,
+      corner
+    );
 
     // Update coordinate indicators
     updateCoordinateIndicators();
@@ -698,140 +640,6 @@
     }
   }
 
-  // Cleanup unused tiles
-  async function cleanupUnusedTiles() {
-    if (!confirm('This will delete all unused map files and tiles. Current map will be preserved. Continue?')) {
-      return;
-    }
-
-    cleaningUp = true;
-    cleanupMessage = '';
-
-    try {
-      const response = await fetch('/api/cleanup-tiles', {
-        method: 'POST'
-      });
-
-      const result = await response.json();
-
-      if (!response.ok) {
-        throw new Error(result.error || 'Failed to cleanup tiles');
-      }
-
-      cleanupMessage = result.message;
-    } catch (error) {
-      console.error('Cleanup error:', error);
-      cleanupMessage = `Error: ${error instanceof Error ? error.message : 'Unknown error'}`;
-    } finally {
-      cleaningUp = false;
-    }
-  }
-
-  // Database reset function
-  function initiateReset() {
-    showResetConfirm = true;
-  }
-
-  function cancelReset() {
-    showResetConfirm = false;
-  }
-
-  async function confirmReset() {
-    showResetConfirm = false;
-    resetting = true;
-    resetMessage = '';
-
-    try {
-      const response = await fetch('/api/reset-database', {
-        method: 'POST'
-      });
-
-      const result = await response.json();
-
-      if (!response.ok) {
-        throw new Error(result.error || 'Failed to reset database');
-      }
-
-      resetMessage = result.message || 'Baza danych została zresetowana pomyślnie!';
-
-      // Reload page after successful reset to show fresh state
-      setTimeout(() => {
-        window.location.reload();
-      }, 2000);
-    } catch (error) {
-      console.error('Reset error:', error);
-      resetMessage = `Błąd: ${error instanceof Error ? error.message : 'Nieznany błąd'}`;
-    } finally {
-      resetting = false;
-    }
-  }
-
-  // Database seeding functions
-  async function fetchObjectCount() {
-    try {
-      const response = await fetch('/api/objects');
-      const result = await response.json();
-      objectCount = result.objects?.length || 0;
-    } catch (error) {
-      console.error('Error fetching object count:', error);
-      objectCount = 0;
-    }
-  }
-
-  function initiateSeed() {
-    fetchObjectCount();
-    showSeedConfirm = true;
-  }
-
-  function cancelSeed() {
-    showSeedConfirm = false;
-    clearBeforeSeed = false;
-  }
-
-  async function confirmSeed() {
-    showSeedConfirm = false;
-    seeding = true;
-    seedMessage = '';
-
-    try {
-      const url = clearBeforeSeed ? '/api/seed?clear=true' : '/api/seed';
-      const response = await fetch(url, {
-        method: 'POST'
-      });
-
-      const result = await response.json();
-
-      if (!response.ok && !result.success) {
-        if (result.currentCount) {
-          seedMessage = `Baza danych zawiera już ${result.currentCount} obiektów. Użyj opcji "Wyczyść przed zasiewem" aby rozpocząć od nowa.`;
-        } else {
-          throw new Error(result.error || 'Failed to seed database');
-        }
-      } else {
-        const dist = result.distribution || {};
-        const details = Object.entries(dist)
-          .map(([cat, count]) => `${cat}: ${count}`)
-          .join(', ');
-
-        seedMessage = `✓ Pomyślnie utworzono ${result.created} projektów LGD! (${details})`;
-
-        if (result.cleared > 0) {
-          seedMessage += ` Wyczyszczono ${result.cleared} poprzednich obiektów.`;
-        }
-
-        // Reload page after 3 seconds to show new data
-        setTimeout(() => {
-          window.location.reload();
-        }, 3000);
-      }
-    } catch (error) {
-      console.error('Seed error:', error);
-      seedMessage = `Błąd: ${error instanceof Error ? error.message : 'Nieznany błąd'}`;
-    } finally {
-      seeding = false;
-      clearBeforeSeed = false;
-    }
-  }
 </script>
 
 <svelte:head>
@@ -859,113 +667,53 @@
 
       <!-- Dynamic coordinate displays that follow corners - only in rectangle mode -->
       {#if config.boundaryType !== 'polygon'}
-        <div
-          class="coordinate-overlay"
-          style="left: {coordinateIndicators.sw.x}px; top: {coordinateIndicators.sw.y}px; transform: translate(-100%, 0);"
-        >
-          <div class="coord-display">
-            <div class="coord-label">SW</div>
-            <div class="coord-value">
-              <input
-                type="number"
-                step="0.000001"
-                bind:value={config.swLat}
-                class="coord-input"
-                disabled={saving}
-              >
-            </div>
-            <div class="coord-value">
-              <input
-                type="number"
-                step="0.000001"
-                bind:value={config.swLng}
-                class="coord-input"
-                disabled={saving}
-              >
-            </div>
-          </div>
-        </div>
+        <CoordinateDisplay
+          label="SW"
+          x={coordinateIndicators.sw.x}
+          y={coordinateIndicators.sw.y}
+          transform="translate(-100%, 0)"
+          lat={config.swLat}
+          lng={config.swLng}
+          disabled={saving}
+          onLatChange={(value) => config.swLat = value}
+          onLngChange={(value) => config.swLng = value}
+        />
 
-        <div
-          class="coordinate-overlay"
-          style="left: {coordinateIndicators.ne.x}px; top: {coordinateIndicators.ne.y}px; transform: translate(0, -100%);"
-        >
-          <div class="coord-display">
-            <div class="coord-label">NE</div>
-            <div class="coord-value">
-              <input
-                type="number"
-                step="0.000001"
-                bind:value={config.neLat}
-                class="coord-input"
-                disabled={saving}
-              >
-            </div>
-            <div class="coord-value">
-              <input
-                type="number"
-                step="0.000001"
-                bind:value={config.neLng}
-                class="coord-input"
-                disabled={saving}
-              >
-            </div>
-          </div>
-        </div>
+        <CoordinateDisplay
+          label="NE"
+          x={coordinateIndicators.ne.x}
+          y={coordinateIndicators.ne.y}
+          transform="translate(0, -100%)"
+          lat={config.neLat}
+          lng={config.neLng}
+          disabled={saving}
+          onLatChange={(value) => config.neLat = value}
+          onLngChange={(value) => config.neLng = value}
+        />
 
-        <div
-          class="coordinate-overlay"
-          style="left: {coordinateIndicators.nw.x}px; top: {coordinateIndicators.nw.y}px; transform: translate(-100%, -100%);"
-        >
-          <div class="coord-display">
-            <div class="coord-label">NW</div>
-            <div class="coord-value">
-              <input
-                type="number"
-                step="0.000001"
-                bind:value={config.neLat}
-                class="coord-input"
-                disabled={saving}
-              >
-            </div>
-            <div class="coord-value">
-              <input
-                type="number"
-                step="0.000001"
-                bind:value={config.swLng}
-                class="coord-input"
-                disabled={saving}
-              >
-            </div>
-          </div>
-        </div>
+        <CoordinateDisplay
+          label="NW"
+          x={coordinateIndicators.nw.x}
+          y={coordinateIndicators.nw.y}
+          transform="translate(-100%, -100%)"
+          lat={config.neLat}
+          lng={config.swLng}
+          disabled={saving}
+          onLatChange={(value) => config.neLat = value}
+          onLngChange={(value) => config.swLng = value}
+        />
 
-        <div
-          class="coordinate-overlay"
-          style="left: {coordinateIndicators.se.x}px; top: {coordinateIndicators.se.y}px; transform: translate(0, 0);"
-        >
-          <div class="coord-display">
-            <div class="coord-label">SE</div>
-            <div class="coord-value">
-              <input
-                type="number"
-                step="0.000001"
-                bind:value={config.swLat}
-                class="coord-input"
-                disabled={saving}
-              >
-            </div>
-            <div class="coord-value">
-              <input
-                type="number"
-                step="0.000001"
-                bind:value={config.neLng}
-                class="coord-input"
-                disabled={saving}
-              >
-            </div>
-          </div>
-        </div>
+        <CoordinateDisplay
+          label="SE"
+          x={coordinateIndicators.se.x}
+          y={coordinateIndicators.se.y}
+          transform="translate(0, 0)"
+          lat={config.swLat}
+          lng={config.neLng}
+          disabled={saving}
+          onLatChange={(value) => config.swLat = value}
+          onLngChange={(value) => config.neLng = value}
+        />
       {/if}
     </div>
 
@@ -1050,16 +798,16 @@
           {uploadingMap ? 'Uploading...' : 'Upload Custom Map'}
         </button>
 
-        <button onclick={cleanupUnusedTiles} class="btn btn-warning" disabled={cleaningUp || saving}>
-          {cleaningUp ? 'Cleaning...' : 'Cleanup Unused Tiles'}
+        <button onclick={dbManager.cleanupUnusedTiles} class="btn btn-warning" disabled={dbManager.cleaningUp || saving}>
+          {dbManager.cleaningUp ? 'Cleaning...' : 'Cleanup Unused Tiles'}
         </button>
 
-        <button onclick={initiateSeed} class="btn btn-success" disabled={seeding || saving}>
-          {seeding ? 'Generowanie...' : 'Załaduj Dane Demo LGD'}
+        <button onclick={dbManager.initiateSeed} class="btn btn-success" disabled={dbManager.seeding || saving}>
+          {dbManager.seeding ? 'Generowanie...' : 'Załaduj Dane Demo LGD'}
         </button>
 
-        <button onclick={initiateReset} class="btn btn-danger" disabled={resetting || saving}>
-          {resetting ? 'Resetting...' : 'Reset Database'}
+        <button onclick={dbManager.initiateReset} class="btn btn-danger" disabled={dbManager.resetting || saving}>
+          {dbManager.resetting ? 'Resetting...' : 'Reset Database'}
         </button>
       </div>
 
@@ -1094,29 +842,29 @@
       </div>
     {/if}
 
-    {#if cleanupMessage}
-      <div class="message" class:error={cleanupMessage.includes('Error')}>
-        {cleanupMessage}
+    {#if dbManager.cleanupMessage}
+      <div class="message" class:error={dbManager.cleanupMessage.includes('Error')}>
+        {dbManager.cleanupMessage}
       </div>
     {/if}
 
-    {#if resetMessage}
-      <div class="message" class:error={resetMessage.includes('Błąd')}>
-        {resetMessage}
+    {#if dbManager.resetMessage}
+      <div class="message" class:error={dbManager.resetMessage.includes('Błąd')}>
+        {dbManager.resetMessage}
       </div>
     {/if}
 
-    {#if seedMessage}
-      <div class="message" class:error={seedMessage.includes('Błąd')}>
-        {seedMessage}
+    {#if dbManager.seedMessage}
+      <div class="message" class:error={dbManager.seedMessage.includes('Błąd')}>
+        {dbManager.seedMessage}
       </div>
     {/if}
   </div>
 </div>
 
 <!-- Seed Confirmation Modal -->
-{#if showSeedConfirm}
-  <div class="modal-overlay" onclick={cancelSeed}>
+{#if dbManager.showSeedConfirm}
+  <div class="modal-overlay" onclick={dbManager.cancelSeed}>
     <div class="modal-content" onclick={(e) => e.stopPropagation()}>
       <h2>Załaduj Dane Demo LGD Żywiecki Raj</h2>
       <p>
@@ -1130,14 +878,14 @@
         <li>20 projektów rolniczych</li>
         <li>20 projektów edukacyjnych</li>
       </ul>
-      {#if objectCount !== null && objectCount > 0}
+      {#if dbManager.objectCount !== null && dbManager.objectCount > 0}
         <p class="warning-text">
-          ⚠️ Baza danych zawiera już <strong>{objectCount} obiektów</strong>.
+          ⚠️ Baza danych zawiera już <strong>{dbManager.objectCount} obiektów</strong>.
         </p>
         <label style="display: flex; align-items: center; gap: var(--space-2); margin: var(--space-3) 0; cursor: pointer;">
           <input
             type="checkbox"
-            bind:checked={clearBeforeSeed}
+            bind:checked={dbManager.clearBeforeSeed}
             style="width: 20px; height: 20px; cursor: pointer;"
           />
           <span>Wyczyść istniejące dane przed zasiewem</span>
@@ -1148,11 +896,11 @@
         </p>
       {/if}
       <div class="modal-buttons">
-        <button onclick={cancelSeed} class="btn btn-secondary">
+        <button onclick={dbManager.cancelSeed} class="btn btn-secondary">
           Anuluj
         </button>
-        <button onclick={confirmSeed} class="btn btn-success">
-          {clearBeforeSeed ? 'Wyczyść i Załaduj Dane' : 'Załaduj Dane Demo'}
+        <button onclick={dbManager.confirmSeed} class="btn btn-success">
+          {dbManager.clearBeforeSeed ? 'Wyczyść i Załaduj Dane' : 'Załaduj Dane Demo'}
         </button>
       </div>
     </div>
@@ -1160,8 +908,8 @@
 {/if}
 
 <!-- Reset Confirmation Modal -->
-{#if showResetConfirm}
-  <div class="modal-overlay" onclick={cancelReset}>
+{#if dbManager.showResetConfirm}
+  <div class="modal-overlay" onclick={dbManager.cancelReset}>
     <div class="modal-content" onclick={(e) => e.stopPropagation()}>
       <h2>Potwierdzenie Resetowania Bazy Danych</h2>
       <p class="warning-text">
@@ -1171,10 +919,10 @@
         Ta operacja jest nieodwracalna. Czy na pewno chcesz kontynuować?
       </p>
       <div class="modal-buttons">
-        <button onclick={cancelReset} class="btn btn-secondary">
+        <button onclick={dbManager.cancelReset} class="btn btn-secondary">
           Anuluj
         </button>
-        <button onclick={confirmReset} class="btn btn-danger">
+        <button onclick={dbManager.confirmReset} class="btn btn-danger">
           Tak, Resetuj Bazę Danych
         </button>
       </div>

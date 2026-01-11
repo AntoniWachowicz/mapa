@@ -32,6 +32,14 @@ npm run format    # Format code
 - `src/lib/SchemaBuilder.svelte` - Template configuration
 - `src/lib/MapComponent.svelte` - Leaflet integration
 
+**Extracted Modules** (Dec 2025 refactoring):
+- `src/lib/features/` - Feature modules (geocoding, excelImport, tableResize, dragDrop, etc.)
+- `src/lib/components/modals/` - Reusable modals (Modal, ColumnMappingModal, BulkEditModal, etc.)
+- `src/lib/components/table/` - Table components (DataTable, TableHeader, TableCell)
+- `src/lib/SchemaBuilder/` - SchemaBuilder sub-components and utilities
+- `src/lib/utils/` - Utility functions (formatters, validation, videoEmbeds)
+- `src/lib/services/` - Service modules (geocodingService, imageUploadService)
+
 **API Routes**:
 - `src/routes/api/pins/+server.ts` - Pin CRUD
 - `src/routes/api/geocode/+server.ts` - Geocoding
@@ -93,9 +101,13 @@ npm run format    # Format code
 - Keyboard navigation broken (a11y)
 
 **Medium Priority**:
-- CSS warnings in PinDetailPanel.svelte:580,589
 - No geocoding cache (repeat requests)
 - Label warning in MultiDateInput.svelte:34
+- Pre-existing type errors in seed/import-excel routes (54 errors)
+
+**Resolved (Dec 2025)**:
+- ~~CSS warnings in PinDetailPanel.svelte~~ - Fixed
+- ~~Large file sizes~~ - Refactored (list 76%, PinManager 62% reduction)
 
 **See**: `docs/WORKING-NOTES.md` for full list
 
@@ -123,16 +135,51 @@ XSS protection (not JS-accessible). Stateless auth. Trade-off: Can't read from c
 
 ---
 
-## Documentation
+## Documentation (`/docs`)
 
-**LLM Development**:
-- `docs/WORKING-NOTES.md` - Current status, gotchas, TODOs
-- `docs/ARCHITECTURE.md` - Technical reference
+The `/docs` directory is the primary knowledge base for development. Always check here first.
 
-**Archive** (historical context):
-- `docs/archive/BOUNDARY_APPROACHES.md` - Design alternatives
-- `docs/archive/SESSION_NOTES.md` - Dec 10, 2025 session
-- `docs/archive/Needed_changes.md` - Pre-production checklist
+### Core Files (Start Here)
+- `WORKING-NOTES.md` - **Current status**, gotchas, uncommitted changes
+- `TODO.md` - **Task list** with priorities and feature roadmap
+- `ARCHITECTURE.md` - Technical reference, system design
+
+### Active Development
+- `REFACTORING-PLAN.md` - **Major restructuring complete** (~4327 lines removed across 25 sessions)
+- `REFACTORING-WORKFLOW.md` - Step-by-step validation checklist for extractions
+
+### Feature Documentation (`/docs/features/`)
+Detailed docs for major subsystems:
+- `Boundaries.md` - PRG boundary system, gmina data, LGD regions
+- `Excel-Import.md` - Import workflow, column mapping, error handling
+- `Geocoding.md` - Nominatim strategy, postal code approach, rate limiting
+
+### Archive (`/docs/archive/`)
+Historical context and completed work:
+- `BOUNDARY_APPROACHES.md` - Design alternatives considered
+- `SESSION_NOTES.md` - Dec 10, 2025 session log
+- `Needed_changes.md` - Pre-production checklist
+- `NOWE_FUNKCJE.md` - Feature notes (Polish)
+- `CUSTOM_OVERLAY_IMAGE_DESIGN.md` - Overlay feature design
+- `MAP_CUSTOMIZATION_ROADMAP.md` - Map theming plans
+- `pin-system-overhaul-spec.md` - Pin schema redesign
+- `implementation-guide.md` - Previous implementation reference
+- `LGD_ZYWIECKI_RAJ_SUMMARY.md` - Boundary data sourcing
+
+### Directory Structure
+```
+docs/
+├── WORKING-NOTES.md      # Start here
+├── TODO.md               # Tasks & features
+├── ARCHITECTURE.md       # System design
+├── REFACTORING-PLAN.md   # Current refactoring
+├── REFACTORING-WORKFLOW.md
+├── features/
+│   ├── Boundaries.md
+│   ├── Excel-Import.md
+│   └── Geocoding.md
+└── archive/              # Historical docs
+```
 
 ---
 
@@ -154,10 +201,25 @@ npm run preview   # Preview production build
 
 ## Recent Changes (Dec 2025)
 
+**Major Refactoring Complete**: ~4327 lines removed across 25 sessions
+- Extracted 72+ modules from large components
+- Created `src/lib/components/modals/` - Reusable modal components
+- Created `src/lib/components/table/` - DataTable, TableHeader, TableCell
+- Created `src/lib/features/` - Feature modules (geocoding, excelImport, etc.)
+- Created `src/lib/utils/` and `src/lib/services/` - Utilities and services
+- list/+page.svelte: 3734 → ~900 lines (76% reduction)
+- PinManager.svelte: 2314 → ~890 lines (62% reduction)
+- See `docs/REFACTORING-PLAN.md` for session-by-session details
+
+**List Table UI** (Dec 25):
+- Compact cells (max 2 lines)
+- Row-based expansion (click any cell to expand row)
+- All fonts converted to rem units
+- Fixed column alignment with `table-layout: fixed`
+
 **Geocoding**: Postal code-first strategy, rural address support
 **Excel Import**: Column mapping modal, incomplete data tracking
 **Boundaries**: LGD Buduj Razem 19/20 gminas added
-**Docs**: Restructured from tutorial-style to LLM working notes
 
 **Git status**: See `docs/WORKING-NOTES.md` for uncommitted changes
 

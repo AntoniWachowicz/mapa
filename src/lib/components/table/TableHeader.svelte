@@ -63,7 +63,7 @@
   <thead>
     <tr>
       <!-- Checkbox column -->
-      <th class="checkbox-column" onclick={handleToggleSelectAll}>
+      <th class="checkbox-column" style="width: 2.5rem;" onclick={handleToggleSelectAll}>
         <input
           type="checkbox"
           checked={selectedRowCount === totalRowCount && totalRowCount > 0}
@@ -71,7 +71,7 @@
         />
       </th>
       <!-- Location column (always visible) -->
-      <th class="location-column">
+      <th class="location-column" style="width: 9rem;">
         <div class="header-content">
           <div class="header-text">
             <span class="field-name">Lokalizacja</span>
@@ -117,15 +117,17 @@
   .header-table {
     width: 100%;
     border-collapse: collapse;
+    table-layout: fixed;
   }
 
   th {
     background: var(--color-surface);
-    padding: 12px 12px 16px 12px;
+    /* Match cell padding exactly */
+    padding: 0.375rem 0.5rem;
     text-align: left;
     font-family: "Space Mono", monospace;
     font-weight: var(--font-weight-bold);
-    font-size: var(--text-sm);
+    font-size: 0.75rem;
     color: var(--color-text-primary);
     cursor: pointer;
     user-select: none;
@@ -134,6 +136,8 @@
     border-bottom: 2px solid var(--color-border);
     border-right: 1px solid rgba(0, 0, 0, 0.1);
     box-sizing: border-box;
+    vertical-align: top;
+    overflow: hidden;
   }
 
   th:last-child {
@@ -147,34 +151,34 @@
   }
 
   .checkbox-column {
-    width: 40px !important;
-    min-width: 40px !important;
-    max-width: 40px !important;
+    width: 2.5rem !important;
+    min-width: 2.5rem !important;
+    max-width: 2.5rem !important;
     text-align: center;
     cursor: pointer;
   }
 
   .checkbox-column input[type="checkbox"] {
     cursor: pointer;
-    transform: scale(1.2);
+    transform: scale(1.1);
   }
 
   .location-column {
-    width: 200px;
-    min-width: 200px;
+    width: 9rem;
+    min-width: 9rem;
   }
 
   .header-content {
     display: flex;
-    align-items: center;
+    align-items: flex-start;
     justify-content: space-between;
-    gap: var(--space-2);
+    gap: 0.25rem;
   }
 
   .header-text {
     display: flex;
     flex-direction: column;
-    gap: 2px;
+    gap: 0;
     flex: 1;
     min-width: 0;
   }
@@ -182,7 +186,9 @@
   .field-name {
     font-family: "Space Mono", monospace;
     font-weight: var(--font-weight-bold);
+    font-size: 0.75rem;
     color: var(--color-text-primary);
+    line-height: 1.3;
     word-wrap: break-word;
     overflow-wrap: break-word;
     hyphens: auto;
@@ -190,9 +196,10 @@
 
   .field-type {
     font-family: "Space Mono", monospace;
-    font-size: 11px;
+    font-size: 0.625rem;
     color: var(--color-text-secondary);
     font-weight: normal;
+    line-height: 1.2;
   }
 
   .sort-icon {
@@ -206,7 +213,7 @@
     position: absolute;
     top: 0;
     right: 0;
-    width: 5px;
+    width: 0.3125rem;
     height: 100%;
     cursor: col-resize;
     z-index: 30;
