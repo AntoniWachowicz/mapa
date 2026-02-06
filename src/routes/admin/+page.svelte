@@ -52,7 +52,7 @@
   const markerManager = createMarkerManager();
 
   // Custom overlay toggle
-  let showCustomOverlay = $state(true);
+  let showCustomOverlay = $state(data.mapConfig.overlayEnabled ?? true);
   let customTileLayer: any = null;
   let osmTileLayer: any = null;
 
@@ -81,15 +81,15 @@
     // Set initial zoom constraints
     updateZoomLevels();
     // Load object count for seeding UI
-    fetchObjectCount();
+    dbManager.fetchObjectCount();
   });
-  
+
   async function loadLeaflet() {
     const link = document.createElement('link');
     link.rel = 'stylesheet';
     link.href = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css';
     document.head.appendChild(link);
-    
+
     return new Promise((resolve) => {
       const script = document.createElement('script');
       script.src = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js';
@@ -100,7 +100,7 @@
       document.head.appendChild(script);
     });
   }
-  
+
   // Tile provider configurations (same as MapComponent)
   const tileProviders: Record<string, { url: string; attribution: string; maxZoom?: number }> = {
     osm: {
@@ -182,11 +182,7 @@
       map.removeLayer(boundsOverlay);
       boundsOverlay = null;
     }
-    if (centerMarker) map.removeLayer(centerMarker);
-    if (swMarker) map.removeLayer(swMarker);
-    if (neMarker) map.removeLayer(neMarker);
-    if (nwMarker) map.removeLayer(nwMarker);
-    if (seMarker) map.removeLayer(seMarker);
+    markerManager.clearMarkers();
 
     const bounds = [
       [config.swLat, config.swLng],
@@ -627,9 +623,10 @@
     uploadFileInput?.click();
   }
 
-  // Toggle custom overlay
+  // Toggle custom overlay - called after bind:checked updates the value
   function toggleCustomOverlay() {
-    showCustomOverlay = !showCustomOverlay;
+    // Sync to config so it persists when saved
+    config.overlayEnabled = showCustomOverlay;
 
     if (map && customTileLayer) {
       if (showCustomOverlay) {
@@ -654,16 +651,6 @@
         Zoom: {currentZoom} / {config.maxCustomZoom}
       </div> -->
 
-      <!-- Custom overlay toggle -->
-      {#if config.customImageUrl}
-        <div class="overlay-toggle">
-          <label class="toggle-switch">
-            <input type="checkbox" bind:checked={showCustomOverlay} onchange={toggleCustomOverlay} />
-            <span class="toggle-slider"></span>
-          </label>
-          <span class="toggle-label">Custom Overlay</span>
-        </div>
-      {/if}
 
       <!-- Dynamic coordinate displays that follow corners - only in rectangle mode -->
       {#if config.boundaryType !== 'polygon'}
@@ -718,24 +705,23 @@
     </div>
 
     <div class="map-controls">
-      <div class="boundary-controls">
-        <label for="boundary-select">Select Boundary:</label>
+      <!-- Granice mapy -->
+      <div class="control-group">
+        <label for="boundary-select">Granice mapy</label>
         <select
           id="boundary-select"
           bind:value={selectedBoundaryId}
           onchange={() => selectBoundary(selectedBoundaryId)}
-          class="boundary-select"
+          class="control-select"
           disabled={saving}
         >
-          <option value={null}>Rectangle (Manual)</option>
-
-          <optgroup label="LGD (Local Action Groups)">
+          <option value={null}>Prostokąt (ręczny)</option>
+          <optgroup label="LGD">
             {#each BOUNDARY_REGISTRY.filter(b => b.category === 'lgd') as boundary}
               <option value={boundary.id}>{boundary.name}</option>
             {/each}
           </optgroup>
-
-          <optgroup label="Gminas">
+          <optgroup label="Gminy">
             {#each BOUNDARY_REGISTRY.filter(b => b.category === 'gmina') as boundary}
               <option value={boundary.id}>{boundary.name}</option>
             {/each}
@@ -743,72 +729,48 @@
         </select>
       </div>
 
-      <div class="boundary-controls">
-        <label for="map-style-select">Map Style:</label>
+      <!-- Styl mapy -->
+      <div class="control-group">
+        <label for="map-style-select">Styl mapy</label>
         <select
           id="map-style-select"
           bind:value={config.baseLayerStyle}
-          class="boundary-select"
+          class="control-select"
           disabled={saving}
         >
-          <option value="osm">Standard (OpenStreetMap)</option>
-          <option value="watercolor">Watercolor (Artistic)</option>
-          <option value="satellite">Satellite View</option>
-          <option value="terrain">Terrain/Topographic</option>
+          <option value="osm">Standard (OSM)</option>
+          <option value="watercolor">Akwarela</option>
+          <option value="satellite">Satelita</option>
+          <option value="terrain">Teren</option>
         </select>
       </div>
 
-      <button onclick={fitToCurrentBounds} class="btn" disabled={saving}>
-        Dopasuj widok do granic
-      </button>
-
-      <div class="custom-map-section">
-        <div class="custom-map-status">
+      <!-- Nakładka -->
+      <div class="control-group">
+        <label>Nakładka</label>
+        <div class="overlay-controls">
           {#if config.customImageUrl}
-            <span class="status-indicator active">
-              <img src="/icons/Checkmark.svg" alt="" style="width: 14px; height: 14px; margin-right: 4px;" />
-              Custom map active
-            </span>
-          {:else}
-            <span class="status-indicator inactive">
-              <img src="/icons/Circle.svg" alt="" style="width: 14px; height: 14px; margin-right: 4px;" />
-              Using default OSM tiles
-            </span>
-          {/if}
-        </div>
-
-        {#if config.customImageUrl}
-          <div class="overlay-toggle">
-            <label>
+            <label class="checkbox-control">
               <input
                 type="checkbox"
-                bind:checked={config.overlayEnabled}
+                bind:checked={showCustomOverlay}
+                onchange={toggleCustomOverlay}
                 disabled={saving}
               />
-              Show overlay on map
+              <span class="checkbox-label">Włączona</span>
             </label>
-          </div>
-        {/if}
-
-        <button onclick={exportMapTemplate} class="btn btn-secondary" disabled={exportingTemplate || saving}>
-          {exportingTemplate ? 'Exporting...' : 'Export Map Template'}
-        </button>
-
-        <button onclick={triggerFileUpload} class="btn btn-secondary" disabled={uploadingMap || saving}>
-          {uploadingMap ? 'Uploading...' : 'Upload Custom Map'}
-        </button>
-
-        <button onclick={dbManager.cleanupUnusedTiles} class="btn btn-warning" disabled={dbManager.cleaningUp || saving}>
-          {dbManager.cleaningUp ? 'Cleaning...' : 'Cleanup Unused Tiles'}
-        </button>
-
-        <button onclick={dbManager.initiateSeed} class="btn btn-success" disabled={dbManager.seeding || saving}>
-          {dbManager.seeding ? 'Generowanie...' : 'Załaduj Dane Demo LGD'}
-        </button>
-
-        <button onclick={dbManager.initiateReset} class="btn btn-danger" disabled={dbManager.resetting || saving}>
-          {dbManager.resetting ? 'Resetting...' : 'Reset Database'}
-        </button>
+          {:else}
+            <span class="no-overlay-text">Brak</span>
+          {/if}
+          <button onclick={triggerFileUpload} class="btn btn-sm" disabled={uploadingMap || saving}>
+            {uploadingMap ? 'Przesyłanie...' : 'Prześlij'}
+          </button>
+          {#if config.customImageUrl}
+            <button onclick={dbManager.cleanupUnusedTiles} class="btn btn-sm btn-warning" disabled={dbManager.cleaningUp || saving}>
+              {dbManager.cleaningUp ? '...' : 'Wyczyść'}
+            </button>
+          {/if}
+        </div>
       </div>
 
       <input
@@ -819,8 +781,25 @@
         style="display: none;"
       />
 
+      <!-- Akcje -->
+      <div class="control-group actions-group">
+        <button onclick={fitToCurrentBounds} class="btn btn-sm" disabled={saving}>
+          Dopasuj widok
+        </button>
+        <button onclick={exportMapTemplate} class="btn btn-sm" disabled={exportingTemplate || saving}>
+          {exportingTemplate ? '...' : 'Eksport'}
+        </button>
+        <button onclick={dbManager.initiateSeed} class="btn btn-sm btn-success" disabled={dbManager.seeding || saving}>
+          {dbManager.seeding ? '...' : 'Demo'}
+        </button>
+        <button onclick={dbManager.initiateReset} class="btn btn-sm btn-danger" disabled={dbManager.resetting || saving}>
+          {dbManager.resetting ? '...' : 'Reset'}
+        </button>
+      </div>
+
+      <!-- Zapisz -->
       <button onclick={saveConfig} class="btn btn-primary" disabled={saving}>
-        {saving ? 'Zapisywanie...' : 'Zapisz konfigurację'}
+        {saving ? 'Zapisywanie...' : 'Zapisz'}
       </button>
     </div>
 
@@ -972,71 +951,6 @@
     pointer-events: none;
   }
 
-  .overlay-toggle {
-    position: absolute;
-    top: 50px;
-    right: 10px;
-    z-index: 1000;
-    background: rgba(255, 255, 255, 0.95);
-    padding: 8px 12px;
-    border-radius: var(--radius-md);
-    border: 1px solid var(--color-border);
-    box-shadow: var(--shadow-md);
-    display: flex;
-    align-items: center;
-    gap: 8px;
-  }
-
-  .toggle-label {
-    font-size: 12px;
-    font-weight: 500;
-    user-select: none;
-  }
-
-  .toggle-switch {
-    position: relative;
-    display: inline-block;
-    width: 40px;
-    height: 20px;
-  }
-
-  .toggle-switch input {
-    opacity: 0;
-    width: 0;
-    height: 0;
-  }
-
-  .toggle-slider {
-    position: absolute;
-    cursor: pointer;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background-color: #ccc;
-    transition: 0.3s;
-    border-radius: 20px;
-  }
-
-  .toggle-slider:before {
-    position: absolute;
-    content: "";
-    height: 14px;
-    width: 14px;
-    left: 3px;
-    bottom: 3px;
-    background-color: white;
-    transition: 0.3s;
-    border-radius: 50%;
-  }
-
-  .toggle-switch input:checked + .toggle-slider {
-    background-color: var(--color-primary);
-  }
-
-  .toggle-switch input:checked + .toggle-slider:before {
-    transform: translateX(20px);
-  }
 
   .coordinate-overlay {
     position: absolute;
@@ -1109,75 +1023,101 @@
 
   .map-controls {
     display: flex;
-    gap: var(--space-3);
-    padding: var(--space-4);
+    gap: var(--space-4);
+    padding: var(--space-3) var(--space-4);
     background: var(--color-surface);
     border-radius: var(--radius-lg);
     border: 1px solid var(--color-border);
-    align-items: center;
+    align-items: flex-end;
     flex-wrap: wrap;
   }
 
-  .boundary-controls {
+  .control-group {
     display: flex;
     flex-direction: column;
-    gap: var(--space-2);
+    gap: 4px;
   }
 
-  .boundary-controls label {
-    font-size: var(--text-sm);
+  .control-group label {
+    font-size: 11px;
     font-weight: 600;
     color: var(--color-text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
   }
 
-  .boundary-select {
-    padding: var(--space-2) var(--space-3);
+  .control-select {
+    padding: 6px 10px;
     font-size: var(--text-sm);
     border-radius: var(--radius-base);
     border: 1px solid var(--color-border);
     background: var(--color-surface);
     color: var(--color-text-primary);
     cursor: pointer;
-    transition: all 0.2s ease;
-    min-width: 250px;
+    min-width: 160px;
   }
 
-  .boundary-select:hover:not(:disabled) {
+  .control-select:hover:not(:disabled) {
     border-color: var(--color-accent);
   }
 
-  .boundary-select:focus {
+  .control-select:focus {
     outline: none;
     border-color: var(--color-accent);
-    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
   }
 
-  .boundary-select:disabled {
+  .control-select:disabled {
     opacity: 0.5;
     cursor: not-allowed;
   }
 
-  .boundary-toggles {
+  .overlay-controls {
     display: flex;
-    gap: var(--space-1);
+    align-items: center;
+    gap: var(--space-2);
   }
 
-  .boundary-btn {
-    padding: var(--space-2) var(--space-3);
-    font-size: var(--text-sm);
+  .checkbox-control {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    cursor: pointer;
+    padding: 6px 10px;
+    background: #dcfce7;
+    border: 1px solid #bbf7d0;
     border-radius: var(--radius-base);
-    border: 1px solid var(--color-border);
-    background: var(--color-surface);
-    transition: all 0.2s ease;
   }
 
-  .boundary-btn:hover {
-    background: var(--color-surface-hover);
+  .checkbox-control input {
+    width: 16px;
+    height: 16px;
+    cursor: pointer;
   }
 
-  .btn.active {
-    background: var(--color-accent);
-    color: white;
+  .checkbox-label {
+    font-size: var(--text-sm);
+    font-weight: 500;
+    color: #166534;
+  }
+
+  .no-overlay-text {
+    font-size: var(--text-sm);
+    color: var(--color-text-secondary);
+    padding: 6px 10px;
+    background: #f3f4f6;
+    border: 1px solid #e5e7eb;
+    border-radius: var(--radius-base);
+  }
+
+  .actions-group {
+    flex-direction: row;
+    align-items: center;
+    gap: var(--space-2);
+  }
+
+  .btn-sm {
+    padding: 6px 10px;
+    font-size: 12px;
   }
 
   .message {
@@ -1192,54 +1132,6 @@
     background: var(--color-error);
   }
 
-  .custom-map-section {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-2);
-    padding: var(--space-3);
-    background: var(--color-surface-alt);
-    border-radius: var(--radius-base);
-    border: 1px solid var(--color-border);
-  }
-
-  .custom-map-status {
-    font-size: var(--text-sm);
-    margin-bottom: var(--space-2);
-  }
-
-  .overlay-toggle {
-    margin-bottom: var(--space-2);
-  }
-
-  .overlay-toggle label {
-    display: flex;
-    align-items: center;
-    gap: var(--space-2);
-    font-size: var(--text-sm);
-    color: var(--color-text-primary);
-    cursor: pointer;
-  }
-
-  .overlay-toggle input[type="checkbox"] {
-    cursor: pointer;
-  }
-
-  .status-indicator {
-    padding: var(--space-1) var(--space-2);
-    border-radius: var(--radius-sm);
-    font-weight: 600;
-    font-size: var(--text-xs);
-  }
-
-  .status-indicator.active {
-    background: var(--color-success);
-    color: white;
-  }
-
-  .status-indicator.inactive {
-    background: var(--color-border);
-    color: var(--color-text-secondary);
-  }
 
   /* Custom marker styles */
   :global(.corner-marker) {

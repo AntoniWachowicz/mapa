@@ -105,6 +105,8 @@
             <div
               class="column-resizer"
               onmousedown={(e) => startColumnResize(e, field.key, columnWidths[field.key] || 200)}
+              role="separator"
+              aria-orientation="vertical"
             ></div>
           {/if}
         </th>

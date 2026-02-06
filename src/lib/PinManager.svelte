@@ -845,49 +845,5 @@
     margin: 0;
   }
 
-  /* Field-specific CSS moved to individual field components:
-     - AddressInput.svelte
-     - GalleryInput.svelte
-     - FilesInput.svelte
-     - etc. */
-
-  .location-display {
-    display: flex;
-    gap: 8px;
-    align-items: center;
-  }
-
-  .location-input {
-    flex: 1;
-    background: #F5F5F5;
-    color: #666;
-    font-family: 'Space Mono', monospace;
-    font-size: 13px;
-  }
-
-  .clear-coords-btn {
-    padding: 10px 14px;
-    background: #ef4444;
-    color: white;
-    border: 1px solid #000000;
-    border-radius: 0;
-    cursor: pointer;
-    font-family: 'DM Sans', sans-serif;
-    font-size: 13px;
-    font-weight: 500;
-    transition: all 0.2s;
-  }
-
-  .clear-coords-btn:hover:not(:disabled) {
-    background: #dc2626;
-    transform: translateY(-1px);
-  }
-
-  .clear-coords-btn:disabled {
-    background: #d1d5db;
-    color: #9ca3af;
-    cursor: not-allowed;
-  }
-
   /* Modal styles moved to ColumnMappingModal.svelte and ExcelImportPreviewModal.svelte */
 </style>

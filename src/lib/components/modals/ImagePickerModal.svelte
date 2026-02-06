@@ -35,12 +35,16 @@
   {#if availableImages.length === 0}
     <p class="no-images">Brak dostępnych zdjęć w galerii. Prześlij nowe zdjęcia, aby je dodać.</p>
   {:else}
-    <div class="image-grid">
+    <div class="image-grid" role="listbox" aria-label="Dostępne zdjęcia">
       {#each availableImages as image}
         <div
           class="image-card"
           class:selected={selectedImageIds.has(image.id)}
           onclick={() => ontoggle(image.id)}
+          onkeydown={(e) => (e.key === 'Enter' || e.key === ' ') && (e.preventDefault(), ontoggle(image.id))}
+          role="option"
+          aria-selected={selectedImageIds.has(image.id)}
+          tabindex="0"
         >
           <img src={image.url} alt={image.originalName} />
           <div class="image-info">

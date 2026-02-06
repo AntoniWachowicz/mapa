@@ -1,11 +1,14 @@
 import { getTemplate, updateTemplate, getObjects, createObject, deleteObject, updateObject } from '$lib/server/schemadb.js';
+import { fail } from '@sveltejs/kit';
 import type { Template, ProjectData } from '$lib/types.js';
 
 export async function load() {
   try {
-    // Make sure to await both calls
-    const template = await getTemplate();
-    const objects = await getObjects();
+    // Load template and objects in parallel for faster page loads
+    const [template, objects] = await Promise.all([
+      getTemplate(),
+      getObjects()
+    ]);
 
     return {
       template,
@@ -15,7 +18,7 @@ export async function load() {
     console.error('Error loading data:', error);
     // Return proper defaults
     return {
-      template: { 
+      template: {
         fields: [
           { key: 'title', label: 'Title', type: 'text', required: true, visible: true },
           { key: 'address', label: 'Address', type: 'text', required: false, visible: true },
@@ -33,60 +36,80 @@ type RequestEvent = {
 
 export const actions = {
   updateTemplate: async ({ request }: RequestEvent) => {
-    const data = await request.formData();
-    const templateString = data.get('template');
-    if (typeof templateString !== 'string') {
-      throw new Error('Invalid template data');
+    try {
+      const data = await request.formData();
+      const templateString = data.get('template');
+      if (typeof templateString !== 'string') {
+        return fail(400, { error: 'Invalid template data' });
+      }
+      const template: Template = JSON.parse(templateString);
+      await updateTemplate(template);
+      return { success: true };
+    } catch (error) {
+      console.error('Error updating template:', error);
+      return fail(500, { error: 'Failed to update template' });
     }
-    const template: Template = JSON.parse(templateString);
-    await updateTemplate(template);
-    return { success: true };
   },
-  
+
   createObject: async ({ request }: RequestEvent) => {
-    const data = await request.formData();
-    const objectDataString = data.get('data');
-    const locationString = data.get('location');
-    const hasIncompleteDataString = data.get('hasIncompleteData');
+    try {
+      const data = await request.formData();
+      const objectDataString = data.get('data');
+      const locationString = data.get('location');
+      const hasIncompleteDataString = data.get('hasIncompleteData');
 
-    if (typeof objectDataString !== 'string') {
-      throw new Error('Invalid object data');
+      if (typeof objectDataString !== 'string') {
+        return fail(400, { error: 'Invalid object data' });
+      }
+
+      const objectData: ProjectData = JSON.parse(objectDataString);
+      const location = locationString ? JSON.parse(locationString as string) : { type: 'Point', coordinates: [0, 0] };
+      const hasIncompleteData = hasIncompleteDataString === 'true';
+
+      await createObject(location, objectData, hasIncompleteData);
+      return { success: true };
+    } catch (error) {
+      console.error('Error creating object:', error);
+      return fail(500, { error: 'Failed to create object' });
     }
-
-    const objectData: ProjectData = JSON.parse(objectDataString);
-    const location = locationString ? JSON.parse(locationString as string) : { type: 'Point', coordinates: [0, 0] };
-    const hasIncompleteData = hasIncompleteDataString === 'true';
-
-    await createObject(location, objectData, hasIncompleteData);
-    return { success: true };
   },
-  
+
   deleteObject: async ({ request }: RequestEvent) => {
-    const data = await request.formData();
-    const objectId = data.get('id');
-    if (typeof objectId !== 'string') {
-      throw new Error('Invalid object ID');
+    try {
+      const data = await request.formData();
+      const objectId = data.get('id');
+      if (typeof objectId !== 'string') {
+        return fail(400, { error: 'Invalid object ID' });
+      }
+      await deleteObject(objectId);
+      return { success: true };
+    } catch (error) {
+      console.error('Error deleting object:', error);
+      return fail(500, { error: 'Failed to delete object' });
     }
-    await deleteObject(objectId);
-    return { success: true };
   },
 
-    updateObject: async ({ request }: RequestEvent) => {
+  updateObject: async ({ request }: RequestEvent) => {
+    try {
       const data = await request.formData();
       const objectId = data.get('id');
       const objectDataString = data.get('data');
-      
+
       if (typeof objectId !== 'string' || typeof objectDataString !== 'string') {
-        throw new Error('Invalid update data');
+        return fail(400, { error: 'Invalid update data' });
       }
-      
+
       const objectData: ProjectData = JSON.parse(objectDataString);
       const updatedObject = await updateObject(objectId, objectData);
-      
+
       if (!updatedObject) {
-        throw new Error('Object not found');
+        return fail(404, { error: 'Object not found' });
       }
-      
+
       return { success: true };
+    } catch (error) {
+      console.error('Error updating object:', error);
+      return fail(500, { error: 'Failed to update object' });
     }
+  }
 }

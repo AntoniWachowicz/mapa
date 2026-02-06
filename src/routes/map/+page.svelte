@@ -508,7 +508,6 @@
           bind:value={filterText}
           placeholder="Wyszukaj..."
           class="filter-input"
-          autofocus
         >
       {/if}
       {#if showSortSelect}
@@ -636,11 +635,25 @@
 
 <!-- Image Lightbox -->
 {#if lightboxImageUrl}
-  <div class="lightbox-overlay" onclick={closeLightbox}>
-    <button class="lightbox-close" onclick={closeLightbox} type="button">
+  <!-- svelte-ignore a11y_no_static_element_interactions -->
+  <div
+    class="lightbox-overlay"
+    onclick={closeLightbox}
+    onkeydown={(e) => e.key === 'Escape' && closeLightbox()}
+    role="dialog"
+    aria-modal="true"
+    aria-label="Powiększony obraz"
+  >
+    <button class="lightbox-close" onclick={closeLightbox} type="button" aria-label="Zamknij">
       <Icon name="Close" size={32} />
     </button>
-    <div class="lightbox-content" onclick={(e) => e.stopPropagation()}>
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <div
+      class="lightbox-content"
+      onclick={(e) => e.stopPropagation()}
+      onkeydown={(e) => e.stopPropagation()}
+      role="document"
+    >
       <img src={lightboxImageUrl} alt="Powiększone zdjęcie" />
     </div>
   </div>
@@ -718,53 +731,6 @@
   .sort-select-full:focus {
     outline: none;
     border-color: var(--color-accent);
-  }
-
-  /* Pin Section Header - Always visible */
-  .pin-section-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: var(--space-2) var(--space-3);
-    background: var(--color-surface);
-    border-bottom: 1px solid var(--color-border);
-    flex-shrink: 0; /* Don't shrink */
-  }
-
-  .pin-section-header h3 {
-    margin: 0;
-    font-family: var(--font-ui);
-    font-size: var(--text-base);
-    font-weight: var(--font-weight-medium);
-    color: var(--color-text-primary);
-    display: flex;
-    align-items: center;
-    gap: var(--space-2);
-  }
-
-  .toggle-btn {
-    background: none;
-    border: none;
-    padding: var(--space-1);
-    border-radius: var(--radius-base);
-    cursor: pointer;
-    color: var(--color-text-secondary);
-    transition: all var(--transition-fast);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-  }
-
-  .toggle-btn:hover {
-    background: var(--color-border);
-    color: var(--color-text-primary);
-  }
-
-  /* Pin Manager Container - Collapsible */
-  .pin-manager-container {
-    padding: var(--space-2);
-    border-bottom: 1px solid var(--color-border);
-    flex-shrink: 0; /* Don't shrink */
   }
 
   /* List Container - Scrollable */
@@ -921,10 +887,6 @@
 
     .map-view {
       height: 60vh;
-    }
-
-    .pin-manager-container {
-      padding: var(--space-2);
     }
   }
 

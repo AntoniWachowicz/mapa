@@ -69,20 +69,25 @@
 <svelte:window onkeydown={handleEscapeKey} />
 
 {#if open}
+  <!-- svelte-ignore a11y_click_events_have_key_events -->
   <div
     class="modal-overlay"
     onclick={handleOverlayClick}
+    onkeydown={(e) => e.key === 'Enter' && handleOverlayClick()}
+    role="presentation"
     style:--modal-z-index={zIndex}
     style:--modal-padding={padding}
-    role="dialog"
-    aria-modal="true"
-    aria-labelledby={title ? 'modal-title' : undefined}
   >
     <div
       class="modal-content {className}"
       onclick={handleContentClick}
+      onkeydown={(e) => e.stopPropagation()}
       style:--modal-max-width={maxWidth}
       style:--modal-max-height={maxHeight}
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby={title ? 'modal-title' : undefined}
+      tabindex="-1"
     >
       {#if title || showCloseButton}
         <div class="modal-header">

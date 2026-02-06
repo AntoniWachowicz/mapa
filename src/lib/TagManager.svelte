@@ -220,28 +220,34 @@
     <div class="add-tag-form">
       <div class="form-row">
         <div class="form-group">
-          <label>Nazwa (EN):</label>
-          <input
-            bind:value={newTagName}
-            placeholder="np. social_infrastructure"
-            class="tag-input"
-          >
+          <label>
+            <span class="label-text">Nazwa (EN):</span>
+            <input
+              bind:value={newTagName}
+              placeholder="np. social_infrastructure"
+              class="tag-input"
+            >
+          </label>
         </div>
         <div class="form-group">
-          <label>Nazwa (PL):</label>
-          <input
-            bind:value={newTagDisplayName}
-            placeholder="np. Infrastruktura społeczna"
-            class="tag-input"
-          >
+          <label>
+            <span class="label-text">Nazwa (PL):</span>
+            <input
+              bind:value={newTagDisplayName}
+              placeholder="np. Infrastruktura społeczna"
+              class="tag-input"
+            >
+          </label>
         </div>
         <div class="form-group">
-          <label>Kolor:</label>
-          <input
-            type="color"
-            bind:value={newTagColor}
-            class="color-input"
-          >
+          <label>
+            <span class="label-text">Kolor:</span>
+            <input
+              type="color"
+              bind:value={newTagColor}
+              class="color-input"
+            >
+          </label>
         </div>
       </div>
       <div class="form-actions">

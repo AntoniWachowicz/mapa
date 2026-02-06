@@ -104,8 +104,8 @@
   </div>
 {:else if fieldType === 'files'}
   <div class="field-config">
-    <div class="config-section">
-      <label class="config-label">Dozwolone typy plików:</label>
+    <fieldset class="config-section">
+      <legend class="config-label">Dozwolone typy plików:</legend>
       <div class="checkbox-grid">
         {#each ['pdf', 'docx', 'xlsx', 'doc', 'xls', 'txt', 'rtf', 'odt', 'ods'] as fileType}
           <label class="checkbox-label">
@@ -118,7 +118,7 @@
           </label>
         {/each}
       </div>
-    </div>
+    </fieldset>
     <label class="config-label">
       Max rozmiar (MB):
       <input
@@ -241,8 +241,8 @@
   </div>
 {:else if fieldType === 'address'}
   <div class="field-config">
-    <div class="config-section">
-      <label class="config-label">Wyświetlane pola:</label>
+    <fieldset class="config-section">
+      <legend class="config-label">Wyświetlane pola:</legend>
       <div class="checkbox-grid">
         {#each ['street', 'number', 'postalCode', 'city', 'gmina'] as addrField}
           <label class="checkbox-label">
@@ -255,9 +255,9 @@
           </label>
         {/each}
       </div>
-    </div>
-    <div class="config-section">
-      <label class="config-label">Wymagane pola:</label>
+    </fieldset>
+    <fieldset class="config-section">
+      <legend class="config-label">Wymagane pola:</legend>
       <div class="checkbox-grid">
         {#each displayFields as addrField}
           <label class="checkbox-label">
@@ -270,7 +270,7 @@
           </label>
         {/each}
       </div>
-    </div>
+    </fieldset>
     <label class="config-label">
       <input
         type="checkbox"
@@ -368,6 +368,9 @@
     display: flex;
     flex-direction: column;
     gap: 6px;
+    border: none;
+    margin: 0;
+    padding: 0;
   }
 
   .config-label {

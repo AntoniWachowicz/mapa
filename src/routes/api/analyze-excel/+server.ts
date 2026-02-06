@@ -1,14 +1,43 @@
 import type { RequestHandler } from './$types';
 import { error, json } from '@sveltejs/kit';
 import * as XLSX from 'xlsx';
-import { writeFileSync, mkdirSync, existsSync } from 'fs';
+import { writeFileSync, mkdirSync, existsSync, readdirSync, statSync, unlinkSync } from 'fs';
 import { join } from 'path';
 import { randomUUID } from 'crypto';
 
 // Temporary storage for uploaded Excel files
 const TEMP_DIR = 'static/uploads/temp';
+const TEMP_FILE_TTL_MS = 30 * 60 * 1000; // 30 minutes
+
+// Cleanup old temp files (called on each upload)
+function cleanupOldTempFiles(): void {
+  try {
+    if (!existsSync(TEMP_DIR)) return;
+
+    const now = Date.now();
+    const files = readdirSync(TEMP_DIR);
+
+    for (const file of files) {
+      const filePath = join(TEMP_DIR, file);
+      try {
+        const stats = statSync(filePath);
+        if (now - stats.mtimeMs > TEMP_FILE_TTL_MS) {
+          unlinkSync(filePath);
+          console.log(`[Cleanup] Removed old temp file: ${file}`);
+        }
+      } catch {
+        // Ignore errors for individual files
+      }
+    }
+  } catch {
+    // Ignore cleanup errors
+  }
+}
 
 export const POST: RequestHandler = async ({ request }) => {
+  // Clean up old temp files on each request
+  cleanupOldTempFiles();
+
   try {
     const formData = await request.formData();
     const file = formData.get('excel') as File;

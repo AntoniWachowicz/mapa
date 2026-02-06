@@ -74,16 +74,6 @@
     gap: 4px;
   }
 
-  .address-field label {
-    font-size: 14px;
-    font-weight: 500;
-    color: #333;
-  }
-
-  .required {
-    color: #dc2626;
-  }
-
   .address-input {
     padding: 6px 8px;
     border: 1px solid #ccc;

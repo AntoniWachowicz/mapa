@@ -1,5 +1,6 @@
 import { json } from '@sveltejs/kit';
 import { getMigrationPreview, migrateFieldToSelection } from '$lib/server/schemadb.js';
+import { isValidFieldKey } from '$lib/server/validation.js';
 import type { RequestHandler } from './$types';
 
 // GET: Get migration preview (stats before migration)
@@ -7,8 +8,8 @@ export const GET: RequestHandler = async ({ url }) => {
   try {
     const fieldKey = url.searchParams.get('fieldKey');
 
-    if (!fieldKey) {
-      return json({ success: false, error: 'No field key specified' }, { status: 400 });
+    if (!fieldKey || !isValidFieldKey(fieldKey)) {
+      return json({ success: false, error: 'Invalid field key' }, { status: 400 });
     }
 
     const preview = await getMigrationPreview(fieldKey);
@@ -29,8 +30,8 @@ export const POST: RequestHandler = async ({ request }) => {
   try {
     const { fieldKey } = await request.json();
 
-    if (!fieldKey) {
-      return json({ success: false, error: 'No field key specified' }, { status: 400 });
+    if (!fieldKey || !isValidFieldKey(fieldKey)) {
+      return json({ success: false, error: 'Invalid field key' }, { status: 400 });
     }
 
     const result = await migrateFieldToSelection(fieldKey);

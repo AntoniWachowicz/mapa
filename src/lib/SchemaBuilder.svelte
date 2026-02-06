@@ -464,6 +464,7 @@
           {@const fieldType = field.fieldType || field.type}
           {@const isMandatory = isFieldMandatory(field)}
 
+          <!-- svelte-ignore a11y_no_static_element_interactions -->
           <div
             class="field-row"
             class:draggable={canMoveField(field)}
@@ -474,6 +475,7 @@
             ondragover={(e) => dragDrop.handleDragOver(e, originalIndex)}
             ondragleave={dragDrop.handleDragLeave}
             ondrop={(e) => handleFieldDrop(e, originalIndex)}
+            role="listitem"
           >
             <!-- Left: Field label (outside card) -->
             <div class="field-label-column">
@@ -494,12 +496,15 @@
                     const target = e.target as HTMLInputElement;
                     saveFieldName(originalIndex, target.value);
                   }}
-                  autofocus
                 />
               {:else}
-                <span class="field-label" onclick={() => startEditingField(originalIndex)}>
+                <button
+                  type="button"
+                  class="field-label field-label-btn"
+                  onclick={() => startEditingField(originalIndex)}
+                >
                   {field.displayLabel || field.label}
-                </span>
+                </button>
               {/if}
             </div>
 
@@ -817,7 +822,6 @@
                     cancelNewField();
                   }
                 }}
-                autofocus
               />
             </div>
 
@@ -877,9 +881,16 @@
 
 <!-- Migration Confirmation Modal -->
 {#if showMigrationModal && migrationPreview}
-  <div class="migration-modal-overlay" onclick={cancelMigration}>
-    <div class="migration-modal" onclick={(e) => e.stopPropagation()}>
-      <h3 class="migration-modal-title">
+  <!-- svelte-ignore a11y_no_static_element_interactions -->
+  <div
+    class="migration-modal-overlay"
+    onclick={cancelMigration}
+    onkeydown={(e) => e.key === 'Escape' && cancelMigration()}
+    role="presentation"
+  >
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <div class="migration-modal" onclick={(e) => e.stopPropagation()} onkeydown={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-labelledby="migration-modal-title" tabindex="-1">
+      <h3 id="migration-modal-title" class="migration-modal-title">
         Konwertuj pole "{migrationPreview.fieldLabel}"
       </h3>
 
@@ -1020,6 +1031,15 @@
 
   .field-label:hover {
     text-decoration: underline;
+  }
+
+  .field-label-btn {
+    background: none;
+    border: none;
+    padding: 0;
+    margin: 0;
+    font-family: inherit;
+    width: 100%;
   }
 
   .field-name-input {

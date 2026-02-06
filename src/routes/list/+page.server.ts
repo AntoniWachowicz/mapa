@@ -10,8 +10,11 @@ export async function load({ locals }: { locals: App.Locals }) {
   }
 
   try {
-    const template = await getTemplate();
-    const objects = await getObjects();
+    // Load template and objects in parallel for faster page loads
+    const [template, objects] = await Promise.all([
+      getTemplate(),
+      getObjects()
+    ]);
 
     return {
       user: locals.user,

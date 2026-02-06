@@ -346,7 +346,7 @@
       const needsFix = data.template.fields.some(f => f.adminVisible === undefined);
 
       if (needsFix) {
-        console.log('Fixing fields missing adminVisible property...');
+        if (import.meta.env.DEV) console.log('Fixing fields missing adminVisible property...');
         const fixedTemplate = {
           ...data.template,
           fields: data.template.fields.map(f => ({
@@ -367,7 +367,7 @@
 
           // Update local state
           data.template = fixedTemplate;
-          console.log('Fields fixed successfully');
+          if (import.meta.env.DEV) console.log('Fields fixed successfully');
         } catch (error) {
           console.error('Error fixing fields:', error);
         }

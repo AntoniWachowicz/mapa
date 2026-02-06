@@ -1,4 +1,4 @@
-// src/routes/map/+page.server.ts - UPDATE to include map config
+// src/routes/map/+page.server.ts
 import { getTemplate, getObjects } from '$lib/server/schemadb.js';
 import { getMapConfig } from '$lib/server/mapconfig.js';
 
@@ -7,20 +7,20 @@ export async function load() {
     const [template, objects, mapConfig] = await Promise.all([
       getTemplate(),
       getObjects(),
-      getMapConfig()  // NEW: Load map configuration
+      getMapConfig()
     ]);
 
     return {
       template,
       objects,
-      mapConfig  // NEW: Include in returned data
+      mapConfig
     };
   } catch (error) {
     console.error('Error loading map data:', error);
     return {
       template: { fields: [] },
       objects: [],
-      mapConfig: {  // NEW: Default map config
+      mapConfig: {
         swLat: 40.700,
         swLng: -74.020,
         neLat: 40.720,

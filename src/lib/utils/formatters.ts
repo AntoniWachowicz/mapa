@@ -3,11 +3,13 @@
  * Helper functions for formatting data in tables and displays.
  */
 
+import type { Field, FieldValue } from '$lib/types.js';
+
 /**
  * Format price with Polish formatting (spaces for thousands, comma for decimal)
  */
 export function formatPrice(amount: number): string {
-  const num = typeof amount === 'number' ? amount : parseFloat(amount);
+  const num = typeof amount === 'number' ? amount : parseFloat(String(amount));
   const fixed = num.toFixed(2);
   const [integer, decimal] = fixed.split('.');
   const withSpaces = integer.replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
@@ -18,7 +20,7 @@ export function formatPrice(amount: number): string {
  * Format field value for compact table cell display
  * Intentionally simple - for detailed formatting see formatDetailFieldValue()
  */
-export function formatTableCellValue(field: any, value: any): string {
+export function formatTableCellValue(field: Field, value: FieldValue | null | undefined): string {
   // Check for empty values
   if (!value && value !== 0 && value !== false) return '—';
 
@@ -27,7 +29,8 @@ export function formatTableCellValue(field: any, value: any): string {
 
   // Check for empty gallery objects
   if (typeof value === 'object' && value !== null && 'items' in value) {
-    if (!value.items || (Array.isArray(value.items) && value.items.length === 0)) {
+    const items = (value as { items?: unknown[] }).items;
+    if (!items || (Array.isArray(items) && items.length === 0)) {
       return '—';
     }
   }
@@ -39,15 +42,16 @@ export function formatTableCellValue(field: any, value: any): string {
 /**
  * Get display name for a field
  */
-export function getFieldDisplayName(field: any): string {
+export function getFieldDisplayName(field: Field): string {
   return field.displayLabel || field.label;
 }
 
 /**
  * Get Polish display name for field type
  */
-export function getFieldType(field: any): string {
+export function getFieldType(field: Field): string {
   // Modern field types only
+  const fieldType = field.fieldType || field.type;
   const typeMap: Record<string, string> = {
     'title': 'tytuł',
     'location': 'lokalizacja',
@@ -61,5 +65,5 @@ export function getFieldType(field: any): string {
     'price': 'cena',
     'category': 'kategoria'
   };
-  return typeMap[field.type] || field.type;
+  return typeMap[fieldType || ''] || fieldType || '';
 }

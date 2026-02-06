@@ -5,6 +5,11 @@ import { readFileSync, unlinkSync, existsSync } from 'fs';
 import { join } from 'path';
 
 const TEMP_DIR = 'static/uploads/temp';
+const DEBUG = process.env.NODE_ENV !== 'production';
+
+function debug(...args: unknown[]): void {
+  if (DEBUG) console.log('[ExcelImport]', ...args);
+}
 
 export const POST: RequestHandler = async ({ request }) => {
   try {
@@ -71,12 +76,12 @@ export const POST: RequestHandler = async ({ request }) => {
     let jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: '' });
 
     // DEBUG: Log initial parse
-    console.log('Initial parse - first row:', jsonData[0]);
-    console.log('Initial parse - column count:', Array.isArray(jsonData[0]) ? jsonData[0].length : 0);
+    debug('Initial parse - first row:', jsonData[0]);
+    debug('Initial parse - column count:', Array.isArray(jsonData[0]) ? jsonData[0].length : 0);
 
     // Check if we only got 1 column - likely a CSV with wrong delimiter
     if (jsonData[0] && Array.isArray(jsonData[0]) && jsonData[0].length === 1) {
-      console.log('Only 1 column detected, trying to parse as semicolon-delimited CSV...');
+      debug('Only 1 column detected, trying to parse as semicolon-delimited CSV...');
 
       // Convert bytes to string and manually parse as CSV with semicolon
       const textDecoder = new TextDecoder('utf-8');
@@ -95,9 +100,9 @@ export const POST: RequestHandler = async ({ request }) => {
           });
         });
 
-        console.log('After semicolon parse - first row:', jsonData[0]);
-        console.log('After semicolon parse - column count:', jsonData[0].length);
-        console.log('After semicolon parse - second row:', jsonData[1]);
+        debug('After semicolon parse - first row:', jsonData[0]);
+        debug('After semicolon parse - column count:', (jsonData[0] as string[]).length);
+        debug('After semicolon parse - second row:', jsonData[1]);
       }
     }
 
@@ -109,8 +114,8 @@ export const POST: RequestHandler = async ({ request }) => {
     const rows = jsonData.slice(1) as any[][];
 
     // DEBUG: Log headers
-    console.log('Final headers:', headers);
-    console.log('Final headers count:', headers.length);
+    debug('Final headers:', headers);
+    debug('Final headers count:', headers.length);
 
     // Filter out instruction rows and empty rows
     const dataRows = rows.filter((row) => {
@@ -138,8 +143,8 @@ export const POST: RequestHandler = async ({ request }) => {
 
       // DEBUG: Log first row data
       if (i === 0) {
-        console.log('First row data:', rowData);
-        console.log('First row data keys:', Object.keys(rowData));
+        debug('First row data:', rowData);
+        debug('First row data keys:', Object.keys(rowData));
       }
 
       if (Object.keys(rowData).length === 0) {
@@ -210,8 +215,8 @@ export const POST: RequestHandler = async ({ request }) => {
     const cleanHeaders = headers.map(h => h.replace(/\s*\([^)]*\)\s*$/g, '').trim());
 
     // DEBUG: Log final response
-    console.log('Returning headers:', cleanHeaders);
-    console.log('Returning rows count:', processedRows.length);
+    debug('Returning headers:', cleanHeaders);
+    debug('Returning rows count:', processedRows.length);
 
     return json({
       success: true,

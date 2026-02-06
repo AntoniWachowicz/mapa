@@ -12,7 +12,8 @@ import type {
   AddressData,
   AddressConfig,
   PriceData,
-  CategoryFieldData
+  CategoryFieldData,
+  SavedObject
 } from '$lib/types.js';
 
 export interface ValidationResult {
@@ -32,7 +33,7 @@ export function validatePinData(
   template: Template,
   formData: ProjectData,
   selectedCoordinates: { lat: number; lng: number } | null,
-  editingObject: any | null
+  editingObject: SavedObject | null
 ): ValidationResult {
   if (!template?.fields) {
     return { isValid: true, emptyRequiredFields: [] };
@@ -83,7 +84,7 @@ export function validatePinData(
         const addrConfig = field.config as AddressConfig;
         const addr = value as AddressData;
         const hasRequiredAddr = addrConfig?.requiredFields
-          ?.every(rf => addr && (addr as any)[rf]);
+          ?.every(rf => addr && addr[rf as keyof AddressData]);
         if (!hasRequiredAddr) {
           emptyRequiredFields.push(field.label);
         }

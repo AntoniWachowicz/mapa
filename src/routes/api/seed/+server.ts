@@ -1,7 +1,7 @@
 import type { RequestHandler } from './$types';
 import { json, error } from '@sveltejs/kit';
 import { connectToDatabase } from '$lib/server/database.js';
-import type { Template, GeoJSON, Field, ProjectData, PriceData, FundingSource, MultiDateData, MultiDateConfig, Tag, CategoryFieldData, TagConfig } from '$lib/types.js';
+import type { Template, GeoJSON, Field, ProjectData, PriceData, FundingSource, MultiDateData, MultiDateConfig, Tag, CategoryFieldData, TagConfig, SelectionConfig } from '$lib/types.js';
 
 // Import all LGD Żywiecki Raj boundaries
 import { CZERNICHOW_BOUNDARY } from '$lib/boundaries/regions/czernichow.js';
@@ -189,7 +189,7 @@ const LGD_SCHEMA: Template = {
     },
     {
       id: 'field_beneficiary',
-      fieldType: 'text',
+      fieldType: 'richtext',
       fieldName: 'beneficiary',
       key: 'beneficiary',
       label: 'Beneficjent',
@@ -221,7 +221,7 @@ const LGD_SCHEMA: Template = {
     },
     {
       id: 'field_status',
-      fieldType: 'text',
+      fieldType: 'selection',
       fieldName: 'status',
       key: 'status',
       label: 'Status Projektu',
@@ -231,7 +231,17 @@ const LGD_SCHEMA: Template = {
       visible: true,
       protected: false,
       adminVisible: true,
-      order: 5
+      order: 5,
+      config: {
+        mode: 'single',
+        options: [
+          { id: 'zakończony', value: 'Zakończony', order: 0 },
+          { id: 'w_trakcie', value: 'W trakcie realizacji', order: 1 },
+          { id: 'planowany', value: 'Planowany', order: 2 },
+          { id: 'zawieszony', value: 'Zawieszony', order: 3 }
+        ],
+        allowCustom: false
+      } as SelectionConfig
     },
     {
       id: 'field_funding',
@@ -276,12 +286,12 @@ const LGD_SCHEMA: Template = {
     },
     {
       id: 'field_contact',
-      fieldType: 'email',
+      fieldType: 'richtext',
       fieldName: 'contact',
       key: 'contact',
       label: 'Kontakt',
       displayLabel: 'Kontakt',
-      type: 'email',
+      type: 'text',
       required: false,
       visible: true,
       protected: false,

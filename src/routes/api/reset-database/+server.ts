@@ -1,10 +1,20 @@
 import { json } from '@sveltejs/kit';
 import { fullReset } from '$lib/server/resetdb.js';
+import { logAudit, getClientInfo } from '$lib/server/audit.js';
 import type { RequestHandler } from './$types';
 
-export const POST: RequestHandler = async () => {
+export const POST: RequestHandler = async (event) => {
   try {
     const result = await fullReset();
+
+    // Audit log - critical operation
+    await logAudit({
+      action: 'database_reset',
+      ...getClientInfo(event),
+      details: { deletedPins: result.pins },
+      success: true
+    });
+
     return json({
       success: true,
       message: `Usunięto ${result.pins} pinezek i zresetowano schemat`,

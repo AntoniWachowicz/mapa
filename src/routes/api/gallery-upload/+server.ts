@@ -4,7 +4,30 @@ import path from 'path';
 import fs from 'fs';
 import { connectToDatabase } from '$lib/server/database.js';
 
-export const POST: RequestHandler = async ({ request }) => {
+// Magic number signatures for image validation
+const IMAGE_SIGNATURES: Record<string, number[]> = {
+  'image/jpeg': [0xFF, 0xD8, 0xFF],
+  'image/png': [0x89, 0x50, 0x4E, 0x47],
+  'image/gif': [0x47, 0x49, 0x46],
+  'image/webp': [0x52, 0x49, 0x46, 0x46]
+};
+
+function validateImageMagicNumber(buffer: Buffer, mimeType: string): boolean {
+  const signature = IMAGE_SIGNATURES[mimeType];
+  if (!signature) {
+    return Object.values(IMAGE_SIGNATURES).some(sig =>
+      sig.every((byte, i) => buffer[i] === byte)
+    );
+  }
+  return signature.every((byte, i) => buffer[i] === byte);
+}
+
+export const POST: RequestHandler = async ({ request, locals }) => {
+  // Auth check - only logged in users can upload
+  if (!locals.user) {
+    return json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
   try {
     const formData = await request.formData();
     const files = formData.getAll('images') as File[];
@@ -36,6 +59,11 @@ export const POST: RequestHandler = async ({ request }) => {
       // Convert File to Buffer
       const bytes = await file.arrayBuffer();
       const buffer = Buffer.from(bytes);
+
+      // Validate magic number (prevent MIME spoofing)
+      if (!validateImageMagicNumber(buffer, file.type)) {
+        continue; // Skip files with invalid magic numbers
+      }
 
       // Generate unique filename
       const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);

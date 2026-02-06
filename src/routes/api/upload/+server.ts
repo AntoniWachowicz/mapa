@@ -5,6 +5,25 @@ import { promisify } from 'util';
 import path from 'path';
 import fs from 'fs';
 
+// Magic number signatures for image validation
+const IMAGE_SIGNATURES: Record<string, number[]> = {
+  'image/jpeg': [0xFF, 0xD8, 0xFF],
+  'image/png': [0x89, 0x50, 0x4E, 0x47],
+  'image/gif': [0x47, 0x49, 0x46],
+  'image/webp': [0x52, 0x49, 0x46, 0x46] // RIFF header (WebP has WEBP at offset 8)
+};
+
+function validateImageMagicNumber(buffer: Buffer, mimeType: string): boolean {
+  const signature = IMAGE_SIGNATURES[mimeType];
+  if (!signature) {
+    // Unknown type - check for common image headers
+    return Object.values(IMAGE_SIGNATURES).some(sig =>
+      sig.every((byte, i) => buffer[i] === byte)
+    );
+  }
+  return signature.every((byte, i) => buffer[i] === byte);
+}
+
 // Configure multer for file uploads
 const storage = multer.diskStorage({
   destination: function (req, file, cb) {
@@ -39,7 +58,12 @@ const upload = multer({
 
 const uploadSingle = promisify(upload.single('image'));
 
-export const POST: RequestHandler = async ({ request }) => {
+export const POST: RequestHandler = async ({ request, locals }) => {
+  // Auth check - only logged in users can upload
+  if (!locals.user) {
+    return json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
   try {
     // Convert request to Node.js format for multer
     const formData = await request.formData();
@@ -49,10 +73,20 @@ export const POST: RequestHandler = async ({ request }) => {
       throw error(400, 'No image file provided');
     }
 
+    // Validate MIME type
+    if (!file.type.startsWith('image/')) {
+      throw error(400, 'Only image files are allowed');
+    }
+
     // Convert File to Buffer
     const bytes = await file.arrayBuffer();
     const buffer = Buffer.from(bytes);
-    
+
+    // Validate magic number (prevent MIME spoofing)
+    if (!validateImageMagicNumber(buffer, file.type)) {
+      throw error(400, 'Invalid image file - file content does not match declared type');
+    }
+
     // Generate unique filename
     const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
     const extension = path.extname(file.name);

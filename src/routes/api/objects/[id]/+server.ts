@@ -1,21 +1,52 @@
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
-import { updateObject, deleteObject, getObjectById } from '$lib/server/schemadb.js';
+import { updateObject, deleteObject, getObjectById, getTemplate } from '$lib/server/schemadb.js';
+import { sanitizeHTML } from '$lib/utils/sanitize.js';
+import { logAudit, getClientInfo } from '$lib/server/audit.js';
+import type { ProjectData, Template } from '$lib/types.js';
 
-export const PUT: RequestHandler = async ({ request, params }) => {
+/**
+ * Sanitize richtext fields in object data before saving
+ */
+function sanitizeObjectData(data: ProjectData, template: Template): ProjectData {
+	const sanitized = { ...data };
+	for (const field of template.fields) {
+		const fieldType = field.fieldType || field.type;
+		const fieldKey = field.key || field.fieldName;
+		if (fieldType === 'richtext' && typeof sanitized[fieldKey] === 'string') {
+			sanitized[fieldKey] = sanitizeHTML(sanitized[fieldKey] as string);
+		}
+	}
+	return sanitized;
+}
+
+export const PUT: RequestHandler = async (event) => {
 	try {
-		const { data, location } = await request.json();
-		const { id } = params;
+		const { data, location } = await event.request.json();
+		const { id } = event.params;
 
 		if (!data || !id) {
 			return json({ success: false, error: 'No data or ID provided' }, { status: 400 });
 		}
 
-		const updatedObject = await updateObject(id, data, location);
+		// Sanitize richtext fields before saving
+		const template = await getTemplate();
+		const sanitizedData = sanitizeObjectData(data, template);
+
+		const updatedObject = await updateObject(id, sanitizedData, location);
 
 		if (!updatedObject) {
 			return json({ success: false, error: 'Object not found' }, { status: 404 });
 		}
+
+		// Audit log
+		await logAudit({
+			action: 'object_update',
+			...getClientInfo(event),
+			resourceType: 'object',
+			resourceId: id,
+			success: true
+		});
 
 		return json({
 			success: true,
@@ -88,10 +119,18 @@ export const PATCH: RequestHandler = async ({ request, params }) => {
 			return json({ success: false, error: 'No fieldKey provided' }, { status: 400 });
 		}
 
+		// Check if this is a richtext field and sanitize if needed
+		const template = await getTemplate();
+		const field = template.fields.find(f => (f.key || f.fieldName) === fieldKey);
+		const fieldType = field?.fieldType || field?.type;
+		const sanitizedValue = (fieldType === 'richtext' && typeof value === 'string')
+			? sanitizeHTML(value)
+			: value;
+
 		// Update only the specific field
 		const updatedData = {
 			...currentObject.data,
-			[fieldKey]: value
+			[fieldKey]: sanitizedValue
 		};
 
 		const updatedObject = await updateObject(id, updatedData);
@@ -113,9 +152,9 @@ export const PATCH: RequestHandler = async ({ request, params }) => {
 	}
 };
 
-export const DELETE: RequestHandler = async ({ params }) => {
+export const DELETE: RequestHandler = async (event) => {
 	try {
-		const { id } = params;
+		const { id } = event.params;
 
 		if (!id) {
 			return json({ success: false, error: 'No ID provided' }, { status: 400 });
@@ -126,6 +165,15 @@ export const DELETE: RequestHandler = async ({ params }) => {
 		if (!success) {
 			return json({ success: false, error: 'Object not found' }, { status: 404 });
 		}
+
+		// Audit log
+		await logAudit({
+			action: 'object_delete',
+			...getClientInfo(event),
+			resourceType: 'object',
+			resourceId: id,
+			success: true
+		});
 
 		return json({
 			success: true

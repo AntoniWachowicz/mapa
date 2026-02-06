@@ -37,9 +37,9 @@ export async function executeAsyncOperation<T>(
 
   try {
     return await operation();
-  } catch (error: any) {
+  } catch (error: unknown) {
     // Handle abort errors (user cancellation)
-    if (error.name === 'AbortError') {
+    if (error instanceof Error && error.name === 'AbortError') {
       if (!suppressAbortError && logErrors) {
         console.log(`${errorContext} cancelled by user`);
       }
@@ -89,7 +89,7 @@ export function handleAsyncError(
   const { showAlert = true, logError = true } = options;
 
   // Skip AbortErrors silently
-  if ((error as any)?.name === 'AbortError') {
+  if (error instanceof Error && error.name === 'AbortError') {
     if (logError) {
       console.log(`${errorContext} cancelled by user`);
     }

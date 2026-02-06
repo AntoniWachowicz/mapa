@@ -1,5 +1,5 @@
 import { writable } from 'svelte/store';
-import type { Template, Field, SavedObject, ProjectData, GeoJSON } from './types.js';
+import type { Template, Field, SavedObject, ProjectData, GeoJSON, FieldType } from './types.js';
 
 export const template = writable<Template>({ fields: [], tags: [] });
 export const project = writable<SavedObject>({
@@ -14,7 +14,7 @@ export function addField(label: string, type: string | undefined, required: bool
     ...t,
     fields: [...t.fields, {
       id: crypto.randomUUID(),
-      fieldType: type as any,
+      fieldType: (type || 'richtext') as FieldType,
       fieldName: key,
       key,
       label,

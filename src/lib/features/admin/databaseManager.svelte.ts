@@ -202,6 +202,7 @@ export function createDatabaseManager() {
     get clearBeforeSeed() { return clearBeforeSeed; },
     set clearBeforeSeed(value: boolean) { clearBeforeSeed = value; },
     get objectCount() { return objectCount; },
+    fetchObjectCount,
     initiateSeed,
     cancelSeed,
     confirmSeed

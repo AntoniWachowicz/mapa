@@ -1,11 +1,35 @@
 // Geocoding utilities for address/coordinates conversion
 
+const DEBUG = process.env.NODE_ENV !== 'production';
+
+function debug(...args: unknown[]): void {
+  if (DEBUG) console.log('[Geocoding]', ...args);
+}
+
 export interface GeocodingResult {
   lat: number;
   lng: number;
   address: string;
   confidence?: number;
 }
+
+// In-memory geocoding cache
+interface CachedGeocode {
+  result: GeocodingResult;
+  timestamp: number;
+}
+const geocodeCache = new Map<string, CachedGeocode>();
+const CACHE_TTL = 24 * 60 * 60 * 1000; // 24 hours
+
+// Clean up expired cache entries periodically
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, cached] of geocodeCache.entries()) {
+    if (now - cached.timestamp > CACHE_TTL) {
+      geocodeCache.delete(key);
+    }
+  }
+}, 60 * 60 * 1000); // Run cleanup every hour
 
 // Free geocoding service using OpenStreetMap's Nominatim API
 export async function geocodeAddress(address: string): Promise<GeocodingResult | null> {
@@ -18,18 +42,28 @@ export async function geocodeAddress(address: string): Promise<GeocodingResult |
       return null;
     }
 
+    // Check cache first
+    const cacheKey = cleanedAddress.toLowerCase();
+    const cached = geocodeCache.get(cacheKey);
+    if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
+      debug(`Geocoding cache hit for "${cleanedAddress}"`);
+      return cached.result;
+    }
+
     // Try geocoding with progressively simpler queries (fallback strategy)
     const queries = buildGeocodingQueries(cleanedAddress);
 
-    console.log(`Geocoding attempts for "${cleanedAddress}":`, queries);
+    debug(`Geocoding attempts for "${cleanedAddress}":`, queries);
 
     for (let i = 0; i < queries.length; i++) {
       const query = queries[i];
-      console.log(`  Attempt ${i + 1}/${queries.length}: "${query}"`);
+      debug(`  Attempt ${i + 1}/${queries.length}: "${query}"`);
 
       const result = await tryGeocode(query);
       if (result) {
-        console.log(`  ✓ Success on attempt ${i + 1}`);
+        debug(`  ✓ Success on attempt ${i + 1}`);
+        // Cache successful result
+        geocodeCache.set(cacheKey, { result, timestamp: Date.now() });
         return result;
       }
 
@@ -39,7 +73,7 @@ export async function geocodeAddress(address: string): Promise<GeocodingResult |
       }
     }
 
-    console.log(`  ✗ All ${queries.length} attempts failed`);
+    debug(`  ✗ All ${queries.length} attempts failed`);
     return null;
 
   } catch (error) {
@@ -130,7 +164,7 @@ async function tryGeocode(query: string): Promise<GeocodingResult | null> {
     const encodedAddress = encodeURIComponent(query);
     const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodedAddress}&countrycodes=pl&addressdetails=1&limit=3&accept-language=pl,en`;
 
-    console.log(`    Fetching: ${url}`);
+    debug(`    Fetching: ${url}`);
 
     // Add 10 second timeout to prevent hanging requests
     const controller = new AbortController();
@@ -146,19 +180,19 @@ async function tryGeocode(query: string): Promise<GeocodingResult | null> {
     clearTimeout(timeoutId);
 
     if (!response.ok) {
-      console.log(`    HTTP ${response.status}`);
+      debug(`    HTTP ${response.status}`);
       return null;
     }
 
     const results = await response.json();
-    console.log(`    Results: ${results.length} found`);
+    debug(`    Results: ${results.length} found`);
 
     if (!results || results.length === 0) {
       return null;
     }
 
     const result = results[0];
-    console.log(`    Best match: ${result.display_name} (type: ${result.type}, importance: ${result.importance})`);
+    debug(`    Best match: ${result.display_name} (type: ${result.type}, importance: ${result.importance})`);
 
     // Format address to be less specific
     const formattedAddress = formatSimpleAddress(result);

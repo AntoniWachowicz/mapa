@@ -31,14 +31,17 @@
 <div class="multidate-container" class:horizontal={config.layout === 'horizontal'}>
   {#each config.dateFields as dateField}
     <div class="date-field">
-      <label class="date-label">
-        {dateField.label}
-        {#if dateField.required}
-          <span class="required">*</span>
-        {/if}
+      <label class="date-label" for={`date-${dateField.key}`}>
+        <span class="label-text">
+          {dateField.label}
+          {#if dateField.required}
+            <span class="required">*</span>
+          {/if}
+        </span>
       </label>
       <input
         type="date"
+        id={`date-${dateField.key}`}
         value={formatDateForInput(value[dateField.key])}
         oninput={(e) => updateDate(dateField.key, e.currentTarget.value)}
         required={dateField.required}
@@ -69,10 +72,14 @@
   }
 
   .date-label {
+    display: block;
+    cursor: pointer;
+  }
+
+  .label-text {
     font-size: 12px;
     font-weight: 500;
     color: #666;
-    min-width: auto;
   }
 
   .required {
