@@ -35,24 +35,16 @@ export async function connectToDatabase(): Promise<Db> {
 
     for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
       try {
-        console.log(`[DB] Connection attempt ${attempt}/${MAX_RETRIES}...`);
-        const startTime = performance.now();
-
         client = new MongoClient(MONGODB_URI, {
           serverSelectionTimeoutMS: 5000,
           connectTimeoutMS: 10000
         });
         await client.connect();
         db = client.db();
-
-        console.log(`[DB] Connected in ${(performance.now() - startTime).toFixed(0)}ms`);
         return db;
       } catch (error) {
         lastError = error instanceof Error ? error : new Error(String(error));
-        console.error(`[DB] Connection attempt ${attempt} failed:`, lastError.message);
-
         if (attempt < MAX_RETRIES) {
-          console.log(`[DB] Retrying in ${RETRY_DELAY_MS}ms...`);
           await delay(RETRY_DELAY_MS);
         }
       }
@@ -60,7 +52,6 @@ export async function connectToDatabase(): Promise<Db> {
 
     // All retries failed
     connectionPromise = null;
-    console.error('[DB] All connection attempts failed');
     throw lastError || new Error('Failed to connect to MongoDB');
   })();
 
@@ -70,7 +61,6 @@ export async function connectToDatabase(): Promise<Db> {
 // Graceful shutdown handler
 export async function closeDatabase(): Promise<void> {
   if (client) {
-    console.log('[DB] Closing MongoDB connection...');
     await client.close();
     connectionPromise = null;
   }

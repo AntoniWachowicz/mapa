@@ -591,14 +591,4 @@
   .restore-button:hover {
     background: #1a1a1a;
   }
-  
-  .no-tags {
-    padding: 24px 0;
-    text-align: center;
-    color: #999;
-    font-style: italic;
-    background: transparent;
-    border: none;
-    border-radius: 0;
-  }
 </style>

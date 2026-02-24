@@ -36,6 +36,7 @@
     isGeocoding: (objectId: string) => boolean;
     SyncIcon: () => string;
     startColumnResize: (e: MouseEvent, fieldKey: string, currentWidth: number) => void;
+    onColumnWidthChange?: (fieldKey: string, newWidth: number) => void;
 
     // Event handlers
     onSort?: (fieldKey: string) => void;
@@ -79,6 +80,7 @@
     isGeocoding,
     SyncIcon,
     startColumnResize,
+    onColumnWidthChange,
     onSort,
     onToggleSelectAll,
     onRowSelection,
@@ -129,6 +131,7 @@
       {getFieldDisplayName}
       {getFieldType}
       {startColumnResize}
+      {onColumnWidthChange}
       onSort={onSort}
       onToggleSelectAll={onToggleSelectAll}
     />
@@ -157,7 +160,7 @@
                 />
               </td>
               <!-- Location column -->
-              <td class="location-column" style="width: 9rem;" class:missing-location-cell={isMissingLocation}>
+              <td class="location-column" style="width: 6.5rem;" class:missing-location-cell={isMissingLocation}>
                 {#if obj.location && obj.location.coordinates}
                   <div class="cell-content coordinates-display">
                     <div class="coordinate-line">{obj.location.coordinates[1].toFixed(6)}</div>
@@ -228,7 +231,7 @@
               <td class="checkbox-column" style="width: 2.5rem;">
                 <div class="cell-content placeholder-cell"></div>
               </td>
-              <td class="location-column" style="width: 9rem;">
+              <td class="location-column" style="width: 6.5rem;">
                 <div class="cell-content placeholder-cell"></div>
               </td>
               {#each visibleFields as field}
@@ -334,8 +337,8 @@
   }
 
   .location-column {
-    width: 9rem;
-    min-width: 9rem;
+    width: 6.5rem;
+    min-width: 6.5rem;
     padding: 0.375rem 0.5rem !important;
     border-right: 1px solid rgba(0, 0, 0, 0.1);
     border-bottom: 1px solid var(--color-border);

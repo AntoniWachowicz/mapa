@@ -108,9 +108,6 @@ export const POST: RequestHandler = async () => {
 		const imageWidthPx = Math.abs(nePixel.x - swPixel.x);
 		const imageHeightPx = Math.abs(nePixel.y - swPixel.y);
 
-		console.log(`Exporting at zoom ${exportZoom} (breakpoint: ${breakpointZoom}) with 5% margin`);
-		console.log(`Exact image dimensions: ${imageWidthPx}x${imageHeightPx} pixels at zoom ${exportZoom}`);
-
 		// Get tile coordinates for the expanded boundary at export zoom
 		const sw = latLngToTile(expandedBounds.swLat, expandedBounds.swLng, exportZoom);
 		const ne = latLngToTile(expandedBounds.neLat, expandedBounds.neLng, exportZoom);
@@ -120,10 +117,6 @@ export const POST: RequestHandler = async () => {
 		const maxX = Math.max(sw.x, ne.x);
 		const minY = Math.min(sw.y, ne.y);
 		const maxY = Math.max(sw.y, ne.y);
-
-		console.log(
-			`Downloading tiles for zoom ${exportZoom}: X[${minX}-${maxX}], Y[${minY}-${maxY}]`
-		);
 
 		// Download all tiles
 		const tiles: { x: number; y: number; buffer: Buffer }[] = [];
@@ -154,8 +147,6 @@ export const POST: RequestHandler = async () => {
 		// Offset of our bounds within the tile grid
 		const cropLeft = Math.round(Math.min(swPixel.x, nePixel.x) - tileGridPixelX);
 		const cropTop = Math.round(Math.min(swPixel.y, nePixel.y) - tileGridPixelY);
-
-		console.log(`Cropping to exact bounds: left=${cropLeft}, top=${cropTop}, width=${Math.round(imageWidthPx)}, height=${Math.round(imageHeightPx)}`);
 
 		// Crop to exact bounds
 		const croppedImage = await sharp(stitchedImage)

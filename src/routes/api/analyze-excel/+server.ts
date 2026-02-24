@@ -23,7 +23,6 @@ function cleanupOldTempFiles(): void {
         const stats = statSync(filePath);
         if (now - stats.mtimeMs > TEMP_FILE_TTL_MS) {
           unlinkSync(filePath);
-          console.log(`[Cleanup] Removed old temp file: ${file}`);
         }
       } catch {
         // Ignore errors for individual files

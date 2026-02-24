@@ -71,11 +71,11 @@ export const handle: Handle = async ({ event, resolve }) => {
   // Content Security Policy
   response.headers.set('Content-Security-Policy', [
     "default-src 'self'",
-    "script-src 'self' 'unsafe-inline'",  // Svelte needs inline scripts
-    "style-src 'self' 'unsafe-inline'",   // Svelte needs inline styles
-    "img-src 'self' data: https://*.tile.openstreetmap.org https://*.openstreetmap.org blob:",
-    "font-src 'self'",
-    "connect-src 'self' https://nominatim.openstreetmap.org",
+    "script-src 'self' 'unsafe-inline' https://unpkg.com",  // Svelte needs inline scripts, Leaflet loaded from unpkg
+    "style-src 'self' 'unsafe-inline' https://unpkg.com https://fonts.googleapis.com",   // Svelte needs inline styles, Leaflet CSS from unpkg, Google Fonts
+    "img-src 'self' data: blob: https://*.tile.openstreetmap.org https://*.openstreetmap.org https://tiles.stadiamaps.com https://server.arcgisonline.com https://*.tile.opentopomap.org",
+    "font-src 'self' https://fonts.gstatic.com",  // Google Fonts serves font files from gstatic.com
+    "connect-src 'self' https://nominatim.openstreetmap.org https://unpkg.com",
     "frame-ancestors 'self'",
     "base-uri 'self'",
     "form-action 'self'"

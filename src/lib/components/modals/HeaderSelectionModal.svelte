@@ -24,7 +24,8 @@
   {open}
   title="Wybierz wiersz z nagłówkami kolumn"
   {onclose}
-  maxWidth="900px"
+  maxWidth="92vw"
+  maxHeight="90vh"
 >
   <p class="modal-info">
     Wskaż, który wiersz w pliku Excel zawiera nazwy kolumn.

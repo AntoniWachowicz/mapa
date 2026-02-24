@@ -6,7 +6,7 @@
     object: SavedObject;
     template: Template;
     onClose: () => void;
-    onEdit: (obj: SavedObject) => void;
+    onEdit?: (obj: SavedObject) => void;
     onImageClick?: (url: string) => void;
   }
 
@@ -483,12 +483,14 @@
   </div>
 
   <!-- Edit button -->
+  {#if onEdit}
   <button class="edit-btn-floating" onclick={() => onEdit(object)} type="button">
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
       <path fill-rule="evenodd" clip-rule="evenodd" d="M4 5C4 3.34315 5.34315 2 7 2H12.7574C13.553 2 14.3161 2.31607 14.8787 2.87868L19.1213 7.12132C19.6839 7.68393 20 8.44699 20 9.24264V19C20 20.6569 18.6569 22 17 22H7C5.34315 22 4 20.6569 4 19V5ZM14 9C13.4477 9 13 8.55228 13 8V5.20711C13 4.76165 13.5386 4.53857 13.8536 4.85355L17.1464 8.14645C17.4614 8.46143 17.2383 9 16.7929 9H14ZM8.29289 15.7071C8.10536 15.8946 8 16.149 8 16.4142V18.5C8 18.7761 8.22386 19 8.5 19H10.5858C10.851 19 11.1054 18.8946 11.2929 18.7071L15.2929 14.7071C15.6834 14.3166 15.6834 13.6834 15.2929 13.2929L13.7071 11.7071C13.3166 11.3166 12.6834 11.3166 12.2929 11.7071L8.29289 15.7071Z" fill="white"/>
     </svg>
     <span>Edytuj</span>
   </button>
+  {/if}
 </div>
 
 <style>

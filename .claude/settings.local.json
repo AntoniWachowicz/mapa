@@ -36,7 +36,9 @@
       "WebFetch(domain:wykaz.rky.pl)",
       "Bash(npm run check:types:*)",
       "Bash(cmd //c \"taskkill /PID 15672 /F\")",
-      "Bash(cmd //c \"taskkill /PID 13056 /F\")"
+      "Bash(cmd //c \"taskkill /PID 13056 /F\")",
+      "Bash(npx svelte-check:*)",
+      "Bash(npx svelte --version)"
     ],
     "deny": [],
     "ask": []

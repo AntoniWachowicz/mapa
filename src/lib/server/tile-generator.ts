@@ -48,15 +48,12 @@ function latLngToPixel(lat: number, lng: number, zoom: number): { x: number; y: 
 export async function generateTiles(options: TileGenerationOptions): Promise<void> {
 	const { imagePath, outputDir, bounds, minZoom, maxZoom } = options;
 
-	console.log(`Loading source image: ${imagePath}`);
 	const sourceImage = sharp(imagePath);
 	const metadata = await sourceImage.metadata();
 
 	if (!metadata.width || !metadata.height) {
 		throw new Error('Could not determine image dimensions');
 	}
-
-	console.log(`Source image: ${metadata.width}x${metadata.height}`);
 
 	// Calculate image bounds in pixels at max zoom
 	const swPixel = latLngToPixel(bounds.swLat, bounds.swLng, maxZoom);
@@ -65,10 +62,7 @@ export async function generateTiles(options: TileGenerationOptions): Promise<voi
 	const imageWidthPx = Math.abs(nePixel.x - swPixel.x);
 	const imageHeightPx = Math.abs(nePixel.y - swPixel.y);
 
-	console.log(`Image should cover ${imageWidthPx}x${imageHeightPx} pixels at zoom ${maxZoom}`);
-
 	// Resize source image to exact pixel dimensions at max zoom for best quality
-	console.log(`Resizing source to ${Math.round(imageWidthPx)}x${Math.round(imageHeightPx)}`);
 	const maxZoomImage = await sourceImage
 		.resize(Math.round(imageWidthPx), Math.round(imageHeightPx), {
 			fit: 'fill',
@@ -85,11 +79,8 @@ export async function generateTiles(options: TileGenerationOptions): Promise<voi
 	const minTileY = Math.min(swTile.y, neTile.y);
 	const maxTileY = Math.max(swTile.y, neTile.y);
 
-	console.log(`Tile range at zoom ${maxZoom}: X[${minTileX}-${maxTileX}], Y[${minTileY}-${maxTileY}]`);
-
 	// Generate tiles for each zoom level from max down to min
 	for (let zoom = maxZoom; zoom >= minZoom; zoom--) {
-		console.log(`\nGenerating tiles for zoom level ${zoom}...`);
 
 		const zoomFactor = Math.pow(2, maxZoom - zoom);
 
@@ -212,8 +203,5 @@ export async function generateTiles(options: TileGenerationOptions): Promise<voi
 			}
 		}
 
-		console.log(`Generated ${tilesGenerated} tiles for zoom ${zoom}`);
 	}
-
-	console.log(`\nTile generation complete!`);
 }

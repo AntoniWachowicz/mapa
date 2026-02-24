@@ -228,7 +228,7 @@
     const updatedTemplate: Template = {
       ...template,
       fields: template.fields.map((f, i) =>
-        i === index ? { ...f, fieldType: newType, type: newType, config: {} } : f
+        i === index ? { ...f, fieldType: newType, type: newType, config: undefined } : f
       )
     };
     onUpdate(updatedTemplate);
@@ -1350,11 +1350,6 @@
     border-color: #999;
     color: #333;
     background: rgba(0, 0, 0, 0.02);
-  }
-
-  /* Category content */
-  .category-content {
-    margin-top: 6px;
   }
 
   /* Gallery placeholder */

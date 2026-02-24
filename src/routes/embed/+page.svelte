@@ -36,8 +36,8 @@
   // State variables
   let focusCoordinates = $state<{lat: number, lng: number} | null>(null);
   let selectedObject = $state<SavedObject | null>(null);
-  let detailPanelEl: HTMLDivElement | null = null;
-  let mapViewEl: HTMLDivElement | null = null;
+  let detailPanelEl = $state<HTMLDivElement | null>(null);
+  let mapViewEl = $state<HTMLDivElement | null>(null);
   let connectionLine = $state({ x1: 0, y1: 0, x2: 0, y2: 0 });
   let lightboxImageUrl = $state<string | null>(null);
   let filterText = $state('');
@@ -69,14 +69,11 @@
     filteredObjects = filtered;
   }
 
-  function focusOnPin(obj: SavedObject): void {
-    if (obj.location && obj.location.coordinates && obj.location.coordinates.length === 2) {
-      const [lng, lat] = obj.location.coordinates;
-      focusCoordinates = { lat, lng };
-      setTimeout(() => {
-        focusCoordinates = null;
-      }, 100);
-    }
+  function focusOnPin(coordinates: {lat: number, lng: number}): void {
+    focusCoordinates = coordinates;
+    setTimeout(() => {
+      focusCoordinates = null;
+    }, 100);
   }
 
   function handlePinClickWithPan(obj: MapObject): void {
@@ -90,7 +87,7 @@
     }, 10);
   }
 
-  let panToPinCallback: (() => void) | null = null;
+  let panToPinCallback = $state<(() => void) | null>(null);
 
   function closeDetailPanel(): void {
     selectedObject = null;
@@ -154,7 +151,7 @@
   // Override map style from URL parameter
   $effect(() => {
     if (mapStyle() !== 'osm' && mapConfig.baseLayerStyle !== mapStyle()) {
-      mapConfig = { ...mapConfig, baseLayerStyle: mapStyle() };
+      mapConfig = { ...mapConfig, baseLayerStyle: mapStyle() as MapConfig['baseLayerStyle'] };
     }
   });
 </script>
@@ -243,11 +240,12 @@
 
 <!-- Image Lightbox -->
 {#if lightboxImageUrl}
-  <div class="lightbox-overlay" onclick={closeLightbox}>
+  <div class="lightbox-overlay" onclick={closeLightbox} role="dialog" aria-modal="true" aria-label="Powiększony obraz" tabindex="-1" onkeydown={(e) => e.key === 'Escape' && closeLightbox()}>
     <button class="lightbox-close" onclick={closeLightbox} type="button">
       <Icon name="Close" size={32} />
     </button>
-    <div class="lightbox-content" onclick={(e) => e.stopPropagation()}>
+    <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+    <div class="lightbox-content" role="document" onkeydown={(e) => e.stopPropagation()} onclick={(e) => e.stopPropagation()}>
       <img src={lightboxImageUrl} alt="Powiększone zdjęcie" />
     </div>
   </div>

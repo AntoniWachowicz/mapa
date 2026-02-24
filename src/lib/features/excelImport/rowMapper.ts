@@ -78,12 +78,36 @@ export function mapExcelRowToObject(
     // Get the value from the original Excel data
     const rawValue = originalData[excelCol];
     if (rawValue !== undefined && rawValue !== null && rawValue !== '') {
-      // Convert value based on field type
-      const fieldType = fieldTypeMap[schemaField] || 'text';
-      const convertedValue = convertValueByFieldType(rawValue, fieldType);
+      // Check for dot-notation subfield mapping (e.g. 'address.street', 'dates.submitted')
+      if (schemaField.includes('.')) {
+        const [parentKey, subKey] = schemaField.split('.', 2);
+        // Initialize parent object if needed
+        if (!mappedData[parentKey] || typeof mappedData[parentKey] !== 'object') {
+          mappedData[parentKey] = {};
+        }
+        // For price.total, parse as number
+        const parentType = fieldTypeMap[parentKey] || 'text';
+        if (parentType === 'price' && subKey === 'total') {
+          const num = parseFloat(String(rawValue).replace(/,/g, '.').replace(/[^\d.-]/g, ''));
+          if (!isNaN(num)) {
+            (mappedData[parentKey] as Record<string, any>)[subKey] = num;
+          }
+        } else if (parentType === 'multidate') {
+          // Parse as date
+          const date = new Date(rawValue);
+          (mappedData[parentKey] as Record<string, any>)[subKey] = isNaN(date.getTime()) ? rawValue : date.toISOString();
+        } else {
+          // Address and other subfields: store as string
+          (mappedData[parentKey] as Record<string, any>)[subKey] = String(rawValue).trim();
+        }
+      } else {
+        // Simple field mapping
+        const fieldType = fieldTypeMap[schemaField] || 'text';
+        const convertedValue = convertValueByFieldType(rawValue, fieldType);
 
-      if (convertedValue !== null) {
-        mappedData[schemaField] = convertedValue;
+        if (convertedValue !== null) {
+          mappedData[schemaField] = convertedValue;
+        }
       }
     }
   }

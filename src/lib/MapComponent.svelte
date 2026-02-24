@@ -2,7 +2,7 @@
   import { onMount, onDestroy } from 'svelte';
   import type { SavedObject, MapConfig, MapObject, GeoJSON, Tag, CategoryFieldData, Field } from './types.js';
   import * as mapBoundaries from './features/mapBoundaries/index.js';
-  import { loadLeaflet, TILE_PROVIDERS, getTileProvider } from './features/leafletMap/leafletUtils.js';
+  import { loadLeaflet, loadMarkerCluster, TILE_PROVIDERS, getTileProvider } from './features/leafletMap/leafletUtils.js';
   import { updateMapMarkers, updateSelectedMarker } from './features/leafletMap/markerManager.js';
   import { createBoundsOverlay as createBoundsOverlayLayer, createBoundaryPolygon as createBoundaryPolygonLayer } from './features/mapBoundaries/boundaryRenderer.js';
   import { calculateMovementLine } from './features/mapInteraction/movementLineAnimator.js';
@@ -36,20 +36,36 @@
   let customTileLayer: any = null;
   let boundsOverlay: any = null;
   let boundaryPolygon: any = null;
+  let clusterGroup: any = null;
   let mapInitialized = $state(false);
   let movementLine = $state({ path: '', show: false, duration: 2 });
 
   // Create pin position tracker
   const pinPositionTracker = createPinPositionTracker();
 
+  let resizeObserver: ResizeObserver | null = null;
+
   onMount(async () => {
     L = await loadLeaflet();
+    await loadMarkerCluster();
     initializeMap();
     updateMarkers();
+
+    // Watch for container size changes so Leaflet redraws tiles and overlays
+    resizeObserver = new ResizeObserver(() => {
+      if (map) {
+        map.invalidateSize();
+      }
+    });
+    resizeObserver.observe(mapContainer);
   });
 
   onDestroy(() => {
+    resizeObserver?.disconnect();
     pinPositionTracker.stopContinuousUpdate();
+    if (clusterGroup && map) {
+      map.removeLayer(clusterGroup);
+    }
     if (boundsOverlay && map) {
       map.removeLayer(boundsOverlay);
     }
@@ -299,7 +315,7 @@
   function updateMarkers() {
     if (!map || !L) return;
 
-    markers = updateMapMarkers(
+    const result = updateMapMarkers(
       L,
       map,
       mapContainer,
@@ -309,8 +325,11 @@
       tags,
       fields,
       onPinClick,
-      (callback) => { panToPinCallback = callback; }
+      (callback) => { panToPinCallback = callback; },
+      clusterGroup
     );
+    markers = result.markers;
+    clusterGroup = result.clusterGroup;
   }
   
   // Update markers when objects or editing state changes
@@ -406,6 +425,11 @@
   }
 
   :global(.object-marker) {
+    background: none !important;
+    border: none !important;
+  }
+
+  :global(.cluster-icon) {
     background: none !important;
     border: none !important;
   }

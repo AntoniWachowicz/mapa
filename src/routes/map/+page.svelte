@@ -29,8 +29,8 @@
   let sidebarWidth = $state(400); // Default sidebar width in pixels
   let isDragging = $state(false);
   let isPinSectionCollapsed = $state(false); // New state for pin section collapse
-  let detailPanelEl: HTMLDivElement | null = null; // Reference to detail panel
-  let mapViewEl: HTMLDivElement | null = null; // Reference to map view
+  let detailPanelEl = $state<HTMLDivElement | null>(null); // Reference to detail panel
+  let mapViewEl = $state<HTMLDivElement | null>(null); // Reference to map view
   let connectionLine = $state({ x1: 0, y1: 0, x2: 0, y2: 0 }); // Connection line coordinates
   let lightboxImageUrl = $state<string | null>(null); // Image lightbox state
 
@@ -41,8 +41,7 @@
   let showFilterInput = $state(false);
   let showSortSelect = $state(false);
 
-  // Initialize filtered objects
-  filteredObjects = objects;
+  // Initialize and sync filtered objects
   $effect(() => {
     filteredObjects = [...objects];
   });
@@ -164,7 +163,7 @@
     }, 10);
   }
 
-  let panToPinCallback: (() => void) | null = null;
+  let panToPinCallback = $state<(() => void) | null>(null);
 
   function closeDetailPanel(): void {
     selectedObject = null;
@@ -492,6 +491,17 @@
     document.addEventListener('mousemove', handleMouseMove);
     document.addEventListener('mouseup', handleMouseUp);
   }
+
+  function handleResizeKeydown(e: KeyboardEvent): void {
+    const step = e.shiftKey ? 50 : 10;
+    if (e.key === 'ArrowRight') {
+      e.preventDefault();
+      sidebarWidth = Math.min(800, sidebarWidth + step);
+    } else if (e.key === 'ArrowLeft') {
+      e.preventDefault();
+      sidebarWidth = Math.max(250, sidebarWidth - step);
+    }
+  }
 </script>
 
 <svelte:head>
@@ -551,7 +561,14 @@
     </div>
   </div>
 
-  <div class="resize-handle" onmousedown={startResize} class:dragging={isDragging}></div>
+  <button
+    class="resize-handle"
+    onmousedown={startResize}
+    onkeydown={handleResizeKeydown}
+    class:dragging={isDragging}
+    aria-label="Zmień szerokość panelu bocznego"
+    tabindex="0"
+  ></button>
 
   <div class="map-view" bind:this={mapViewEl}>
     <MapComponent
@@ -635,7 +652,6 @@
 
 <!-- Image Lightbox -->
 {#if lightboxImageUrl}
-  <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div
     class="lightbox-overlay"
     onclick={closeLightbox}
@@ -643,11 +659,12 @@
     role="dialog"
     aria-modal="true"
     aria-label="Powiększony obraz"
+    tabindex="-1"
   >
     <button class="lightbox-close" onclick={closeLightbox} type="button" aria-label="Zamknij">
       <Icon name="Close" size={32} />
     </button>
-    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
     <div
       class="lightbox-content"
       onclick={(e) => e.stopPropagation()}
@@ -746,6 +763,9 @@
     cursor: col-resize;
     transition: background-color 0.2s ease;
     flex-shrink: 0;
+    padding: 0;
+    border: none;
+    appearance: none;
   }
 
   .resize-handle:hover,

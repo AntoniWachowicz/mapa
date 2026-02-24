@@ -5,7 +5,7 @@
    * Supports multiple field types: price, multidate, address, links, tags, richtext, etc.
    */
 
-  import type { SavedObject, Template, PriceData, CategoryFieldData, SelectionFieldData, SelectionConfig, SelectionOption } from '$lib/types';
+  import type { SavedObject, Template, PriceData, AddressData, LinkData, CategoryFieldData, SelectionFieldData, SelectionConfig, SelectionOption } from '$lib/types';
 
   interface Props {
     field: any;
@@ -106,10 +106,13 @@
           isElementOverflowing(line as HTMLElement)
         );
         shouldShowTooltip = hasData || isOverflowing;
+      } else if (target.querySelector('.selection-highlight')) {
+        // Selection/tag field: check for hidden secondary tags
+        shouldShowTooltip = hasHiddenData(field, fieldValue);
       } else {
         // Regular field: check visual overflow only
         const contentElement = target.querySelector('.field-value, .sub-fields, .address-display-container');
-        shouldShowTooltip = contentElement && isElementOverflowing(contentElement as HTMLElement);
+        shouldShowTooltip = !!(contentElement && isElementOverflowing(contentElement as HTMLElement));
       }
 
       if (shouldShowTooltip) {
@@ -121,6 +124,16 @@
 
   function handleMouseLeave() {
     onHideTooltip?.();
+  }
+
+  function handleCellKeydown(e: KeyboardEvent) {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      handleToggleRowExpansion();
+    } else if (e.key === 'F2') {
+      e.preventDefault();
+      handleEditStart();
+    }
   }
 </script>
 
@@ -260,6 +273,9 @@
       ondblclick={handleEditStart}
       onmouseenter={handleMouseEnter}
       onmouseleave={handleMouseLeave}
+      onkeydown={handleCellKeydown}
+      tabindex="0"
+      role="button"
     >
       {#if object.hasIncompleteData && !fieldValue}
         <span class="missing-data">—</span>
@@ -271,9 +287,9 @@
         {@const maxLength = totalStr.length}
         {#if !isExpanded && fundingCount > 2}
           <div class="compact-view">
-            <div class="compact-line">{fundingCount} źródeł finansowania</div>
+            <div class="compact-line">{fundingCount} źródeł</div>
             <div class="compact-line">
-              {priceData.funding[fundingCount - 1].source}: {formatPrice(priceData.funding[fundingCount - 1].amount)} zł
+              <b>&Sigma;</b> {totalStr} zł
             </div>
           </div>
         {:else}
@@ -321,7 +337,7 @@
           </div>
         {/if}
       {:else if field.type === 'address' && typeof fieldValue === 'object' && fieldValue !== null}
-        {@const addressData = fieldValue}
+        {@const addressData = fieldValue as AddressData}
         {@const isMissingLocation = !object.location || object.missingFields?.includes('location')}
         {@const hasAddress = extractAddressFromObject(object, template) !== null}
         {@const isGeocodingPin = isGeocoding(object.id)}
@@ -402,19 +418,20 @@
           </div>
         {/if}
       {:else if field.type === 'links' && Array.isArray(fieldValue) && fieldValue.length > 0}
-        {@const linkCount = fieldValue.length}
+        {@const links = fieldValue as LinkData[]}
+        {@const linkCount = links.length}
         {#if !isExpanded && linkCount > 2}
           <div class="compact-view">
             <div class="compact-line">{linkCount} linków</div>
             <div class="compact-line">
-              <a href={fieldValue[linkCount - 1].url} target="_blank" rel="noopener noreferrer" class="sub-value">
-                {fieldValue[linkCount - 1].text || fieldValue[linkCount - 1].url}
+              <a href={links[linkCount - 1].url} target="_blank" rel="noopener noreferrer" class="sub-value">
+                {links[linkCount - 1].text || links[linkCount - 1].url}
               </a>
             </div>
           </div>
         {:else}
           <div class="sub-fields">
-            {#each fieldValue as link}
+            {#each links as link}
               <div class="sub-field-row">
                 <a href={link.url} target="_blank" rel="noopener noreferrer" class="sub-value">
                   {link.text || link.url}
@@ -428,9 +445,7 @@
           {@const tagData = fieldValue as CategoryFieldData}
           {@const majorTag = template.tags?.find(t => t.id === tagData.majorTag)}
           {#if majorTag}
-            <span class="tag-display" style="background-color: {majorTag.color}">
-              {majorTag.displayName || majorTag.name}
-            </span>
+            <span class="selection-highlight" style="background-color: {majorTag.color}">{majorTag.displayName || majorTag.name}</span>
           {:else}
             <span class="missing-data">—</span>
           {/if}
@@ -448,7 +463,7 @@
           {@const isCustom = (id: string) => (selData.customEntries || []).includes(id)}
           {#if mode === 'single'}
             {#if selData.selected}
-              <span class="selection-badge" style="background-color: {getColor(selData.selected)}" class:custom={isCustom(selData.selected)}>
+              <span class="selection-highlight" style="background-color: {getColor(selData.selected)}" class:custom={isCustom(selData.selected)}>
                 {getLabel(selData.selected)}
               </span>
             {:else}
@@ -456,32 +471,35 @@
             {/if}
           {:else if mode === 'multi'}
             {#if selData.selections && selData.selections.length > 0}
-              <div class="selection-badges">
-                {#each selData.selections as selId}
-                  <span class="selection-badge small" style="background-color: {getColor(selId)}" class:custom={isCustom(selId)}>
-                    {getLabel(selId)}
-                  </span>
-                {/each}
+              <div class="selection-list">
+                <span class="selection-highlight" style="background-color: {getColor(selData.selections[0])}" class:custom={isCustom(selData.selections[0])}>{getLabel(selData.selections[0])}</span>
+                {#if selData.selections.length > 1}
+                  {#if isExpanded}
+                    {#each selData.selections.slice(1) as selId}
+                      <span class="selection-highlight" style="background-color: {getColor(selId)}" class:custom={isCustom(selId)}>{getLabel(selId)}</span>
+                    {/each}
+                  {:else}
+                    <span class="tag-more">+{selData.selections.length - 1}</span>
+                  {/if}
+                {/if}
               </div>
             {:else}
               <span class="missing-data">—</span>
             {/if}
           {:else if mode === 'hierarchical'}
             {#if selData.primary || (selData.secondary && selData.secondary.length > 0)}
-              <div class="selection-hierarchical">
+              <div class="selection-list">
                 {#if selData.primary}
-                  <span class="selection-badge primary" style="background-color: {getColor(selData.primary)}">
-                    {getLabel(selData.primary)}
-                  </span>
+                  <span class="selection-highlight" style="background-color: {getColor(selData.primary)}">{getLabel(selData.primary)}</span>
                 {/if}
                 {#if selData.secondary && selData.secondary.length > 0}
-                  <div class="selection-badges secondary">
+                  {#if isExpanded}
                     {#each selData.secondary as secId}
-                      <span class="selection-badge small" style="background-color: {getColor(secId)}" class:custom={isCustom(secId)}>
-                        {getLabel(secId)}
-                      </span>
+                      <span class="selection-highlight secondary" style="background-color: {getColor(secId)}" class:custom={isCustom(secId)}>{getLabel(secId)}</span>
                     {/each}
-                  </div>
+                  {:else}
+                    <span class="tag-more">+{selData.secondary.length}</span>
+                  {/if}
                 {/if}
               </div>
             {:else}
@@ -551,12 +569,14 @@
     /* Clamp to 2 lines when not expanded */
     display: -webkit-box;
     -webkit-line-clamp: 2;
+    line-clamp: 2;
     -webkit-box-orient: vertical;
     overflow: hidden;
   }
 
   .cell-content.expanded .field-value {
     -webkit-line-clamp: unset;
+    line-clamp: unset;
     overflow: visible;
   }
 
@@ -611,12 +631,12 @@
     flex: 1;
   }
 
-  .sub-value a {
+  a.sub-value {
     color: #2563EB;
     text-decoration: underline;
   }
 
-  .sub-value a:hover {
+  a.sub-value:hover {
     text-decoration: none;
   }
 
@@ -668,53 +688,39 @@
     color: var(--color-text-secondary);
   }
 
-  /* Tags field */
-  .tag-display {
-    display: inline-block;
-    padding: 0.125rem 0.5rem;
-    border-radius: 0.625rem;
-    font-size: 0.75rem;
-    font-weight: 500;
+  /* Selection/Tags field - highlighter style */
+  .selection-list {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    overflow: hidden;
+  }
+
+  .selection-highlight {
     color: white;
+    font-size: 0.8125rem;
+    line-height: 1.3;
+    border-radius: 0.125rem;
+    padding: 0 0.125rem;
+    width: fit-content;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
-  /* Selection field */
-  .selection-badge {
-    display: inline-block;
-    padding: 0.125rem 0.5rem;
-    border-radius: 0.25rem;
+  .selection-highlight.secondary {
     font-size: 0.75rem;
-    font-weight: 500;
-    color: white;
   }
 
-  .selection-badge.small {
-    padding: 0.0625rem 0.375rem;
-    font-size: 0.6875rem;
-  }
-
-  .selection-badge.primary {
-    border: 2px solid rgba(0, 0, 0, 0.2);
-  }
-
-  .selection-badge.custom {
+  .selection-highlight.custom {
     font-style: italic;
   }
 
-  .selection-badges {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.25rem;
-  }
-
-  .selection-badges.secondary {
-    margin-top: 0.25rem;
-  }
-
-  .selection-hierarchical {
-    display: flex;
-    flex-direction: column;
-    gap: 0.25rem;
+  .tag-more {
+    font-size: 0.75rem;
+    color: var(--color-text-secondary);
+    line-height: 1.3;
   }
 
   /* Edit mode styles */

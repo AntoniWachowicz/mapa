@@ -57,6 +57,32 @@ export async function loadLeaflet(): Promise<any> {
 }
 
 /**
+ * Load MarkerCluster plugin for Leaflet
+ * Must be called after loadLeaflet() since it depends on L being available
+ * @returns Promise that resolves when the plugin is loaded
+ */
+export async function loadMarkerCluster(): Promise<void> {
+  // Add MarkerCluster CSS
+  const css = document.createElement('link');
+  css.rel = 'stylesheet';
+  css.href = 'https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css';
+  document.head.appendChild(css);
+
+  const defaultCss = document.createElement('link');
+  defaultCss.rel = 'stylesheet';
+  defaultCss.href = 'https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css';
+  document.head.appendChild(defaultCss);
+
+  // Add MarkerCluster JS and wait for load
+  return new Promise((resolve) => {
+    const script = document.createElement('script');
+    script.src = 'https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js';
+    script.onload = () => resolve();
+    document.head.appendChild(script);
+  });
+}
+
+/**
  * Get tile provider configuration by key
  */
 export function getTileProvider(providerKey: string): TileProvider {

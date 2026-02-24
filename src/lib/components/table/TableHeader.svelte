@@ -22,6 +22,7 @@
     getFieldDisplayName: (field: any) => string;
     getFieldType: (field: any) => string;
     startColumnResize: (e: MouseEvent, fieldKey: string, currentWidth: number) => void;
+    onColumnWidthChange?: (fieldKey: string, newWidth: number) => void;
 
     // Event handlers
     onSort?: (fieldKey: string) => void;
@@ -40,6 +41,7 @@
     getFieldDisplayName,
     getFieldType,
     startColumnResize,
+    onColumnWidthChange,
     onSort,
     onToggleSelectAll
   }: Props = $props();
@@ -57,6 +59,17 @@
   function handleToggleSelectAll() {
     onToggleSelectAll?.();
   }
+
+  function handleResizerKeydown(e: KeyboardEvent, fieldKey: string, currentWidth: number) {
+    const step = e.shiftKey ? 50 : 10;
+    if (e.key === 'ArrowRight') {
+      e.preventDefault();
+      onColumnWidthChange?.(fieldKey, Math.min(800, currentWidth + step));
+    } else if (e.key === 'ArrowLeft') {
+      e.preventDefault();
+      onColumnWidthChange?.(fieldKey, Math.max(50, currentWidth - step));
+    }
+  }
 </script>
 
 <table class="header-table">
@@ -71,7 +84,7 @@
         />
       </th>
       <!-- Location column (always visible) -->
-      <th class="location-column" style="width: 9rem;">
+      <th class="location-column" style="width: 6.5rem;">
         <div class="header-content">
           <div class="header-text">
             <span class="field-name">Lokalizacja</span>
@@ -102,12 +115,13 @@
             {/if}
           </div>
           {#if index < visibleFields.length - 1}
-            <div
+            <button
               class="column-resizer"
               onmousedown={(e) => startColumnResize(e, field.key, columnWidths[field.key] || 200)}
-              role="separator"
-              aria-orientation="vertical"
-            ></div>
+              onkeydown={(e) => handleResizerKeydown(e, field.key, columnWidths[field.key] || 200)}
+              aria-label="Zmień szerokość kolumny {getFieldDisplayName(field)}"
+              tabindex="0"
+            ></button>
           {/if}
         </th>
       {/each}
@@ -166,8 +180,8 @@
   }
 
   .location-column {
-    width: 9rem;
-    min-width: 9rem;
+    width: 6.5rem;
+    min-width: 6.5rem;
   }
 
   .header-content {
@@ -220,6 +234,10 @@
     cursor: col-resize;
     z-index: 30;
     transform: translateX(50%);
+    padding: 0;
+    border: none;
+    background: transparent;
+    appearance: none;
   }
 
   .column-resizer::before {

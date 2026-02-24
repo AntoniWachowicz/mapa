@@ -10,23 +10,17 @@ export const POST: RequestHandler = async ({ request }) => {
       throw error(400, 'Address is required');
     }
 
-    console.log('Geocoding API called with address:', address);
-
     // Format Polish address for better results
     const formattedAddress = formatPolishAddress(address);
-    console.log('Formatted address:', formattedAddress);
 
     const result = await geocodeAddress(formattedAddress);
 
     if (!result) {
-      console.log('Geocoding failed - no results');
       return json({
         success: false,
         error: 'Nie udało się znaleźć współrzędnych dla podanego adresu'
       });
     }
-
-    console.log('Geocoding succeeded:', result);
 
     return json({
       success: true,

@@ -58,8 +58,6 @@ export function addToQueue(objectId: string, address: string): void {
     throw new Error('Ten obiekt jest obecnie geokodowany');
   }
 
-  console.log('Adding to geocoding queue:', address);
-
   // Add to queue
   geocodingQueue.push({ objectId, address });
 }
@@ -83,8 +81,6 @@ export async function processQueue(
 
     const { objectId, address } = request;
 
-    console.log(`Processing queue: ${geocodingQueue.length + 1} remaining, geocoding: ${address}`);
-
     // Add to loading set
     quickGeocodingIds.add(objectId);
 
@@ -100,14 +96,10 @@ export async function processQueue(
       }
 
       const result: GeocodingResult = await response.json();
-      if (!result.success || !result.data) {
-        console.error(`Failed to geocode: ${address}`);
-        // Don't alert for queued items, just log
-      } else {
+      if (result.success && result.data) {
         // Save coordinates via callback
         const { lat, lng } = result.data;
         await onUpdate(objectId, lat, lng);
-        console.log(`✓ Geocoded: ${address} -> ${lat.toFixed(6)}, ${lng.toFixed(6)}`);
       }
     } catch (error) {
       console.error('Queue geocode error:', error);
@@ -124,7 +116,6 @@ export async function processQueue(
   }
 
   isProcessingQueue = false;
-  console.log('Geocoding queue completed');
 }
 
 /**

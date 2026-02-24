@@ -187,7 +187,7 @@
 {:else if fieldType === 'multidate'}
   <div class="field-config">
     <div class="config-section">
-      <label class="config-label">Pola dat:</label>
+      <span class="config-label">Pola dat:</span>
       {#each dateFields as dateField, i}
         <div class="date-field-row">
           <input
@@ -307,7 +307,7 @@
       />
     </label>
     <div class="config-section">
-      <label class="config-label">Domyślne źródła finansowania:</label>
+      <span class="config-label">Domyślne źródła finansowania:</span>
       {#each fundingSources as source, i}
         <div class="funding-source-row">
           <input

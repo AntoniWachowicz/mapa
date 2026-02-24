@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import type { SavedObject, Template, CategoryFieldData, PriceData } from '$lib/types.js';
+  import type { SavedObject, Template, CategoryFieldData, PriceData, SelectionFieldData, SelectionConfig } from '$lib/types.js';
   import Icon from '$lib/Icon.svelte';
   import Modal from '$lib/components/modals/Modal.svelte';
   import ColumnMappingModal from '$lib/components/modals/ColumnMappingModal.svelte';
@@ -221,6 +221,31 @@
       return {type: 'links', links: fieldValue};
     }
 
+    // Selection field with hidden secondary tags
+    if (field.type === 'selection' && typeof fieldValue === 'object' && fieldValue !== null) {
+      const selData = fieldValue as SelectionFieldData;
+      const selConfig = (field.config as SelectionConfig) || { mode: 'single', options: [] };
+      const getLabel = (id: string) => selConfig.options?.find(o => o.id === id)?.value || id;
+      const getColor = (id: string) => selConfig.options?.find(o => o.id === id)?.color || '#6b7280';
+
+      const items: { label: string; color: string }[] = [];
+      if (selConfig.mode === 'hierarchical') {
+        if (selData.primary) items.push({ label: getLabel(selData.primary), color: getColor(selData.primary) });
+        for (const secId of (selData.secondary || [])) {
+          items.push({ label: getLabel(secId), color: getColor(secId) });
+        }
+      } else if (selConfig.mode === 'multi') {
+        for (const selId of (selData.selections || [])) {
+          items.push({ label: getLabel(selId), color: getColor(selId) });
+        }
+      } else if (selData.selected) {
+        items.push({ label: getLabel(selData.selected), color: getColor(selData.selected) });
+      }
+      if (items.length > 1) {
+        return { type: 'selection', items };
+      }
+    }
+
     // Regular text field
     const formattedValue = formatTableCellValue(field, fieldValue);
     if (formattedValue && formattedValue !== '—') {
@@ -263,6 +288,14 @@
 
     // Address field: Always has full details to show in tooltip
     if (field.type === 'address' && fieldValue) return true;
+
+    // Selection field: has secondary/multiple tags
+    if (field.type === 'selection' && typeof fieldValue === 'object' && fieldValue !== null) {
+      const selData = fieldValue as SelectionFieldData;
+      const selConfig = (field.config as SelectionConfig) || { mode: 'single', options: [] };
+      if (selConfig.mode === 'hierarchical' && selData.secondary && selData.secondary.length > 0) return true;
+      if (selConfig.mode === 'multi' && selData.selections && selData.selections.length > 1) return true;
+    }
 
     return false;
   }
@@ -322,7 +355,7 @@
     }
   });
 
-  onMount(async () => {
+  onMount(() => {
     // Initialize table resize callbacks
     initResizeCallbacks({
       onWidthChange: (key: string, width: number) => {
@@ -355,22 +388,19 @@
           }))
         };
 
-        // Save the fixed template
-        try {
-          const formData = new FormData();
-          formData.set('template', JSON.stringify(fixedTemplate));
+        // Save the fixed template (fire-and-forget)
+        const formData = new FormData();
+        formData.set('template', JSON.stringify(fixedTemplate));
 
-          await fetch('/schema-builder?/updateTemplate', {
-            method: 'POST',
-            body: formData
-          });
-
-          // Update local state
+        fetch('/schema-builder?/updateTemplate', {
+          method: 'POST',
+          body: formData
+        }).then(() => {
           data.template = fixedTemplate;
           if (import.meta.env.DEV) console.log('Fields fixed successfully');
-        } catch (error) {
+        }).catch((error) => {
           console.error('Error fixing fields:', error);
-        }
+        });
       }
     }
 
@@ -460,7 +490,7 @@
     const obj = filteredObjects.find(o => o.id === objectId);
     if (!obj) return;
 
-    const address = extractAddressFromObject(obj, data.template);
+    const address = extractAddressFromObject(obj, data.template ?? null);
     if (!address) {
       alert('Nie znaleziono pola z adresem dla tego obiektu.');
       return;
@@ -541,7 +571,7 @@
 
     <BulkActionsToolbar
       selectedCount={bulkOps.selectedRows.size}
-      onBulkEdit={() => bulkOps.openBulkEditModal(data.template)}
+      onBulkEdit={() => bulkOps.openBulkEditModal(data.template ?? undefined)}
       onBulkDelete={() => bulkOps.deleteSelected(filteredObjects, (updated) => filteredObjects = updated)}
       onClearSelection={bulkOps.clearSelection}
     />
@@ -571,6 +601,7 @@
       {isGeocoding}
       {SyncIcon}
       startColumnResize={startColumnResize}
+      onColumnWidthChange={(key, width) => { columnWidths = { ...columnWidths, [key]: width }; }}
       onSort={handleSort}
       onToggleSelectAll={() => bulkOps.toggleSelectAll(filteredObjects)}
       onRowSelection={(objectId, index, event) => bulkOps.handleRowSelection(objectId, index, event, filteredObjects)}
@@ -620,7 +651,7 @@
       columnMapping={importWorkflow.columnMapping}
       importInProgress={importWorkflow.importInProgress}
       onclose={importWorkflow.closeMappingModal}
-      onimport={() => importWorkflow.executeImportWithMapping(data.template)}
+      onimport={() => { if (data.template) importWorkflow.executeImportWithMapping(data.template); }}
       oncolumnmappingchange={(mapping) => importWorkflow.columnMapping = mapping}
       onnewfield={importWorkflow.openNewFieldModal}
       {getFieldDisplayName}
@@ -691,6 +722,12 @@
               </a>
             </div>
           {/each}
+        {:else if hoverTooltip.content.type === 'selection'}
+          {#each hoverTooltip.content.items as item}
+            <div class="tooltip-row">
+              <span class="tooltip-tag" style="background-color: {item.color}">{item.label}</span>
+            </div>
+          {/each}
         {:else if hoverTooltip.content.type === 'text'}
           <div class="tooltip-text">
             {hoverTooltip.content.text}
@@ -712,8 +749,6 @@
 {/if}
 
 <style>
-  @import '$lib/styles/modal.css';
-
   .login-prompt, .no-template {
     text-align: center;
     padding: var(--space-12) var(--space-4);
@@ -737,95 +772,6 @@
     padding: var(--space-6);
     width: 100%;
     margin: 0;
-  }
-
-  .btn {
-    display: inline-flex;
-    align-items: center;
-    gap: var(--space-2);
-    padding: var(--space-2) var(--space-3);
-    background: #333333;
-    color: white;
-    border: none;
-    border-radius: var(--radius-base);
-    font-family: "Space Mono", monospace;
-    font-size: var(--text-sm);
-    font-weight: var(--font-weight-medium);
-    cursor: pointer;
-    transition: all var(--transition-fast);
-    text-decoration: none;
-    height: 32px;
-  }
-
-  .btn:hover {
-    background: #444444;
-    transform: translateY(-1px);
-  }
-
-  .btn:active {
-    transform: translateY(0);
-  }
-
-  .btn span {
-    white-space: nowrap;
-  }
-
-  /* Table styles moved to DataTable.svelte, TableHeader.svelte, TableCell.svelte */
-
-
-
-  .btn-secondary {
-    background: #6b7280;
-    color: white;
-  }
-
-  .btn-secondary:hover {
-    background: #4b5563;
-  }
-
-
-  /* Column Mapping Modal styles */
-  /* Modal Styles - Base styles from modal.css, component-specific overrides below */
-  /* Column Mapping Modal styles moved to ColumnMappingModal.svelte */
-
-  /* Header Selection Modal styles moved to HeaderSelectionModal.svelte */
-
-  .import-progress {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    padding: var(--space-8);
-    gap: var(--space-4);
-  }
-
-  .import-progress p {
-    margin: 0;
-    font-family: "Space Mono", monospace;
-    font-size: var(--text-base);
-    color: var(--color-text-secondary);
-  }
-
-  .spinner {
-    width: 40px;
-    height: 40px;
-    border: 4px solid #e5e7eb;
-    border-top-color: #0ea5e9;
-    border-radius: 50%;
-    animation: spin 1s linear infinite;
-  }
-
-  @keyframes spin {
-    to {
-      transform: rotate(360deg);
-    }
-  }
-
-  /* New Field Creation Modal styles moved to NewFieldModal.svelte */
-
-  .btn:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
   }
 
   /* Floating tooltip for hover data */
@@ -883,6 +829,13 @@
 
   .tooltip-link:hover {
     color: #0284c7;
+  }
+
+  .tooltip-tag {
+    color: white;
+    border-radius: 0.125rem;
+    padding: 0 0.125rem;
+    font-family: "Space Mono", monospace;
   }
 
   .tooltip-text {

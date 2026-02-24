@@ -605,8 +605,6 @@
 />
 
 <style>
-  @import '$lib/styles/modal.css';
-
   .pin-form-panel {
     --panel-width: 420px;
     --base-unit: calc(var(--panel-width) / 16);

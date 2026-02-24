@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { Template, Field } from '$lib/types.js';
+  import type { Template, Field, AddressConfig, MultiDateConfig } from '$lib/types.js';
   import type { Snippet } from 'svelte';
   import Modal from './Modal.svelte';
 
@@ -33,28 +33,158 @@
     getFieldDisplayName
   }: Props = $props();
 
-  function handleMappingChange(header: string, value: string) {
-    if (value === '_create_new_field') {
-      onnewfield(header);
-    } else {
-      const newMapping = { ...columnMapping, [header]: value };
-      oncolumnmappingchange(newMapping);
+  interface SchemaColumn {
+    key: string;        // e.g. 'fieldKey' or 'fieldKey.street'
+    label: string;
+    typeLabel: string;
+    parentLabel?: string;   // for subfields, the parent field name
+    isSubfield?: boolean;   // true for expanded subfields
+    isFirstInGroup?: boolean; // first subfield shows parent label
+  }
+
+  const addressSubfields: { key: string; label: string }[] = [
+    { key: 'street', label: 'Ulica' },
+    { key: 'number', label: 'Numer' },
+    { key: 'postalCode', label: 'Kod pocztowy' },
+    { key: 'city', label: 'Miasto' },
+    { key: 'gmina', label: 'Gmina' },
+  ];
+
+  function getSchemaColumns(): SchemaColumn[] {
+    const columns: SchemaColumn[] = [];
+
+    for (const field of template?.fields || []) {
+      const fieldType = field.type || field.fieldType || 'richtext';
+      const fieldLabel = getFieldDisplayName(field);
+
+      if (fieldType === 'address') {
+        // Expand address into subfield columns
+        for (let i = 0; i < addressSubfields.length; i++) {
+          const sub = addressSubfields[i];
+          columns.push({
+            key: `${field.key}.${sub.key}`,
+            label: sub.label,
+            typeLabel: '[adres]',
+            parentLabel: fieldLabel,
+            isSubfield: true,
+            isFirstInGroup: i === 0,
+          });
+        }
+      } else if (fieldType === 'multidate') {
+        // Expand multidate into its configured date fields
+        const config = field.config as MultiDateConfig | undefined;
+        const dateFields = config?.dateFields || [];
+        if (dateFields.length > 0) {
+          for (let i = 0; i < dateFields.length; i++) {
+            const df = dateFields[i];
+            columns.push({
+              key: `${field.key}.${df.key}`,
+              label: df.label,
+              typeLabel: '[data]',
+              parentLabel: fieldLabel,
+              isSubfield: true,
+              isFirstInGroup: i === 0,
+            });
+          }
+        } else {
+          columns.push({ key: field.key, label: fieldLabel, typeLabel: '[daty]' });
+        }
+      } else if (fieldType === 'price') {
+        columns.push({
+          key: `${field.key}.total`,
+          label: 'Kwota',
+          typeLabel: '[cena]',
+          parentLabel: fieldLabel,
+          isSubfield: true,
+          isFirstInGroup: true,
+        });
+      } else {
+        // Simple fields
+        const typeLabel =
+          fieldType === 'richtext' ? '[tekst]' :
+          fieldType === 'files' ? '[pliki]' :
+          fieldType === 'gallery' ? '[galeria]' :
+          fieldType === 'links' ? '[linki]' :
+          fieldType === 'category' ? '[kategoria]' :
+          fieldType === 'tags' ? '[tagi]' :
+          fieldType === 'selection' ? '[wybór]' :
+          fieldType === 'number' || fieldType === 'currency' || fieldType === 'percentage' ? '[liczba]' :
+          fieldType === 'checkbox' ? '[tak/nie]' :
+          fieldType === 'date' ? '[data]' : '';
+        columns.push({ key: field.key, label: fieldLabel, typeLabel });
+      }
     }
+
+    return columns;
+  }
+
+  // Build inverted mapping: schemaKey -> excelHeader
+  function getInverseMapping(): Record<string, string> {
+    const inverse: Record<string, string> = {};
+    for (const [excelCol, schemaField] of Object.entries(columnMapping)) {
+      if (schemaField && schemaField !== '' && schemaField !== '_skip') {
+        inverse[schemaField] = excelCol;
+      }
+    }
+    return inverse;
+  }
+
+  // When user picks an Excel column for a schema field
+  function handleSchemaMapping(schemaKey: string, excelHeader: string) {
+    const newMapping = { ...columnMapping };
+
+    // Remove any previous Excel column that was mapped to this schema field
+    for (const [col, field] of Object.entries(newMapping)) {
+      if (field === schemaKey) {
+        delete newMapping[col];
+      }
+    }
+
+    // If an Excel column was selected (not "none"), add the mapping
+    if (excelHeader !== '') {
+      // Remove this Excel column from any other schema field it was mapped to
+      if (newMapping[excelHeader]) {
+        delete newMapping[excelHeader];
+      }
+      newMapping[excelHeader] = schemaKey;
+    }
+
+    oncolumnmappingchange(newMapping);
+  }
+
+  // Get sample data for a schema column (from whatever Excel column is mapped to it)
+  function getSampleValue(row: Record<string, any>, schemaKey: string, inverseMap: Record<string, string>): string {
+    const excelHeader = inverseMap[schemaKey];
+    if (!excelHeader) return '—';
+    const val = row[excelHeader];
+    return val !== undefined && val !== null && String(val).trim() !== ''
+      ? String(val).substring(0, 60)
+      : '—';
+  }
+
+  // Get Excel headers not yet mapped to any schema field
+  function getUnmappedExcelHeaders(): string[] {
+    const mappedHeaders = new Set(
+      Object.entries(columnMapping)
+        .filter(([_, v]) => v && v !== '' && v !== '_skip')
+        .map(([k, _]) => k)
+    );
+    return excelHeaders.filter(h => !mappedHeaders.has(h));
   }
 </script>
 
 <Modal
   {open}
-  title="Mapowanie kolumn Excel"
+  title="Import Excel"
   {onclose}
-  maxWidth="800px"
+  maxWidth="92vw"
+  maxHeight="90vh"
   closeOnOverlayClick={!importInProgress}
   closeOnEscape={!importInProgress}
   showCloseButton={!importInProgress}
 >
   <p class="mapping-modal-info">
-    Przypisz kolumny z pliku Excel do pól w schemacie.
-    Znaleziono {excelAllData.length} wierszy do importu.
+    Mapowanie kolumn &middot; {excelAllData.length} wierszy
   </p>
 
   {#if importInProgress}
@@ -63,77 +193,62 @@
       <p>Importowanie danych...</p>
     </div>
   {:else}
-    <!-- Column mapping table -->
+    {@const schemaColumns = getSchemaColumns()}
+    {@const inverseMap = getInverseMapping()}
+    {@const unmappedHeaders = getUnmappedExcelHeaders()}
+
+    <!-- Schema-field table with Excel column assignment -->
     <div class="mapping-table-container">
       <table class="mapping-table">
         <thead>
           <tr>
-            <th>Kolumna Excel</th>
-            <th>Przykładowe dane</th>
-            <th>Pole w schemacie</th>
+            {#each schemaColumns as col}
+              <th class:mapped={!!inverseMap[col.key]} class:subfield={col.isSubfield}>
+                <div class="th-inner">
+                  <div class="th-top">
+                    {#if col.isFirstInGroup && col.parentLabel}
+                      <span class="header-parent">{col.parentLabel}</span>
+                    {/if}
+                    <span class="header-label" class:indented={col.isSubfield}>{col.label}</span>
+                    <span class="header-type">{col.typeLabel}</span>
+                  </div>
+                  <select
+                    value={inverseMap[col.key] || ''}
+                    onchange={(e) => {
+                      const target = e.target as HTMLSelectElement;
+                      handleSchemaMapping(col.key, target.value);
+                    }}
+                  >
+                    <option value="">— Brak —</option>
+                    {#each excelHeaders as header}
+                      <option value={header}>{header}</option>
+                    {/each}
+                  </select>
+                </div>
+              </th>
+            {/each}
           </tr>
         </thead>
         <tbody>
-          {#each excelHeaders as header}
+          {#each excelSampleData as row}
             <tr>
-              <td class="mapping-excel-col">{header}</td>
-              <td class="mapping-sample">
-                {#if excelSampleData.length > 0}
-                  <span class="sample-value">{excelSampleData[0]?.[header] || '—'}</span>
-                  {#if excelSampleData.length > 1}
-                    <span class="sample-value">{excelSampleData[1]?.[header] || '—'}</span>
-                  {/if}
-                {:else}
-                  <span class="sample-value">—</span>
-                {/if}
-              </td>
-              <td class="mapping-field-select">
-                <select
-                  value={columnMapping[header] || ''}
-                  onchange={(e) => {
-                    const target = e.target as HTMLSelectElement;
-                    handleMappingChange(header, target.value);
-                    if (target.value === '_create_new_field') {
-                      target.value = ''; // Reset dropdown
-                    }
-                  }}
-                >
-                  <option value="">— Pomiń —</option>
-                  <option value="_skip">— Pomiń —</option>
-                  <optgroup label="Lokalizacja">
-                    <option value="_latitude">Szerokość (latitude)</option>
-                    <option value="_longitude">Długość (longitude)</option>
-                    <option value="_geocode">Adres do geokodowania</option>
-                  </optgroup>
-                  <optgroup label="Pola schematu">
-                    {#each template?.fields || [] as field}
-                      {@const fieldType = field.type || field.fieldType || 'richtext'}
-                      {@const typeLabel =
-                        fieldType === 'richtext' ? ' [tekst]' :
-                        fieldType === 'files' ? ' [pliki]' :
-                        fieldType === 'gallery' ? ' [galeria]' :
-                        fieldType === 'multidate' ? ' [daty]' :
-                        fieldType === 'address' ? ' [adres]' :
-                        fieldType === 'links' ? ' [linki]' :
-                        fieldType === 'price' ? ' [cena]' :
-                        fieldType === 'category' ? ' [kategoria]' :
-                        fieldType === 'tags' ? ' [tagi]' :
-                        // Legacy types
-                        fieldType === 'number' || fieldType === 'currency' || fieldType === 'percentage' ? ' [liczba]' :
-                        fieldType === 'checkbox' ? ' [tak/nie]' :
-                        fieldType === 'date' ? ' [data]' : ''
-                      }
-                      <option value={field.key}>{getFieldDisplayName(field)}{typeLabel}</option>
-                    {/each}
-                  </optgroup>
-                  <option value="_create_new_field" style="color: #0ea5e9; font-weight: 500;">+ Utwórz nowe pole...</option>
-                </select>
-              </td>
+              {#each schemaColumns as col}
+                <td class:muted={!inverseMap[col.key]} title={getSampleValue(row, col.key, inverseMap)}>
+                  {getSampleValue(row, col.key, inverseMap)}
+                </td>
+              {/each}
             </tr>
           {/each}
         </tbody>
       </table>
     </div>
+
+    {#if unmappedHeaders.length > 0}
+      <div class="unmapped-info">
+        <strong>Nieprzypisane kolumny Excel ({unmappedHeaders.length}):</strong>
+        {unmappedHeaders.join(', ')}
+      </div>
+    {/if}
 
     <!-- Import info -->
     <div class="mapping-info">
@@ -162,9 +277,9 @@
 
 <style>
   .mapping-modal-info {
-    margin: 0 0 16px 0;
-    font-size: 14px;
-    color: #6b7280;
+    margin: 0 0 10px 0;
+    font-size: 13px;
+    color: #9ca3af;
   }
 
   .import-progress {
@@ -196,15 +311,14 @@
   }
 
   .mapping-table-container {
-    max-height: 400px;
     overflow: auto;
+    max-height: 500px;
     border: 1px solid #e5e7eb;
     border-radius: 8px;
     margin-bottom: 16px;
   }
 
   .mapping-table {
-    width: 100%;
     border-collapse: collapse;
     font-size: 14px;
   }
@@ -212,66 +326,146 @@
   .mapping-table thead {
     position: sticky;
     top: 0;
-    background: #f9fafb;
     z-index: 1;
   }
 
   .mapping-table th {
-    padding: 12px;
+    padding: 0;
     text-align: left;
+    vertical-align: top;
+    border-right: 1px solid #e5e7eb;
+    border-bottom: 2px solid #e5e7eb;
+    background: #f9fafb;
+    min-width: 180px;
+    height: 1px;
+    transition: background-color 0.15s;
+  }
+
+  .th-inner {
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    height: 100%;
+    min-height: 100%;
+    padding: 10px 12px;
+  }
+
+  .th-top {
+    flex: 1;
+  }
+
+  .mapping-table th:last-child {
+    border-right: none;
+  }
+
+  .mapping-table th.mapped {
+    background: #e0f2fe;
+  }
+
+  .mapping-table th select {
+    width: 100%;
+    padding: 6px 8px;
+    border: 1px solid #d1d5db;
+    border-radius: 6px;
+    font-size: 13px;
+    background: white;
+    cursor: pointer;
+  }
+
+  .mapping-table th.mapped select {
+    border-color: #7dd3fc;
+  }
+
+  .mapping-table th select:focus {
+    outline: none;
+    border-color: #0ea5e9;
+    box-shadow: 0 0 0 3px rgba(14, 165, 233, 0.1);
+  }
+
+  .mapping-table th.subfield {
+    border-left: 2px solid #e5e7eb;
+  }
+
+  .mapping-table th.subfield.mapped {
+    border-left-color: #93c5fd;
+  }
+
+  .header-parent {
+    display: block;
+    font-size: 10px;
+    font-weight: 500;
+    color: #9ca3af;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    margin-bottom: 1px;
+  }
+
+  .header-label {
+    display: block;
+    margin-bottom: 2px;
+    font-size: 12px;
     font-weight: 600;
     color: #111827;
-    border-bottom: 2px solid #e5e7eb;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .header-label.indented {
+    padding-left: 8px;
+    font-weight: 500;
+    font-size: 11px;
+  }
+
+  .header-type {
+    display: block;
+    margin-bottom: 6px;
+    font-size: 11px;
+    font-weight: 400;
+    color: #9ca3af;
   }
 
   .mapping-table td {
-    padding: 12px;
-    border-bottom: 1px solid #e5e7eb;
+    padding: 6px 12px;
+    border-bottom: 1px solid #f3f4f6;
+    border-right: 1px solid #f3f4f6;
+    font-family: monospace;
+    font-size: 12px;
+    color: #111827;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 200px;
+  }
+
+  .mapping-table td:last-child {
+    border-right: none;
+  }
+
+  .mapping-table td.muted {
+    color: #d1d5db;
   }
 
   .mapping-table tbody tr:last-child td {
     border-bottom: none;
   }
 
-  .mapping-excel-col {
-    font-weight: 500;
-    color: #111827;
-    min-width: 150px;
+  .mapping-table tbody tr:hover {
+    background: #f9fafb;
   }
 
-  .mapping-sample {
-    color: #6b7280;
-    min-width: 200px;
-  }
-
-  .sample-value {
-    display: inline-block;
-    margin-right: 8px;
-    padding: 2px 8px;
-    background: #f3f4f6;
-    border-radius: 4px;
-    font-family: monospace;
-    font-size: 12px;
-  }
-
-  .mapping-field-select {
-    min-width: 250px;
-  }
-
-  .mapping-field-select select {
-    width: 100%;
-    padding: 8px 12px;
-    border: 1px solid #d1d5db;
+  .unmapped-info {
+    padding: 10px 12px;
+    margin-bottom: 12px;
+    background: #fef3c7;
+    border: 1px solid #fcd34d;
     border-radius: 6px;
-    font-size: 14px;
-    background: white;
-    cursor: pointer;
+    font-size: 13px;
+    color: #92400e;
   }
 
-  .mapping-field-select select:focus {
-    outline: none;
-    border-color: #0ea5e9;
-    box-shadow: 0 0 0 3px rgba(14, 165, 233, 0.1);
+  .unmapped-info strong {
+    font-weight: 600;
   }
 
   .mapping-info {

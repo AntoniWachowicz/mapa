@@ -6,6 +6,7 @@
   import { createWorldBoundsOverlay } from '$lib/features/admin/boundaryHelpers.js';
   import { createMarkerManager } from '$lib/features/admin/markerManager.svelte.js';
   import CoordinateDisplay from '$lib/components/admin/CoordinateDisplay.svelte';
+  import Modal from '$lib/components/modals/Modal.svelte';
   
   interface PageData {
     mapConfig: MapConfig;
@@ -26,7 +27,7 @@
 
   // Selected boundary ID (derived from current config)
   let selectedBoundaryId = $state<string | null>(
-    config.boundaryType === 'polygon' ? 'zywiecki-raj' : null
+    data.mapConfig.boundaryType === 'polygon' ? 'zywiecki-raj' : null
   );
   
   // Map setup
@@ -197,7 +198,7 @@
       if (config.polygonBoundary.type === 'Polygon') {
         // Single polygon
         const polygonCoordinates = config.polygonBoundary.coordinates[0].map(
-          (coord: [number, number]) => [coord[1], coord[0]]
+          (coord) => [coord[1], coord[0]]
         );
 
         // Draw the precise polygon boundary
@@ -223,7 +224,7 @@
 
         config.polygonBoundary.coordinates.forEach((polygonCoords: number[][][]) => {
           const converted = polygonCoords[0].map(
-            (coord: [number, number]) => [coord[1], coord[0]]
+            (coord) => [coord[1], coord[0]]
           );
           allPolygonCoords.push(converted);
           overlayHoles.push(converted);
@@ -747,7 +748,7 @@
 
       <!-- Nakładka -->
       <div class="control-group">
-        <label>Nakładka</label>
+        <span class="control-label">Nakładka</span>
         <div class="overlay-controls">
           {#if config.customImageUrl}
             <label class="checkbox-control">
@@ -842,76 +843,76 @@
 </div>
 
 <!-- Seed Confirmation Modal -->
-{#if dbManager.showSeedConfirm}
-  <div class="modal-overlay" onclick={dbManager.cancelSeed}>
-    <div class="modal-content" onclick={(e) => e.stopPropagation()}>
-      <h2>Załaduj Dane Demo LGD Żywiecki Raj</h2>
-      <p>
-        Ta operacja wygeneruje <strong>160 przykładowych projektów LGD</strong> z realistycznymi danymi:
-      </p>
-      <ul style="text-align: left; margin: var(--space-3) 0;">
-        <li>40 projektów infrastrukturalnych</li>
-        <li>30 projektów turystycznych</li>
-        <li>25 projektów kulturalnych</li>
-        <li>25 projektów gospodarczych</li>
-        <li>20 projektów rolniczych</li>
-        <li>20 projektów edukacyjnych</li>
-      </ul>
-      {#if dbManager.objectCount !== null && dbManager.objectCount > 0}
-        <p class="warning-text">
-          ⚠️ Baza danych zawiera już <strong>{dbManager.objectCount} obiektów</strong>.
-        </p>
-        <label style="display: flex; align-items: center; gap: var(--space-2); margin: var(--space-3) 0; cursor: pointer;">
-          <input
-            type="checkbox"
-            bind:checked={dbManager.clearBeforeSeed}
-            style="width: 20px; height: 20px; cursor: pointer;"
-          />
-          <span>Wyczyść istniejące dane przed zasiewem</span>
-        </label>
-      {:else}
-        <p style="color: var(--color-success);">
-          ✓ Baza danych jest pusta, gotowa do załadowania danych demo.
-        </p>
-      {/if}
-      <div class="modal-buttons">
-        <button onclick={dbManager.cancelSeed} class="btn btn-secondary">
-          Anuluj
-        </button>
-        <button onclick={dbManager.confirmSeed} class="btn btn-success">
-          {dbManager.clearBeforeSeed ? 'Wyczyść i Załaduj Dane' : 'Załaduj Dane Demo'}
-        </button>
-      </div>
-    </div>
-  </div>
-{/if}
+<Modal
+  open={dbManager.showSeedConfirm}
+  title="Załaduj Dane Demo LGD Żywiecki Raj"
+  onclose={dbManager.cancelSeed}
+  showCloseButton={false}
+  maxWidth="500px"
+>
+  <p>
+    Ta operacja wygeneruje <strong>160 przykładowych projektów LGD</strong> z realistycznymi danymi:
+  </p>
+  <ul style="text-align: left; margin: var(--space-3) 0;">
+    <li>40 projektów infrastrukturalnych</li>
+    <li>30 projektów turystycznych</li>
+    <li>25 projektów kulturalnych</li>
+    <li>25 projektów gospodarczych</li>
+    <li>20 projektów rolniczych</li>
+    <li>20 projektów edukacyjnych</li>
+  </ul>
+  {#if dbManager.objectCount !== null && dbManager.objectCount > 0}
+    <p class="warning-text">
+      ⚠️ Baza danych zawiera już <strong>{dbManager.objectCount} obiektów</strong>.
+    </p>
+    <label style="display: flex; align-items: center; gap: var(--space-2); margin: var(--space-3) 0; cursor: pointer;">
+      <input
+        type="checkbox"
+        bind:checked={dbManager.clearBeforeSeed}
+        style="width: 20px; height: 20px; cursor: pointer;"
+      />
+      <span>Wyczyść istniejące dane przed zasiewem</span>
+    </label>
+  {:else}
+    <p style="color: var(--color-success);">
+      ✓ Baza danych jest pusta, gotowa do załadowania danych demo.
+    </p>
+  {/if}
+  {#snippet footer()}
+    <button onclick={dbManager.cancelSeed} class="btn btn-secondary">
+      Anuluj
+    </button>
+    <button onclick={dbManager.confirmSeed} class="btn btn-success">
+      {dbManager.clearBeforeSeed ? 'Wyczyść i Załaduj Dane' : 'Załaduj Dane Demo'}
+    </button>
+  {/snippet}
+</Modal>
 
 <!-- Reset Confirmation Modal -->
-{#if dbManager.showResetConfirm}
-  <div class="modal-overlay" onclick={dbManager.cancelReset}>
-    <div class="modal-content" onclick={(e) => e.stopPropagation()}>
-      <h2>Potwierdzenie Resetowania Bazy Danych</h2>
-      <p class="warning-text">
-        ⚠️ <strong>UWAGA:</strong> Ta operacja usunie wszystkie pinezki i zresetuje schemat do domyślnych ustawień.
-      </p>
-      <p>
-        Ta operacja jest nieodwracalna. Czy na pewno chcesz kontynuować?
-      </p>
-      <div class="modal-buttons">
-        <button onclick={dbManager.cancelReset} class="btn btn-secondary">
-          Anuluj
-        </button>
-        <button onclick={dbManager.confirmReset} class="btn btn-danger">
-          Tak, Resetuj Bazę Danych
-        </button>
-      </div>
-    </div>
-  </div>
-{/if}
+<Modal
+  open={dbManager.showResetConfirm}
+  title="Potwierdzenie Resetowania Bazy Danych"
+  onclose={dbManager.cancelReset}
+  showCloseButton={false}
+  maxWidth="500px"
+>
+  <p class="warning-text">
+    ⚠️ <strong>UWAGA:</strong> Ta operacja usunie wszystkie pinezki i zresetuje schemat do domyślnych ustawień.
+  </p>
+  <p>
+    Ta operacja jest nieodwracalna. Czy na pewno chcesz kontynuować?
+  </p>
+  {#snippet footer()}
+    <button onclick={dbManager.cancelReset} class="btn btn-secondary">
+      Anuluj
+    </button>
+    <button onclick={dbManager.confirmReset} class="btn btn-danger">
+      Tak, Resetuj Bazę Danych
+    </button>
+  {/snippet}
+</Modal>
 
 <style>
-  @import '$lib/styles/modal.css';
-
   .config-container {
     padding: var(--space-6);
     height: calc(100vh - var(--nav-height));
@@ -935,92 +936,6 @@
     min-height: 0;
   }
 
-  .zoom-counter {
-    position: absolute;
-    top: 10px;
-    right: 10px;
-    z-index: 1000;
-    background: rgba(255, 255, 255, 0.95);
-    padding: 8px 12px;
-    border-radius: var(--radius-md);
-    font-family: 'Space Mono', monospace;
-    font-weight: 600;
-    font-size: 14px;
-    border: 1px solid var(--color-border);
-    box-shadow: var(--shadow-md);
-    pointer-events: none;
-  }
-
-
-  .coordinate-overlay {
-    position: absolute;
-    z-index: 1000;
-    pointer-events: none;
-  }
-
-  .coord-display {
-    background: rgba(255, 255, 255, 0.95);
-    border: 1px solid var(--color-border);
-    border-radius: 0;
-    padding: 6px;
-    backdrop-filter: blur(4px);
-    box-shadow: var(--shadow-md);
-    pointer-events: auto;
-    width: fit-content;
-    white-space: nowrap;
-    line-height: 1;
-  }
-
-  .coord-label {
-    font-family: 'Space Mono', monospace;
-    font-size: 16px;
-    font-weight: 700;
-    color: #000;
-    margin: 0 0 1px 0;
-    padding: 0;
-    text-align: left;
-    line-height: 1;
-  }
-
-  .coord-value {
-    margin: 0 0 1px 0;
-    padding: 0;
-    line-height: 1;
-  }
-
-  .coord-value:last-child {
-    margin-bottom: 0;
-  }
-
-  .coord-input {
-    width: 160px;
-    padding: 0;
-    margin: 0;
-    border: none;
-    border-radius: 0;
-    font-family: 'Space Mono', monospace;
-    font-size: 16px;
-    font-weight: 400;
-    background: transparent;
-    text-align: left;
-    color: #000;
-    -moz-appearance: textfield;
-    min-width: 0;
-    line-height: 1;
-    display: block;
-  }
-
-  .coord-input::-webkit-outer-spin-button,
-  .coord-input::-webkit-inner-spin-button {
-    -webkit-appearance: none;
-    margin: 0;
-  }
-
-  .coord-input:focus {
-    outline: none;
-    background: rgba(0, 122, 204, 0.1);
-  }
-
   .map-controls {
     display: flex;
     gap: var(--space-4);
@@ -1038,7 +953,8 @@
     gap: 4px;
   }
 
-  .control-group label {
+  .control-group label,
+  .control-group .control-label {
     font-size: 11px;
     font-weight: 600;
     color: var(--color-text-secondary);
@@ -1169,15 +1085,6 @@
     .map-controls {
       flex-direction: column;
     }
-
-    .coord-input {
-      width: 80px;
-      font-size: 10px;
-    }
-
-    .coordinate-overlay {
-      transform: scale(0.9);
-    }
   }
 
   /* Danger button */
@@ -1200,29 +1107,6 @@
     background: #15803d;
   }
 
-  /* Modal styles */
-  /* Modal Styles - Base styles from modal.css, component-specific overrides below */
-  .modal-overlay {
-    --modal-z-index: 10000; /* Higher z-index for admin modals */
-  }
-
-  .modal-content {
-    padding: var(--space-6);
-    max-width: 500px;
-  }
-
-  .modal-content h2 {
-    margin: 0 0 var(--space-4) 0;
-    font-size: var(--text-xl);
-    color: var(--color-text-primary);
-  }
-
-  .modal-content p {
-    margin: 0 0 var(--space-3) 0;
-    color: var(--color-text-secondary);
-    line-height: 1.6;
-  }
-
   .warning-text {
     color: #dc2626;
     font-weight: 600;
@@ -1232,10 +1116,4 @@
     border-left: 4px solid #dc2626;
   }
 
-  .modal-buttons {
-    display: flex;
-    gap: var(--space-3);
-    justify-content: flex-end;
-    margin-top: var(--space-4);
-  }
 </style>
