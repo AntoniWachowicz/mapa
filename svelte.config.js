@@ -1,4 +1,5 @@
-import adapter from '@sveltejs/adapter-node';
+import adapterNode from '@sveltejs/adapter-node';
+import adapterAuto from '@sveltejs/adapter-auto';
 import { vitePreprocess } from '@sveltejs/vite-plugin-svelte';
 
 /** @type {import('@sveltejs/kit').Config} */
@@ -8,14 +9,16 @@ const config = {
 	preprocess: vitePreprocess(),
 
 	kit: {
-		adapter: adapter({
-			// Build output directory
-			out: 'build',
-			// Precompress static assets
-			precompress: true,
-			// Environment variable prefix for runtime config
-			envPrefix: ''
-		})
+		adapter: process.env.VERCEL
+			? adapterAuto()
+			: adapterNode({
+					// Build output directory
+					out: 'build',
+					// Precompress static assets
+					precompress: true,
+					// Environment variable prefix for runtime config
+					envPrefix: ''
+				})
 	}
 };
 
