@@ -2,7 +2,7 @@
   import { onMount, onDestroy } from 'svelte';
   import type { SavedObject, MapConfig, MapObject, GeoJSON, Tag, CategoryFieldData, Field } from './types.js';
   import * as mapBoundaries from './features/mapBoundaries/index.js';
-  import { loadLeaflet, loadMarkerCluster, TILE_PROVIDERS, getTileProvider } from './features/leafletMap/leafletUtils.js';
+  import { loadLeaflet, loadMarkerCluster, registerSmoothWheelZoom, TILE_PROVIDERS, getTileProvider } from './features/leafletMap/leafletUtils.js';
   import { updateMapMarkers, updateSelectedMarker } from './features/leafletMap/markerManager.js';
   import { createBoundsOverlay as createBoundsOverlayLayer, createBoundaryPolygon as createBoundaryPolygonLayer } from './features/mapBoundaries/boundaryRenderer.js';
   import { calculateMovementLine } from './features/mapInteraction/movementLineAnimator.js';
@@ -47,6 +47,7 @@
 
   onMount(async () => {
     L = await loadLeaflet();
+    registerSmoothWheelZoom();
     await loadMarkerCluster();
     initializeMap();
     updateMarkers();
@@ -113,7 +114,11 @@
     }
 
     // Initialize map and fit to bounds automatically
-    map = L.map(mapContainer);
+    map = L.map(mapContainer, {
+      scrollWheelZoom: false,
+      smoothWheelZoom: true,
+      smoothSensitivity: 1
+    });
     map.fitBounds(fitBounds, { padding: [50, 50] }); // Add padding for better view
 
     // Expand bounds by 100% margin to allow maximum panning flexibility
