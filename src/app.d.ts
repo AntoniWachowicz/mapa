@@ -1,16 +1,12 @@
-import type { Template, SavedObject, MapConfig } from '$lib/types';
+import type { Template, SavedObject, MapConfig, AuthUser } from '$lib/types';
 
 declare global {
   namespace App {
     interface Locals {
-      user: {
-        username: string;
-      } | null;
+      user: AuthUser | null;
     }
     interface PageData {
-      user?: {
-        username: string;
-      } | null;
+      user?: AuthUser | null;
       template?: Template;
       objects?: SavedObject[];
       mapConfig?: MapConfig;
@@ -23,9 +19,8 @@ declare global {
 
 declare module '$env/static/private' {
   export const MONGODB_URI: string;
-  export const AUTH_USERNAME: string;
-  export const AUTH_PASSWORD: string;
   export const AUTH_SECRET: string;
+  // AUTH_USERNAME / AUTH_PASSWORD removed — authentication is now database-driven
 }
 
 export {};

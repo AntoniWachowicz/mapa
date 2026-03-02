@@ -1,22 +1,15 @@
 import { getTemplate, updateTemplate, getObjects, createObject, deleteObject, updateObject } from '$lib/server/schemadb.js';
 import { fail } from '@sveltejs/kit';
+import type { RequestEvent } from '@sveltejs/kit';
 import type { Template, ProjectData } from '$lib/types.js';
 
-export async function load() {
+export async function load({ locals }: { locals: App.Locals }) {
+  const tenantId = locals.user!.tenantId!;
   try {
-    // Load template and objects in parallel for faster page loads
-    const [template, objects] = await Promise.all([
-      getTemplate(),
-      getObjects()
-    ]);
-
-    return {
-      template,
-      objects
-    };
+    const [template, objects] = await Promise.all([getTemplate(tenantId), getObjects(tenantId)]);
+    return { template, objects };
   } catch (error) {
     console.error('Error loading data:', error);
-    // Return proper defaults
     return {
       template: {
         fields: [
@@ -30,20 +23,15 @@ export async function load() {
   }
 }
 
-type RequestEvent = {
-  request: Request;
-};
-
 export const actions = {
-  updateTemplate: async ({ request }: RequestEvent) => {
+  updateTemplate: async ({ request, locals }: RequestEvent) => {
+    const tenantId = locals.user!.tenantId!;
     try {
       const data = await request.formData();
       const templateString = data.get('template');
-      if (typeof templateString !== 'string') {
-        return fail(400, { error: 'Invalid template data' });
-      }
+      if (typeof templateString !== 'string') return fail(400, { error: 'Invalid template data' });
       const template: Template = JSON.parse(templateString);
-      await updateTemplate(template);
+      await updateTemplate(tenantId, template);
       return { success: true };
     } catch (error) {
       console.error('Error updating template:', error);
@@ -51,22 +39,21 @@ export const actions = {
     }
   },
 
-  createObject: async ({ request }: RequestEvent) => {
+  createObject: async ({ request, locals }: RequestEvent) => {
+    const tenantId = locals.user!.tenantId!;
     try {
       const data = await request.formData();
       const objectDataString = data.get('data');
       const locationString = data.get('location');
       const hasIncompleteDataString = data.get('hasIncompleteData');
 
-      if (typeof objectDataString !== 'string') {
-        return fail(400, { error: 'Invalid object data' });
-      }
+      if (typeof objectDataString !== 'string') return fail(400, { error: 'Invalid object data' });
 
       const objectData: ProjectData = JSON.parse(objectDataString);
       const location = locationString ? JSON.parse(locationString as string) : { type: 'Point', coordinates: [0, 0] };
       const hasIncompleteData = hasIncompleteDataString === 'true';
 
-      await createObject(location, objectData, hasIncompleteData);
+      await createObject(tenantId, location, objectData, hasIncompleteData);
       return { success: true };
     } catch (error) {
       console.error('Error creating object:', error);
@@ -74,14 +61,13 @@ export const actions = {
     }
   },
 
-  deleteObject: async ({ request }: RequestEvent) => {
+  deleteObject: async ({ request, locals }: RequestEvent) => {
+    const tenantId = locals.user!.tenantId!;
     try {
       const data = await request.formData();
       const objectId = data.get('id');
-      if (typeof objectId !== 'string') {
-        return fail(400, { error: 'Invalid object ID' });
-      }
-      await deleteObject(objectId);
+      if (typeof objectId !== 'string') return fail(400, { error: 'Invalid object ID' });
+      await deleteObject(tenantId, objectId);
       return { success: true };
     } catch (error) {
       console.error('Error deleting object:', error);
@@ -89,7 +75,8 @@ export const actions = {
     }
   },
 
-  updateObject: async ({ request }: RequestEvent) => {
+  updateObject: async ({ request, locals }: RequestEvent) => {
+    const tenantId = locals.user!.tenantId!;
     try {
       const data = await request.formData();
       const objectId = data.get('id');
@@ -100,11 +87,8 @@ export const actions = {
       }
 
       const objectData: ProjectData = JSON.parse(objectDataString);
-      const updatedObject = await updateObject(objectId, objectData);
-
-      if (!updatedObject) {
-        return fail(404, { error: 'Object not found' });
-      }
+      const updatedObject = await updateObject(tenantId, objectId, objectData);
+      if (!updatedObject) return fail(404, { error: 'Object not found' });
 
       return { success: true };
     } catch (error) {
@@ -112,4 +96,4 @@ export const actions = {
       return fail(500, { error: 'Failed to update object' });
     }
   }
-}
+};

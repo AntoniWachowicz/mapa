@@ -4,6 +4,7 @@
   import PinList from '$lib/PinList.svelte';
   import PinDetailPanel from '$lib/PinDetailPanel.svelte';
   import Icon from '$lib/Icon.svelte';
+  import { filterByText, sortObjects } from '$lib/utils/filterSort.js';
   import type { Template, SavedObject, MapObject, MapConfig, CategoryFieldData, ProjectData, PriceData, TagsFieldData, AddressData, LinkData, FileData, GalleryData, MultiDateData, GeoJSON } from '$lib/types.js';
 
   interface PageData {
@@ -37,45 +38,16 @@
   // Filter and sort state
   let filterText = $state('');
   let sortField = $state('');
+  let sortDirection = $state<'asc' | 'desc'>('asc');
   let filteredObjects = $state<SavedObject[]>([]);
   let showFilterInput = $state(false);
   let showSortSelect = $state(false);
 
-  // Initialize and sync filtered objects
+  // Reactive filter + sort pipeline
   $effect(() => {
-    filteredObjects = [...objects];
+    const filtered = filterByText(objects, template.fields, filterText);
+    filteredObjects = sortObjects(filtered, sortField, sortDirection);
   });
-
-  function handleFilter(): void {
-    let filtered = objects;
-
-    // Text filter
-    if (filterText.trim()) {
-      filtered = filtered.filter(obj => {
-        const searchTerm = filterText.toLowerCase();
-        return template.fields.some(field => {
-          if (!field.key) return false;
-          const value = obj.data[field.key];
-          if (typeof value === 'string') {
-            return value.toLowerCase().includes(searchTerm);
-          }
-          return false;
-        });
-      });
-    }
-
-    filteredObjects = filtered;
-  }
-
-  function handleSort(): void {
-    if (!sortField) return;
-
-    filteredObjects = [...filteredObjects].sort((a, b) => {
-      const aValue = a.data[sortField] || '';
-      const bValue = b.data[sortField] || '';
-      return String(aValue).localeCompare(String(bValue));
-    });
-  }
 
   function focusOnPin(obj: SavedObject): void {
     if (obj.location && obj.location.coordinates && obj.location.coordinates.length === 2) {
@@ -461,15 +433,6 @@
     return result;
   });
 
-  // Update filters when inputs change
-  $effect(() => {
-    handleFilter();
-  });
-
-  $effect(() => {
-    handleSort();
-  });
-
   // Resize functionality
   function startResize(e: MouseEvent): void {
     isDragging = true;
@@ -521,12 +484,23 @@
         >
       {/if}
       {#if showSortSelect}
-        <select bind:value={sortField} class="sort-select-full">
-          <option value="">Sortuj według...</option>
-          {#each template.fields.filter(f => f.visible) as field}
-            <option value={field.key}>{field.displayLabel || field.label}</option>
-          {/each}
-        </select>
+        <div class="sort-row">
+          <select bind:value={sortField} class="sort-select-full">
+            <option value="">Sortuj według...</option>
+            {#each template.fields.filter(f => f.visible) as field}
+              <option value={field.key}>{field.displayLabel || field.label}</option>
+            {/each}
+          </select>
+          {#if sortField}
+            <button
+              class="sort-direction-btn"
+              title={sortDirection === 'asc' ? 'Rosnąco' : 'Malejąco'}
+              onclick={() => sortDirection = sortDirection === 'asc' ? 'desc' : 'asc'}
+            >
+              {sortDirection === 'asc' ? '↑' : '↓'}
+            </button>
+          {/if}
+        </div>
       {/if}
       <div class="filter-controls">
         <button
@@ -729,6 +703,33 @@
   }
 
   .filter-icon-btn.active {
+    color: var(--color-accent);
+  }
+
+  .sort-row {
+    display: flex;
+    gap: var(--space-2);
+    align-items: center;
+  }
+
+  .sort-direction-btn {
+    flex-shrink: 0;
+    width: 32px;
+    height: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--color-background);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-base);
+    cursor: pointer;
+    font-size: var(--text-base);
+    color: var(--color-text-primary);
+    transition: all var(--transition-fast);
+  }
+
+  .sort-direction-btn:hover {
+    border-color: var(--color-accent);
     color: var(--color-accent);
   }
 

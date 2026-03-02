@@ -1,7 +1,11 @@
 import type { Handle, HandleServerError } from '@sveltejs/kit';
 import { redirect, error } from '@sveltejs/kit';
-import { getUserFromCookies } from '$lib/server/auth.js';
+import { getUserFromCookies, clearAuthCookie } from '$lib/server/auth.js';
+import { getUserStatus, ensureIndexes } from '$lib/server/userdb.js';
 import { createLogger } from '$lib/server/logger.js';
+
+// Fire-and-forget: create DB indexes once per cold start (idempotent on Atlas)
+ensureIndexes().catch(() => {});
 
 const log = createLogger('hooks');
 
@@ -39,11 +43,31 @@ export const handle: Handle = async ({ event, resolve }) => {
   event.locals.user = getUserFromCookies(event.cookies);
 
   const pathname = event.url.pathname;
+  const isPageRoute = !pathname.startsWith('/api/');
+  const protectedPagePaths = ['/admin', '/schema-builder', '/map', '/addPin', '/list', '/account'];
+  const isProtectedPage = protectedPagePaths.some(p => pathname.startsWith(p));
+  const isSuperadminPage = pathname.startsWith('/superadmin');
 
-  // Protected page routes - require authentication, redirect to login
-  const protectedPagePaths = ['/admin', '/schema-builder', '/map', '/addPin'];
-  const isProtectedPage = protectedPagePaths.some(path => pathname.startsWith(path));
+  // For authenticated users on protected page routes: verify current DB status.
+  // JWT is stateless so without this check a suspended tenant stays in until token expiry (7d).
+  // Skipped for API routes — those are always triggered from within the protected UI anyway.
+  if (event.locals.user && isPageRoute && (isProtectedPage || isSuperadminPage)) {
+    const status = await getUserStatus(event.locals.user.userId);
+    if (status === 'suspended') throw redirect(302, '/suspended');
+    if (!status) {
+      // User deleted from DB — clear stale cookie and treat as logged out
+      clearAuthCookie(event.cookies);
+      event.locals.user = null;
+    }
+  }
 
+  // Superadmin-only routes — require auth AND superadmin role
+  if (isSuperadminPage) {
+    if (!event.locals.user) throw redirect(302, '/login');
+    if (event.locals.user.role !== 'superadmin') throw error(403, 'Forbidden');
+  }
+
+  // Protected page routes — require authentication, redirect to login
   if (isProtectedPage && !event.locals.user) {
     throw redirect(302, '/login');
   }

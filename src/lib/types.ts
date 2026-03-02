@@ -1,5 +1,20 @@
 // src/lib/types.ts
 
+// ============================================================================
+// Auth types — used in JWT payload and App.Locals
+// ============================================================================
+
+export type UserRole = 'superadmin' | 'admin' | 'viewer';
+export type UserStatus = 'pending' | 'active' | 'suspended';
+
+export interface AuthUser {
+  userId: string;
+  tenantId: string | null; // null for superadmin (platform-level role, no tenant)
+  role: UserRole;
+  email: string;
+}
+
+// ============================================================================
 // GeoJSON type definitions
 export namespace GeoJSON {
   export interface Point {

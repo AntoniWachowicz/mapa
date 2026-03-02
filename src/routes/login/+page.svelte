@@ -40,14 +40,14 @@
       }}
     >
       <div class="form-group">
-        <label for="username">Nazwa użytkownika:</label>
-        <input 
-          id="username"
-          name="username" 
-          type="text" 
-          required 
+        <label for="email">Email:</label>
+        <input
+          id="email"
+          name="email"
+          type="email"
+          required
           disabled={loading}
-          autocomplete="username"
+          autocomplete="email"
         >
       </div>
       

@@ -1,20 +1,32 @@
 <script lang="ts">
   /**
    * ListActionsToolbar
-   * Toolbar with export template, import Excel, and export table actions.
+   * Toolbar with search input, export template, import Excel, and export table actions.
    */
   import Icon from '$lib/Icon.svelte';
 
   interface Props {
+    searchText?: string;
+    onSearchChange?: (text: string) => void;
     onTemplateDownload: () => void;
     onExcelImport: (event: Event) => void;
     onExcelExport: () => void;
   }
 
-  const { onTemplateDownload, onExcelImport, onExcelExport }: Props = $props();
+  const { searchText = '', onSearchChange, onTemplateDownload, onExcelImport, onExcelExport }: Props = $props();
 </script>
 
 <div class="list-actions">
+  <div class="search-wrapper">
+    <Icon name="Magnigier Glass" size={16} />
+    <input
+      type="text"
+      value={searchText}
+      oninput={(e) => onSearchChange?.(e.currentTarget.value)}
+      placeholder="Wyszukaj..."
+      class="search-input"
+    >
+  </div>
   <button class="btn btn-primary" onclick={onTemplateDownload}>
     <Icon name="Action/Download • 1" size={16} />
     <span>Export szablonu</span>
@@ -41,6 +53,34 @@
     gap: 12px;
     align-items: center;
     flex-wrap: wrap;
+  }
+
+  .search-wrapper {
+    display: flex;
+    align-items: center;
+    gap: 0.375rem;
+    border: 1px solid #000000;
+    padding: 0.5rem 0.75rem;
+    background: #ffffff;
+    flex-shrink: 0;
+  }
+
+  .search-wrapper :global(.icon) {
+    flex-shrink: 0;
+    opacity: 0.5;
+  }
+
+  .search-input {
+    border: none;
+    outline: none;
+    font-family: "Space Mono", monospace;
+    font-size: 0.875rem;
+    background: transparent;
+    width: 160px;
+  }
+
+  .search-input::placeholder {
+    color: #999;
   }
 
   .btn {

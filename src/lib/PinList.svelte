@@ -7,7 +7,7 @@
 </svelte:head>
 
 <script lang="ts">
-  import type { SavedObject, Template, CategoryFieldData, TagsFieldData, Tag, SelectionConfig, SelectionFieldData } from './types.js';
+  import type { SavedObject, Template, CategoryFieldData, TagsFieldData, Tag, SelectionConfig, SelectionFieldData, AddressData, PriceData, LinkData, FileData, GalleryData, MultiDateData } from './types.js';
   import Icon from './Icon.svelte';
 
   interface Props {
@@ -41,13 +41,92 @@
   }
   
   // Format field value for compact list item display
-  // NOTE: Returns empty string (not '—') for missing values to save space
-  // NOTE: Category/tags excluded as they're rendered separately in this component
   function formatListItemValue(field: any, value: any): string {
-    if (field.type === 'category' || field.type === 'tags') {
-      return ''; // Category and tags are handled separately
-    } else {
-      return value?.toString() || '';
+    if (!value && value !== 0) return '';
+
+    const fieldType = field.fieldType || field.type;
+
+    switch (fieldType) {
+      case 'category':
+      case 'tags':
+        return ''; // Handled separately
+
+      case 'address':
+        if (typeof value === 'object') {
+          const a = value as AddressData;
+          const parts = [];
+          if (a.street) parts.push(a.street + (a.number ? ' ' + a.number : ''));
+          if (a.postalCode || a.city) parts.push([a.postalCode, a.city].filter(Boolean).join(' '));
+          if (a.gmina) parts.push('gm. ' + a.gmina);
+          return parts.join(', ');
+        }
+        return '';
+
+      case 'price':
+        if (typeof value === 'object' && 'currency' in value) {
+          const p = value as PriceData;
+          if (p.total) return `${Number(p.total).toLocaleString('pl-PL')} ${p.currency || 'PLN'}`;
+          if (p.funding?.length) {
+            const total = p.funding.reduce((sum, f) => sum + (f.amount || 0), 0);
+            return `${total.toLocaleString('pl-PL')} ${p.currency || 'PLN'}`;
+          }
+        }
+        return '';
+
+      case 'links':
+        if (Array.isArray(value)) return (value as LinkData[]).map(l => l.text || l.url).join(', ');
+        return '';
+
+      case 'files':
+        if (Array.isArray(value)) return (value as FileData[]).map(f => f.originalName || f.filename).join(', ');
+        return '';
+
+      case 'gallery':
+        if (typeof value === 'object' && 'items' in value) {
+          const g = value as GalleryData;
+          if (g.items?.length) return `${g.items.length} ${g.items.length === 1 ? 'element' : 'elementy'}`;
+        }
+        return '';
+
+      case 'multidate':
+        if (typeof value === 'object') {
+          const dates = Object.values(value as MultiDateData)
+            .filter((d): d is Date => d !== null)
+            .map(d => { try { return new Date(d).toLocaleDateString('pl-PL'); } catch { return ''; } })
+            .filter(Boolean);
+          return dates.join(', ');
+        }
+        return '';
+
+      case 'selection':
+        if (typeof value === 'object') {
+          const s = value as SelectionFieldData;
+          const config = field.config as SelectionConfig | undefined;
+          const options = config?.options || [];
+          const ids: string[] = [];
+          if (s.selected) ids.push(s.selected);
+          else if (s.primary) { ids.push(s.primary); if (s.secondary) ids.push(...s.secondary); }
+          else if (s.selections) ids.push(...s.selections);
+          return ids.map(id => { const opt = options.find(o => o.id === id); return opt ? opt.value : id; }).join(', ');
+        }
+        return '';
+
+      case 'richtext':
+        if (typeof value === 'string') {
+          const stripped = value.replace(/<[^>]*>/g, '');
+          return stripped.length > 100 ? stripped.substring(0, 100) + '...' : stripped;
+        }
+        return '';
+
+      case 'date':
+        try { return new Date(value).toLocaleDateString('pl-PL'); } catch { return String(value); }
+
+      case 'currency':
+        return `${Number(value).toLocaleString('pl-PL')} zł`;
+
+      default:
+        if (typeof value === 'object') return '';
+        return String(value);
     }
   }
 

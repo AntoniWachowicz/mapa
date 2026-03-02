@@ -34,6 +34,8 @@
     getFieldDisplayName,
     getFieldType
   } from '$lib/utils/formatters';
+  import { filterByText, sortObjects } from '$lib/utils/filterSort.js';
+  import { highlightText } from '$lib/utils/highlight.js';
 
   interface Props {
     data: {
@@ -47,6 +49,7 @@
 
   const { data }: Props = $props();
 
+  let searchText = $state('');
   let sortField = $state<string>('');
   let sortDirection = $state<'asc' | 'desc'>('asc');
   let filteredObjects = $state<SavedObject[]>(data.objects || []);
@@ -72,11 +75,11 @@
   // Flag to track if column widths have been initialized
   let columnWidthsInitialized = $state(false);
 
-  // Initialize data
+  // Initialize data and apply search filter + current sort
   $effect(() => {
-    if (data.objects) {
-      filteredObjects = [...data.objects];
-    }
+    const base = data.objects ? [...data.objects] : [];
+    const filtered = filterByText(base, data.template?.fields || [], searchText);
+    filteredObjects = sortObjects(filtered, sortField, sortDirection);
   });
 
   // Initialize column widths only once
@@ -144,30 +147,14 @@
       if (sortDirection === 'asc') {
         sortDirection = 'desc';
       } else if (sortDirection === 'desc') {
-        // Reset sorting
         sortField = '';
         sortDirection = 'asc';
-        filteredObjects = data.objects ? [...data.objects] : [];
-        return;
       }
     } else {
       sortField = fieldKey;
       sortDirection = 'asc';
     }
-
-    filteredObjects = [...filteredObjects].sort((a, b) => {
-      const aValue = a.data[fieldKey] || '';
-      const bValue = b.data[fieldKey] || '';
-
-      const aString = String(aValue).toLowerCase();
-      const bString = String(bValue).toLowerCase();
-
-      if (sortDirection === 'asc') {
-        return aString < bString ? -1 : aString > bString ? 1 : 0;
-      } else {
-        return aString > bString ? -1 : aString < bString ? 1 : 0;
-      }
-    });
+    // The $effect handles re-computing filteredObjects from the new sort state
   }
 
   // Sync horizontal scroll between header and body
@@ -564,6 +551,8 @@
 {:else}
   <div class="list-container">
     <ListActionsToolbar
+      {searchText}
+      onSearchChange={(text) => searchText = text}
       onTemplateDownload={handleTemplateDownload}
       onExcelImport={importWorkflow.handleExcelImport}
       onExcelExport={handleExcelExport}
@@ -588,6 +577,7 @@
       bind:editingValue={cellEditor.editingValue}
       {hoverCell}
       {placeholderRowCount}
+      {searchText}
       isResizing={getIsResizing()}
       {justFinishedResizing}
       {getFieldDisplayName}
@@ -670,22 +660,22 @@
               {@const amountStr = formatPrice(fundingItem.amount)}
               {@const padding = maxLength - amountStr.length}
               <div class="tooltip-row">
-                <span class="tooltip-label">{fundingItem.source}:</span>
-                <span class="tooltip-value" style="padding-left: {padding}ch;">{amountStr} zł</span>
+                <span class="tooltip-label">{@html highlightText(fundingItem.source + ':', searchText)}</span>
+                <span class="tooltip-value" style="padding-left: {padding}ch;">{@html highlightText(amountStr + ' zł', searchText)}</span>
               </div>
             {/each}
             {#if data.showTotal !== false && calculatedTotal > 0}
               <div class="tooltip-row tooltip-total">
                 <span class="tooltip-label">Suma:</span>
-                <span class="tooltip-value">{totalStr} zł</span>
+                <span class="tooltip-value">{@html highlightText(totalStr + ' zł', searchText)}</span>
               </div>
             {/if}
           {/if}
         {:else if hoverTooltip.content.type === 'multidate'}
           {#each hoverTooltip.content.dateEntries as [label, date]}
             <div class="tooltip-row">
-              <span class="tooltip-label">{label}:</span>
-              <span class="tooltip-value">{new Date(date).toLocaleDateString('pl-PL')}</span>
+              <span class="tooltip-label">{@html highlightText(label + ':', searchText)}</span>
+              <span class="tooltip-value">{@html highlightText(new Date(date).toLocaleDateString('pl-PL'), searchText)}</span>
             </div>
           {/each}
         {:else if hoverTooltip.content.type === 'address'}
@@ -693,44 +683,44 @@
           {#if addressData.street}
             <div class="tooltip-row">
               <span class="tooltip-label">Ulica:</span>
-              <span class="tooltip-value">{addressData.street}{#if addressData.number} {addressData.number}{/if}</span>
+              <span class="tooltip-value">{@html highlightText(addressData.street + (addressData.number ? ' ' + addressData.number : ''), searchText)}</span>
             </div>
           {/if}
           {#if addressData.postalCode}
             <div class="tooltip-row">
               <span class="tooltip-label">Kod:</span>
-              <span class="tooltip-value">{addressData.postalCode}</span>
+              <span class="tooltip-value">{@html highlightText(addressData.postalCode, searchText)}</span>
             </div>
           {/if}
           {#if addressData.city}
             <div class="tooltip-row">
               <span class="tooltip-label">Miasto:</span>
-              <span class="tooltip-value">{addressData.city}</span>
+              <span class="tooltip-value">{@html highlightText(addressData.city, searchText)}</span>
             </div>
           {/if}
           {#if addressData.gmina}
             <div class="tooltip-row">
               <span class="tooltip-label">Gmina:</span>
-              <span class="tooltip-value">{addressData.gmina}</span>
+              <span class="tooltip-value">{@html highlightText(addressData.gmina, searchText)}</span>
             </div>
           {/if}
         {:else if hoverTooltip.content.type === 'links'}
           {#each hoverTooltip.content.links as link}
             <div class="tooltip-row">
               <a href={link.url} target="_blank" rel="noopener noreferrer" class="tooltip-link">
-                {link.text || link.url}
+                {@html highlightText(link.text || link.url, searchText)}
               </a>
             </div>
           {/each}
         {:else if hoverTooltip.content.type === 'selection'}
           {#each hoverTooltip.content.items as item}
             <div class="tooltip-row">
-              <span class="tooltip-tag" style="background-color: {item.color}">{item.label}</span>
+              <span class="tooltip-tag" style="background-color: {item.color}">{@html highlightText(item.label, searchText)}</span>
             </div>
           {/each}
         {:else if hoverTooltip.content.type === 'text'}
           <div class="tooltip-text">
-            {hoverTooltip.content.text}
+            {@html highlightText(hoverTooltip.content.text, searchText)}
           </div>
         {/if}
       </div>

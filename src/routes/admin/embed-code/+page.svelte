@@ -1,13 +1,11 @@
 <script lang="ts">
   import { browser } from '$app/environment';
+  import type { PageData } from './$types';
+
+  const { data }: { data: PageData } = $props();
 
   // Embed configuration
   let showList = $state(true);
-  let showFilters = $state(false);
-  let accentColor = $state('#3B82F6');
-  let backgroundColor = $state('#FFFFFF');
-  let listWidth = $state(350);
-  let mapStyle = $state('osm');
   let embedWidth = $state('100%');
   let embedHeight = $state('600px');
 
@@ -19,12 +17,8 @@
 
   const embedUrl = $derived(() => {
     const url = new URL(`${baseUrl()}/embed`);
-    url.searchParams.set('showList', String(showList));
-    url.searchParams.set('showFilters', String(showFilters));
-    url.searchParams.set('accentColor', accentColor);
-    url.searchParams.set('backgroundColor', backgroundColor);
-    url.searchParams.set('listWidth', String(listWidth));
-    url.searchParams.set('mapStyle', mapStyle);
+    if (data.tenantId) url.searchParams.set('t', data.tenantId);
+    if (!showList) url.searchParams.set('showList', 'false');
     return url.toString();
   });
 
@@ -39,11 +33,6 @@
 </iframe>`;
   });
 
-  const wordpressShortcode = $derived(() => {
-    return `[iframe src="${embedUrl()}" width="${embedWidth}" height="${embedHeight}"]`;
-  });
-
-  // Copy functions
   async function copyToClipboard(text: string, messageId: string) {
     try {
       await navigator.clipboard.writeText(text);
@@ -67,7 +56,7 @@
 <div class="container">
   <div class="header">
     <h1>Generator kodu do osadzenia mapy</h1>
-    <p class="subtitle">Skonfiguruj wygląd mapy i skopiuj kod do swojej strony WordPress</p>
+    <p class="subtitle">Skopiuj kod iframe, aby osadzić mapę na swojej stronie</p>
   </div>
 
   <div class="content">
@@ -75,49 +64,13 @@
       <h2>Konfiguracja</h2>
 
       <div class="config-group">
-        <h3>Widoczność elementów</h3>
         <label class="checkbox-label">
           <input type="checkbox" bind:checked={showList} />
           <span>Pokaż listę pinezek</span>
         </label>
-
-        <label class="checkbox-label">
-          <input type="checkbox" bind:checked={showFilters} />
-          <span>Pokaż pole wyszukiwania</span>
-        </label>
       </div>
 
       <div class="config-group">
-        <h3>Styl mapy</h3>
-        <label>
-          <span class="label-text">Warstwa mapowa:</span>
-          <select bind:value={mapStyle} class="select-input">
-            <option value="osm">OpenStreetMap (Standard)</option>
-            <option value="watercolor">Watercolor (Akwarela)</option>
-            <option value="satellite">Satellite (Satelita)</option>
-            <option value="terrain">Terrain (Teren)</option>
-          </select>
-        </label>
-
-        <label>
-          <span class="label-text">Kolor akcentu:</span>
-          <div class="color-input-wrapper">
-            <input type="color" bind:value={accentColor} class="color-input" />
-            <input type="text" bind:value={accentColor} class="text-input" />
-          </div>
-        </label>
-
-        <label>
-          <span class="label-text">Kolor tła:</span>
-          <div class="color-input-wrapper">
-            <input type="color" bind:value={backgroundColor} class="color-input" />
-            <input type="text" bind:value={backgroundColor} class="text-input" />
-          </div>
-        </label>
-      </div>
-
-      <div class="config-group">
-        <h3>Wymiary</h3>
         <label>
           <span class="label-text">Szerokość iframe:</span>
           <input type="text" bind:value={embedWidth} class="text-input" placeholder="np. 100%, 800px" />
@@ -127,13 +80,6 @@
           <span class="label-text">Wysokość iframe:</span>
           <input type="text" bind:value={embedHeight} class="text-input" placeholder="np. 600px, 80vh" />
         </label>
-
-        {#if showList}
-          <label>
-            <span class="label-text">Szerokość listy pinezek (px):</span>
-            <input type="number" bind:value={listWidth} min="200" max="600" class="text-input" />
-          </label>
-        {/if}
       </div>
     </div>
 
@@ -147,8 +93,8 @@
         ></iframe>
       </div>
 
-      <div class="url-display">
-        <h3>URL do osadzenia:</h3>
+      <div class="code-display">
+        <h3>Bezpośredni URL:</h3>
         <div class="code-block">
           <code>{embedUrl()}</code>
           <button
@@ -177,22 +123,11 @@
         <span id="iframe-message" class="copy-message"></span>
       </div>
 
-      <div class="code-display">
-        <h3>WordPress shortcode:</h3>
-        <div class="code-block">
-          <code>{wordpressShortcode()}</code>
-          <button
-            onclick={() => copyToClipboard(wordpressShortcode(), 'wp-message')}
-            class="copy-btn"
-            type="button"
-          >
-            Kopiuj
-          </button>
-        </div>
-        <span id="wp-message" class="copy-message"></span>
-        <p class="help-text">
-          * Wymaga wtyczki obsługującej shortcode [iframe] lub dodania własnego kodu do functions.php
-        </p>
+      <div class="instructions">
+        <h3>Jak osadzić mapę?</h3>
+        <p><strong>WordPress:</strong> Dodaj blok „Własny HTML" i wklej kod iframe.</p>
+        <p><strong>Joomla:</strong> Utwórz moduł „Własny HTML" i wklej kod iframe.</p>
+        <p><strong>Inne CMS:</strong> Wklej kod iframe w dowolnym miejscu, które obsługuje HTML.</p>
       </div>
     </div>
   </div>
@@ -226,7 +161,7 @@
 
   .content {
     display: grid;
-    grid-template-columns: 400px 1fr;
+    grid-template-columns: 350px 1fr;
     gap: var(--space-6);
   }
 
@@ -257,18 +192,10 @@
     padding-bottom: 0;
   }
 
-  .config-group h3 {
-    font-size: var(--text-base);
-    font-weight: var(--font-weight-medium);
-    margin: 0 0 var(--space-3) 0;
-    color: var(--color-text-primary);
-  }
-
   .checkbox-label {
     display: flex;
     align-items: center;
     gap: var(--space-2);
-    margin-bottom: var(--space-2);
     cursor: pointer;
   }
 
@@ -283,14 +210,17 @@
     margin-bottom: var(--space-3);
   }
 
+  label:last-child {
+    margin-bottom: 0;
+  }
+
   .label-text {
     font-size: var(--text-sm);
     font-weight: var(--font-weight-medium);
     color: var(--color-text-secondary);
   }
 
-  .text-input,
-  .select-input {
+  .text-input {
     padding: var(--space-2) var(--space-3);
     border: 1px solid var(--color-border);
     border-radius: var(--radius-base);
@@ -300,24 +230,9 @@
     transition: border-color var(--transition-fast);
   }
 
-  .text-input:focus,
-  .select-input:focus {
+  .text-input:focus {
     outline: none;
     border-color: var(--color-accent);
-  }
-
-  .color-input-wrapper {
-    display: flex;
-    gap: var(--space-2);
-    align-items: center;
-  }
-
-  .color-input {
-    width: 50px;
-    height: 38px;
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-base);
-    cursor: pointer;
   }
 
   .preview-section {
@@ -340,7 +255,6 @@
     max-width: 100%;
   }
 
-  .url-display,
   .code-display {
     background: var(--color-surface);
     padding: var(--space-4);
@@ -348,7 +262,6 @@
     border: 1px solid var(--color-border);
   }
 
-  .url-display h3,
   .code-display h3 {
     font-size: var(--text-base);
     font-weight: var(--font-weight-medium);
@@ -402,20 +315,34 @@
     min-height: 1.5em;
   }
 
-  .help-text {
+  .instructions {
+    background: var(--color-surface);
+    padding: var(--space-4);
+    border-radius: var(--radius-lg);
+    border: 1px solid var(--color-border);
+  }
+
+  .instructions h3 {
+    font-size: var(--text-base);
+    font-weight: var(--font-weight-medium);
+    margin: 0 0 var(--space-3) 0;
+    color: var(--color-text-primary);
+  }
+
+  .instructions p {
     font-size: var(--text-sm);
     color: var(--color-text-secondary);
-    margin: var(--space-2) 0 0 0;
-    font-style: italic;
+    margin: 0 0 var(--space-2) 0;
+    line-height: 1.5;
+  }
+
+  .instructions p:last-child {
+    margin-bottom: 0;
   }
 
   @media (max-width: 1200px) {
     .content {
       grid-template-columns: 1fr;
-    }
-
-    .config-section {
-      max-width: 100%;
     }
   }
 

@@ -6,6 +6,8 @@
    */
 
   import type { SavedObject, Template, PriceData, AddressData, LinkData, CategoryFieldData, SelectionFieldData, SelectionConfig, SelectionOption } from '$lib/types';
+  import { extractSearchText } from '$lib/utils/filterSort.js';
+  import { highlightText } from '$lib/utils/highlight.js';
 
   interface Props {
     field: any;
@@ -18,6 +20,7 @@
     isSorted?: boolean;
     width?: number;
     hoverCell?: { objectId: string; fieldKey: string } | null;
+    searchText?: string;
 
     // Helper functions passed from parent
     formatTableCellValue: (field: any, value: any) => string;
@@ -53,6 +56,7 @@
     isSorted = false,
     width = 200,
     hoverCell = null,
+    searchText = '',
     formatTableCellValue,
     formatPrice,
     hasHiddenData,
@@ -75,6 +79,54 @@
 
   const cellId = $derived(`${object.id}-${field.key}`);
   const fieldValue = $derived(object.data[field.key]);
+
+  // Search match detection
+  const cellHasMatch = $derived.by(() => {
+    if (!searchText) return false;
+    const text = extractSearchText(field, fieldValue);
+    return text.toLowerCase().includes(searchText.toLowerCase());
+  });
+
+  // DOM ref for checking if <mark> highlights are visible within clipped cell
+  let cellContentEl: HTMLElement | undefined = $state();
+  let matchIsHidden = $state(false);
+
+  $effect(() => {
+    // Track reactive deps that affect DOM content
+    const _deps = [searchText, cellHasMatch, isExpanded, fieldValue];
+    void _deps;
+
+    if (!cellContentEl || !searchText || !cellHasMatch || isExpanded) {
+      matchIsHidden = false;
+      return;
+    }
+
+    // After DOM update, check if any <mark> is visible inside the clipped container
+    const marks = cellContentEl.querySelectorAll('mark.search-hl');
+    if (marks.length === 0) {
+      matchIsHidden = false;
+      return;
+    }
+
+    const containerRect = cellContentEl.getBoundingClientRect();
+    let anyVisible = false;
+
+    for (const mark of marks) {
+      const markRect = mark.getBoundingClientRect();
+      // Mark is at least partially visible if it overlaps the container
+      if (
+        markRect.bottom > containerRect.top &&
+        markRect.top < containerRect.bottom &&
+        markRect.right > containerRect.left &&
+        markRect.left < containerRect.right
+      ) {
+        anyVisible = true;
+        break;
+      }
+    }
+
+    matchIsHidden = !anyVisible;
+  });
 
   // Focus action for inputs
   function focus(element: HTMLElement) {
@@ -269,6 +321,8 @@
     <div
       class="cell-content"
       class:expanded={isExpanded}
+      class:has-match={searchText && cellHasMatch}
+      bind:this={cellContentEl}
       onclick={handleToggleRowExpansion}
       ondblclick={handleEditStart}
       onmouseenter={handleMouseEnter}
@@ -289,7 +343,7 @@
           <div class="compact-view">
             <div class="compact-line">{fundingCount} źródeł</div>
             <div class="compact-line">
-              <b>&Sigma;</b> {totalStr} zł
+              <b>&Sigma;</b> {@html highlightText(totalStr + ' zł', searchText)}
             </div>
           </div>
         {:else}
@@ -301,14 +355,14 @@
                   {@const amountStr = formatPrice(fundingItem.amount)}
                   {@const padding = maxLength - amountStr.length}
                   <div class="sub-field-row">
-                    <span class="sub-label">{fundingItem.source}:</span>
-                    <span class="sub-value" style="padding-left: {padding}ch;">{amountStr} zł</span>
+                    <span class="sub-label">{@html highlightText(fundingItem.source + ':', searchText)}</span>
+                    <span class="sub-value" style="padding-left: {padding}ch;">{@html highlightText(amountStr + ' zł', searchText)}</span>
                   </div>
                 {/each}
                 {#if priceData.showTotal !== false && calculatedTotal > 0}
                   <div class="sub-field-row total-row">
                     <span class="sub-label">Suma:</span>
-                    <span class="sub-value">{totalStr} zł</span>
+                    <span class="sub-value">{@html highlightText(totalStr + ' zł', searchText)}</span>
                   </div>
                 {/if}
               {/if}
@@ -323,15 +377,15 @@
           <div class="compact-view">
             <div class="compact-line">{dateCount} dat</div>
             <div class="compact-line">
-              {dateEntries[dateCount - 1][0]}: {new Date(dateEntries[dateCount - 1][1]).toLocaleDateString('pl-PL')}
+              {@html highlightText(dateEntries[dateCount - 1][0] + ': ' + new Date(dateEntries[dateCount - 1][1]).toLocaleDateString('pl-PL'), searchText)}
             </div>
           </div>
         {:else}
           <div class="sub-fields">
             {#each dateEntries as [label, date]}
               <div class="sub-field-row">
-                <span class="sub-label">{label}:</span>
-                <span class="sub-value">{new Date(date).toLocaleDateString('pl-PL')}</span>
+                <span class="sub-label">{@html highlightText(label + ':', searchText)}</span>
+                <span class="sub-value">{@html highlightText(new Date(date).toLocaleDateString('pl-PL'), searchText)}</span>
               </div>
             {/each}
           </div>
@@ -353,9 +407,9 @@
             {parts.push(addressData.city)}
           {/if}
           <div class="compact-view">
-            <div class="compact-line">{parts.join(', ')}</div>
+            <div class="compact-line">{@html highlightText(parts.join(', '), searchText)}</div>
             {#if addressData.gmina}
-              <div class="compact-line">Gmina: {addressData.gmina}</div>
+              <div class="compact-line">{@html highlightText('Gmina: ' + addressData.gmina, searchText)}</div>
             {/if}
           </div>
         {:else}
@@ -364,25 +418,25 @@
               {#if addressData.street}
                 <div class="sub-field-row">
                   <span class="sub-label">Ulica:</span>
-                  <span class="sub-value">{addressData.street}{#if addressData.number} {addressData.number}{/if}</span>
+                  <span class="sub-value">{@html highlightText(addressData.street + (addressData.number ? ' ' + addressData.number : ''), searchText)}</span>
                 </div>
               {/if}
               {#if addressData.postalCode}
                 <div class="sub-field-row">
                   <span class="sub-label">Kod:</span>
-                  <span class="sub-value">{addressData.postalCode}</span>
+                  <span class="sub-value">{@html highlightText(addressData.postalCode, searchText)}</span>
                 </div>
               {/if}
               {#if addressData.city}
                 <div class="sub-field-row">
                   <span class="sub-label">Miasto:</span>
-                  <span class="sub-value">{addressData.city}</span>
+                  <span class="sub-value">{@html highlightText(addressData.city, searchText)}</span>
                 </div>
               {/if}
               {#if addressData.gmina}
                 <div class="sub-field-row">
                   <span class="sub-label">Gmina:</span>
-                  <span class="sub-value">{addressData.gmina}</span>
+                  <span class="sub-value">{@html highlightText(addressData.gmina, searchText)}</span>
                 </div>
               {/if}
             </div>
@@ -425,7 +479,7 @@
             <div class="compact-line">{linkCount} linków</div>
             <div class="compact-line">
               <a href={links[linkCount - 1].url} target="_blank" rel="noopener noreferrer" class="sub-value">
-                {links[linkCount - 1].text || links[linkCount - 1].url}
+                {@html highlightText(links[linkCount - 1].text || links[linkCount - 1].url, searchText)}
               </a>
             </div>
           </div>
@@ -434,7 +488,7 @@
             {#each links as link}
               <div class="sub-field-row">
                 <a href={link.url} target="_blank" rel="noopener noreferrer" class="sub-value">
-                  {link.text || link.url}
+                  {@html highlightText(link.text || link.url, searchText)}
                 </a>
               </div>
             {/each}
@@ -445,7 +499,7 @@
           {@const tagData = fieldValue as CategoryFieldData}
           {@const majorTag = template.tags?.find(t => t.id === tagData.majorTag)}
           {#if majorTag}
-            <span class="selection-highlight" style="background-color: {majorTag.color}">{majorTag.displayName || majorTag.name}</span>
+            <span class="selection-highlight" style="background-color: {majorTag.color}">{@html highlightText(majorTag.displayName || majorTag.name, searchText)}</span>
           {:else}
             <span class="missing-data">—</span>
           {/if}
@@ -464,7 +518,7 @@
           {#if mode === 'single'}
             {#if selData.selected}
               <span class="selection-highlight" style="background-color: {getColor(selData.selected)}" class:custom={isCustom(selData.selected)}>
-                {getLabel(selData.selected)}
+                {@html highlightText(getLabel(selData.selected), searchText)}
               </span>
             {:else}
               <span class="missing-data">—</span>
@@ -472,11 +526,11 @@
           {:else if mode === 'multi'}
             {#if selData.selections && selData.selections.length > 0}
               <div class="selection-list">
-                <span class="selection-highlight" style="background-color: {getColor(selData.selections[0])}" class:custom={isCustom(selData.selections[0])}>{getLabel(selData.selections[0])}</span>
+                <span class="selection-highlight" style="background-color: {getColor(selData.selections[0])}" class:custom={isCustom(selData.selections[0])}>{@html highlightText(getLabel(selData.selections[0]), searchText)}</span>
                 {#if selData.selections.length > 1}
                   {#if isExpanded}
                     {#each selData.selections.slice(1) as selId}
-                      <span class="selection-highlight" style="background-color: {getColor(selId)}" class:custom={isCustom(selId)}>{getLabel(selId)}</span>
+                      <span class="selection-highlight" style="background-color: {getColor(selId)}" class:custom={isCustom(selId)}>{@html highlightText(getLabel(selId), searchText)}</span>
                     {/each}
                   {:else}
                     <span class="tag-more">+{selData.selections.length - 1}</span>
@@ -490,12 +544,12 @@
             {#if selData.primary || (selData.secondary && selData.secondary.length > 0)}
               <div class="selection-list">
                 {#if selData.primary}
-                  <span class="selection-highlight" style="background-color: {getColor(selData.primary)}">{getLabel(selData.primary)}</span>
+                  <span class="selection-highlight" style="background-color: {getColor(selData.primary)}">{@html highlightText(getLabel(selData.primary), searchText)}</span>
                 {/if}
                 {#if selData.secondary && selData.secondary.length > 0}
                   {#if isExpanded}
                     {#each selData.secondary as secId}
-                      <span class="selection-highlight secondary" style="background-color: {getColor(secId)}" class:custom={isCustom(secId)}>{getLabel(secId)}</span>
+                      <span class="selection-highlight secondary" style="background-color: {getColor(secId)}" class:custom={isCustom(secId)}>{@html highlightText(getLabel(secId), searchText)}</span>
                     {/each}
                   {:else}
                     <span class="tag-more">+{selData.secondary.length}</span>
@@ -512,8 +566,11 @@
       {:else}
         {@const formattedValue = formatTableCellValue(field, fieldValue)}
         <span class="field-value">
-          {formattedValue}
+          {@html highlightText(formattedValue, searchText)}
         </span>
+      {/if}
+      {#if matchIsHidden}
+        <span class="match-ellipsis">...</span>
       {/if}
     </div>
   {/if}
@@ -817,5 +874,25 @@
 
   .edit-cancel-btn:hover {
     background: var(--color-surface-hover);
+  }
+
+  /* Search highlight */
+  :global(mark.search-hl) {
+    background-color: #fef08a;
+    color: inherit;
+    padding: 0;
+    border-radius: 1px;
+  }
+
+  .match-ellipsis {
+    position: absolute;
+    bottom: 0.375rem;
+    right: 0.5rem;
+    background-color: #fef08a;
+    font-size: 0.8125rem;
+    line-height: 1.3;
+    padding: 0 2px;
+    pointer-events: none;
+    font-family: "Space Mono", monospace;
   }
 </style>

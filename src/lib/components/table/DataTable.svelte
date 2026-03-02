@@ -21,6 +21,7 @@
     editingValue: any;
     hoverCell: { objectId: string; fieldKey: string } | null;
     placeholderRowCount: number;
+    searchText?: string;
     isResizing?: boolean;
     justFinishedResizing?: boolean;
 
@@ -67,6 +68,7 @@
     editingValue = $bindable(),
     hoverCell,
     placeholderRowCount,
+    searchText = '',
     isResizing = false,
     justFinishedResizing = false,
     getFieldDisplayName,
@@ -202,6 +204,7 @@
                   isSorted={sortField === field.key}
                   width={columnWidths[field.key] || 200}
                   {hoverCell}
+                  {searchText}
                   {formatTableCellValue}
                   {formatPrice}
                   {hasHiddenData}

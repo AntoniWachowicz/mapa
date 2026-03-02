@@ -267,6 +267,7 @@
     flex-shrink: 0;
     height: 100vh;
     overflow: hidden;
+    max-width: 35%;
   }
 
   .filters {

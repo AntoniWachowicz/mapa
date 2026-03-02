@@ -1,4 +1,5 @@
 import { connectToDatabase } from './database.js';
+import { ObjectId } from 'mongodb';
 import type { Template, SavedObject, ProjectData, Tag, CategoryFieldData, TagsFieldData, GeoJSON, Field, SelectionConfig, SelectionOption, SelectionFieldData } from '../types.js';
 
 // Version 2 Protected Fields - Always present
@@ -10,7 +11,6 @@ const PROTECTED_FIELDS: Field[] = [
     label: 'Tytuł',
     required: true,
     order: 0,
-    // Legacy compatibility
     key: 'title',
     displayLabel: 'Tytuł',
     type: 'text',
@@ -25,7 +25,6 @@ const PROTECTED_FIELDS: Field[] = [
     label: 'Lokalizacja',
     required: true,
     order: 1,
-    // Legacy compatibility
     key: 'location',
     displayLabel: 'Lokalizacja',
     type: 'text',
@@ -36,37 +35,28 @@ const PROTECTED_FIELDS: Field[] = [
 ];
 
 const DEFAULT_TEMPLATE: Template = {
-  version: 2, // New system version
+  version: 2,
   fields: [...PROTECTED_FIELDS],
   tags: []
 };
 
-export async function getTemplate(): Promise<Template> {
+// ─── Template ─────────────────────────────────────────────────────────────────
+
+export async function getTemplate(tenantId: string): Promise<Template> {
   try {
     const db = await connectToDatabase();
     const collection = db.collection('settings');
-
-    const result = await collection.findOne({ type: 'template' });
+    const result = await collection.findOne({ type: 'template', tenantId });
 
     if (!result) {
-      await collection.insertOne({
-        type: 'template',
-        template: DEFAULT_TEMPLATE
-      });
+      await collection.insertOne({ type: 'template', tenantId, template: DEFAULT_TEMPLATE });
       return DEFAULT_TEMPLATE;
     }
 
-    // Always ensure essential fields are present
     const secureTemplate = ensureProtectedFields(result.template);
-
-    // Update DB if we had to add missing essential fields
     if (JSON.stringify(secureTemplate) !== JSON.stringify(result.template)) {
-      await collection.updateOne(
-        { type: 'template' },
-        { $set: { template: secureTemplate } }
-      );
+      await collection.updateOne({ type: 'template', tenantId }, { $set: { template: secureTemplate } });
     }
-
     return secureTemplate;
   } catch (error) {
     console.error('Error getting template:', error);
@@ -76,79 +66,35 @@ export async function getTemplate(): Promise<Template> {
 
 function ensureProtectedFields(template: Template): Template {
   const existingFields = template.fields || [];
-
-  // Check if this is a version 2 schema
   const isV2 = template.version === 2;
 
   if (isV2) {
-    // For version 2, just ensure title and location exist with new structure
-    const protectedFieldNames = PROTECTED_FIELDS.map(f => f.fieldName);
-    const existingProtected = existingFields.filter(f =>
-      f.fieldName && protectedFieldNames.includes(f.fieldName)
-    );
-    const nonProtected = existingFields.filter(f =>
-      !f.fieldName || !protectedFieldNames.includes(f.fieldName)
-    );
-
-    // Merge with defaults
-    const mergedProtected = PROTECTED_FIELDS.map(defaultField => {
-      const existing = existingProtected.find(f => f.fieldName === defaultField.fieldName);
-      if (existing) {
-        return {
-          ...defaultField,
-          label: existing.label,
-          required: existing.required
-        };
-      }
-      return defaultField;
+    const protectedNames = PROTECTED_FIELDS.map(f => f.fieldName);
+    const existingProtected = existingFields.filter(f => f.fieldName && protectedNames.includes(f.fieldName));
+    const nonProtected = existingFields.filter(f => !f.fieldName || !protectedNames.includes(f.fieldName));
+    const mergedProtected = PROTECTED_FIELDS.map(def => {
+      const existing = existingProtected.find(f => f.fieldName === def.fieldName);
+      return existing ? { ...def, label: existing.label, required: existing.required } : def;
     });
-
-    return {
-      version: 2,
-      fields: [...mergedProtected, ...nonProtected],
-      tags: template.tags || []
-    };
+    return { version: 2, fields: [...mergedProtected, ...nonProtected], tags: template.tags || [] };
   } else {
-    // Legacy schema (version 1) - use key-based lookup
-    const protectedFieldKeys = PROTECTED_FIELDS.map(f => f.key);
-    const existingProtected = existingFields.filter(f =>
-      f.key && protectedFieldKeys.includes(f.key)
-    );
-    const nonProtected = existingFields.filter(f =>
-      !f.key || !protectedFieldKeys.includes(f.key)
-    );
-
-    const mergedProtected = PROTECTED_FIELDS.map(defaultField => {
-      const existing = existingProtected.find(f => f.key === defaultField.key);
-      if (existing) {
-        return {
-          ...defaultField,
-          visible: existing.visible,
-          adminVisible: existing.adminVisible,
-          required: existing.required
-        };
-      }
-      return defaultField;
+    const protectedKeys = PROTECTED_FIELDS.map(f => f.key);
+    const existingProtected = existingFields.filter(f => f.key && protectedKeys.includes(f.key));
+    const nonProtected = existingFields.filter(f => !f.key || !protectedKeys.includes(f.key));
+    const mergedProtected = PROTECTED_FIELDS.map(def => {
+      const existing = existingProtected.find(f => f.key === def.key);
+      return existing ? { ...def, visible: existing.visible, adminVisible: existing.adminVisible, required: existing.required } : def;
     });
-
-    return {
-      version: template.version,
-      fields: [...mergedProtected, ...nonProtected],
-      tags: template.tags || []
-    };
+    return { version: template.version, fields: [...mergedProtected, ...nonProtected], tags: template.tags || [] };
   }
 }
 
-export async function updateTemplate(template: Template): Promise<void> {
+export async function updateTemplate(tenantId: string, template: Template): Promise<void> {
   try {
     const db = await connectToDatabase();
-    const collection = db.collection('settings');
-
-    // Ensure essential fields are always present
     const secureTemplate = ensureProtectedFields(template);
-
-    await collection.updateOne(
-      { type: 'template' },
+    await db.collection('settings').updateOne(
+      { type: 'template', tenantId },
       { $set: { template: secureTemplate } },
       { upsert: true }
     );
@@ -158,65 +104,36 @@ export async function updateTemplate(template: Template): Promise<void> {
   }
 }
 
-export async function getObjects(): Promise<SavedObject[]> {
+// ─── Objects ──────────────────────────────────────────────────────────────────
+
+export async function getObjects(tenantId: string): Promise<SavedObject[]> {
   try {
     const db = await connectToDatabase();
-    const collection = db.collection('objects');
-
-    const results = await collection.find({}).toArray();
-
-    const mapped = results.map(doc => {
-      const obj: SavedObject = {
-        id: doc._id.toString(),
-        data: doc.data
-      };
-
-      // Handle location - can be null for incomplete imports
-      if (doc.location) {
-        obj.location = doc.location;
-      }
-
-      if (doc.hasIncompleteData) {
-        obj.hasIncompleteData = doc.hasIncompleteData;
-      }
-
-      if (doc.missingFields && doc.missingFields.length > 0) {
-        obj.missingFields = doc.missingFields;
-      }
-
+    const results = await db.collection('objects').find({ tenantId }).toArray();
+    return results.map(doc => {
+      const obj: SavedObject = { id: doc._id.toString(), data: doc.data };
+      if (doc.location) obj.location = doc.location;
+      if (doc.hasIncompleteData) obj.hasIncompleteData = doc.hasIncompleteData;
+      if (doc.missingFields?.length) obj.missingFields = doc.missingFields;
       return obj;
     });
-
-    return mapped;
   } catch (error) {
     console.error('Error getting objects:', error);
     return [];
   }
 }
 
-export async function getObjectById(objectId: string): Promise<SavedObject | null> {
+export async function getObjectById(tenantId: string, objectId: string): Promise<SavedObject | null> {
   try {
     const db = await connectToDatabase();
-    const collection = db.collection('objects');
-
-    const { ObjectId } = await import('mongodb');
-
-    const doc = await collection.findOne({ _id: new ObjectId(objectId) });
-
-    if (!doc) {
-      return null;
-    }
-
+    const doc = await db.collection('objects').findOne({ _id: new ObjectId(objectId), tenantId });
+    if (!doc) return null;
     const obj: SavedObject = {
       id: doc._id.toString(),
       location: doc.location || { type: 'Point', coordinates: [0, 0] },
       data: doc.data
     };
-
-    if (doc.hasIncompleteData) {
-      obj.hasIncompleteData = doc.hasIncompleteData;
-    }
-
+    if (doc.hasIncompleteData) obj.hasIncompleteData = doc.hasIncompleteData;
     return obj;
   } catch (error) {
     console.error('Error getting object by ID:', error);
@@ -225,6 +142,7 @@ export async function getObjectById(objectId: string): Promise<SavedObject | nul
 }
 
 export async function createObject(
+  tenantId: string,
   location: GeoJSON.Point | null,
   data: ProjectData,
   hasIncompleteData?: boolean,
@@ -232,103 +150,60 @@ export async function createObject(
 ): Promise<SavedObject> {
   try {
     const db = await connectToDatabase();
-    const collection = db.collection('objects');
+    const doc: Record<string, unknown> = { tenantId, data };
+    if (location) doc.location = location;
+    if (hasIncompleteData) doc.hasIncompleteData = hasIncompleteData;
+    if (missingFields?.length) doc.missingFields = missingFields;
 
-    const objectData: any = { data };
-
-    // Only add location if it's not null
-    if (location) {
-      objectData.location = location;
-    }
-
-    if (hasIncompleteData) {
-      objectData.hasIncompleteData = hasIncompleteData;
-    }
-
-    if (missingFields && missingFields.length > 0) {
-      objectData.missingFields = missingFields;
-    }
-
-    const result = await collection.insertOne(objectData);
-
-    const savedObject: SavedObject = {
-      id: result.insertedId.toString(),
-      data
-    };
-
-    if (location) {
-      savedObject.location = location;
-    }
-
-    if (hasIncompleteData) {
-      savedObject.hasIncompleteData = hasIncompleteData;
-    }
-
-    if (missingFields && missingFields.length > 0) {
-      savedObject.missingFields = missingFields;
-    }
-
-    return savedObject;
+    const result = await db.collection('objects').insertOne(doc);
+    const saved: SavedObject = { id: result.insertedId.toString(), data };
+    if (location) saved.location = location;
+    if (hasIncompleteData) saved.hasIncompleteData = hasIncompleteData;
+    if (missingFields?.length) saved.missingFields = missingFields;
+    return saved;
   } catch (error) {
     console.error('Error creating object:', error);
     throw error;
   }
 }
 
-export async function updateObject(objectId: string, newData: ProjectData, location?: GeoJSON.Point): Promise<SavedObject | null> {
+export async function updateObject(
+  tenantId: string,
+  objectId: string,
+  newData: ProjectData,
+  location?: GeoJSON.Point
+): Promise<SavedObject | null> {
   try {
     const db = await connectToDatabase();
-    const collection = db.collection('objects');
+    const updateFields: Record<string, unknown> = { data: newData };
+    if (location) updateFields.location = location;
 
-    const { ObjectId } = await import('mongodb');
-
-    // Build update object - only update location if provided
-    const updateFields: any = { data: newData };
-    if (location) {
-      updateFields.location = location;
-    }
-
-    const result = await collection.updateOne(
-      { _id: new ObjectId(objectId) },
+    const result = await db.collection('objects').updateOne(
+      { _id: new ObjectId(objectId), tenantId },
       { $set: updateFields }
     );
+    if (result.matchedCount === 0) return null;
 
-    if (result.matchedCount === 0) {
-      return null;
-    }
+    const updatedDoc = await db.collection('objects').findOne({ _id: new ObjectId(objectId), tenantId });
+    if (!updatedDoc) return null;
 
-    // Fetch the complete updated object including location
-    const updatedDoc = await collection.findOne({ _id: new ObjectId(objectId) });
-
-    if (!updatedDoc) {
-      return null;
-    }
-
-    const savedObject: SavedObject = {
+    const saved: SavedObject = {
       id: objectId,
       location: updatedDoc.location || { type: 'Point', coordinates: [0, 0] },
       data: newData
     };
-
-    if (updatedDoc.hasIncompleteData) {
-      savedObject.hasIncompleteData = updatedDoc.hasIncompleteData;
-    }
-
-    return savedObject;
+    if (updatedDoc.hasIncompleteData) saved.hasIncompleteData = updatedDoc.hasIncompleteData;
+    return saved;
   } catch (error) {
     console.error('Error updating object:', error);
     throw error;
   }
 }
 
-export async function deleteObject(objectId: string): Promise<boolean> {
+export async function deleteObject(tenantId: string, objectId: string): Promise<boolean> {
   try {
     const db = await connectToDatabase();
-    const collection = db.collection('objects');
-
-    const { ObjectId } = await import('mongodb');
-
-    const result = await collection.deleteOne({ _id: new ObjectId(objectId) });
+    const result = await db.collection('objects').deleteOne({ _id: new ObjectId(objectId), tenantId });
     return result.deletedCount > 0;
   } catch (error) {
     console.error('Error deleting object:', error);
@@ -336,11 +211,11 @@ export async function deleteObject(objectId: string): Promise<boolean> {
   }
 }
 
-// Tag-specific functions
-export async function createTag(name: string, displayName: string, color: string): Promise<Tag> {
+// ─── Tags ─────────────────────────────────────────────────────────────────────
+
+export async function createTag(tenantId: string, name: string, displayName: string, color: string): Promise<Tag> {
   try {
-    const template = await getTemplate();
-    
+    const template = await getTemplate(tenantId);
     const newTag: Tag = {
       id: `tag_${Date.now()}`,
       name,
@@ -349,13 +224,7 @@ export async function createTag(name: string, displayName: string, color: string
       order: template.tags.length,
       visible: true
     };
-    
-    const updatedTemplate: Template = {
-      ...template,
-      tags: [...template.tags, newTag]
-    };
-    
-    await updateTemplate(updatedTemplate);
+    await updateTemplate(tenantId, { ...template, tags: [...template.tags, newTag] });
     return newTag;
   } catch (error) {
     console.error('Error creating tag:', error);
@@ -363,58 +232,38 @@ export async function createTag(name: string, displayName: string, color: string
   }
 }
 
-export async function updateTag(tagId: string, updates: Partial<Tag>): Promise<void> {
+export async function updateTag(tenantId: string, tagId: string, updates: Partial<Tag>): Promise<void> {
   try {
-    const template = await getTemplate();
-    
-    const updatedTemplate: Template = {
+    const template = await getTemplate(tenantId);
+    await updateTemplate(tenantId, {
       ...template,
-      tags: template.tags.map(tag => 
-        tag.id === tagId ? { ...tag, ...updates } : tag
-      )
-    };
-    
-    await updateTemplate(updatedTemplate);
+      tags: template.tags.map(tag => tag.id === tagId ? { ...tag, ...updates } : tag)
+    });
   } catch (error) {
     console.error('Error updating tag:', error);
     throw error;
   }
 }
 
-export async function deleteTag(tagId: string): Promise<{ success: boolean; error?: string; affectedPins?: string[] }> {
+export async function deleteTag(
+  tenantId: string,
+  tagId: string
+): Promise<{ success: boolean; error?: string; affectedPins?: string[] }> {
   try {
-    const template = await getTemplate();
-    const objects = await getObjects();
-    
-    // Find pins using this tag as major tag
-    const affectedPins: string[] = [];
-    
-    for (const obj of objects) {
-      const tagData = obj.data.tags as CategoryFieldData;
-      if (tagData && tagData.majorTag === tagId) {
-        affectedPins.push(obj.id);
-      }
-    }
-    
-    // If tag is used as major tag, prevent deletion
+    const [template, objects] = await Promise.all([getTemplate(tenantId), getObjects(tenantId)]);
+    const affectedPins = objects
+      .filter(obj => (obj.data.tags as CategoryFieldData)?.majorTag === tagId)
+      .map(obj => obj.id);
+
     if (affectedPins.length > 0) {
-      return {
-        success: false,
-        error: 'Tag jest używany jako główny tag w niektórych pinezkach',
-        affectedPins
-      };
+      return { success: false, error: 'Tag jest używany jako główny tag w niektórych pinezkach', affectedPins };
     }
-    
-    // Archive the tag instead of deleting
-    const updatedTemplate: Template = {
+
+    // Archive instead of hard-delete
+    await updateTemplate(tenantId, {
       ...template,
-      tags: template.tags.map(tag => 
-        tag.id === tagId ? { ...tag, visible: false } : tag
-      )
-    };
-    
-    await updateTemplate(updatedTemplate);
-    
+      tags: template.tags.map(tag => tag.id === tagId ? { ...tag, visible: false } : tag)
+    });
     return { success: true };
   } catch (error) {
     console.error('Error deleting tag:', error);
@@ -422,56 +271,39 @@ export async function deleteTag(tagId: string): Promise<{ success: boolean; erro
   }
 }
 
-export async function reorderTags(tagIds: string[]): Promise<void> {
+export async function reorderTags(tenantId: string, tagIds: string[]): Promise<void> {
   try {
-    const template = await getTemplate();
-    
-    const reorderedTags = tagIds.map((id, index) => {
+    const template = await getTemplate(tenantId);
+    const reordered = tagIds.map((id, index) => {
       const tag = template.tags.find(t => t.id === id);
       if (!tag) throw new Error(`Tag with id ${id} not found`);
       return { ...tag, order: index };
     });
-    
-    const updatedTemplate: Template = {
-      ...template,
-      tags: reorderedTags
-    };
-    
-    await updateTemplate(updatedTemplate);
+    await updateTemplate(tenantId, { ...template, tags: reordered });
   } catch (error) {
     console.error('Error reordering tags:', error);
     throw error;
   }
 }
 
-export async function getTagUsageStats(): Promise<{ [tagId: string]: { majorCount: number; minorCount: number } }> {
+export async function getTagUsageStats(
+  tenantId: string
+): Promise<{ [tagId: string]: { majorCount: number; minorCount: number } }> {
   try {
-    const objects = await getObjects();
+    const objects = await getObjects(tenantId);
     const stats: { [tagId: string]: { majorCount: number; minorCount: number } } = {};
-
     for (const obj of objects) {
       const tagData = obj.data.tags as CategoryFieldData;
-      if (tagData) {
-        // Count major tag usage
-        if (tagData.majorTag) {
-          if (!stats[tagData.majorTag]) {
-            stats[tagData.majorTag] = { majorCount: 0, minorCount: 0 };
-          }
-          stats[tagData.majorTag].majorCount++;
-        }
-
-        // Count minor tag usage
-        if (tagData.minorTags && Array.isArray(tagData.minorTags)) {
-          for (const minorTagId of tagData.minorTags) {
-            if (!stats[minorTagId]) {
-              stats[minorTagId] = { majorCount: 0, minorCount: 0 };
-            }
-            stats[minorTagId].minorCount++;
-          }
-        }
+      if (!tagData) continue;
+      if (tagData.majorTag) {
+        stats[tagData.majorTag] ??= { majorCount: 0, minorCount: 0 };
+        stats[tagData.majorTag].majorCount++;
+      }
+      for (const id of tagData.minorTags || []) {
+        stats[id] ??= { majorCount: 0, minorCount: 0 };
+        stats[id].minorCount++;
       }
     }
-
     return stats;
   } catch (error) {
     console.error('Error getting tag usage stats:', error);
@@ -479,7 +311,8 @@ export async function getTagUsageStats(): Promise<{ [tagId: string]: { majorCoun
   }
 }
 
-// Migration function: Convert legacy category/tags field to selection field
+// ─── Field migration (category/tags → selection) ──────────────────────────────
+
 export interface MigrationResult {
   success: boolean;
   migratedPins: number;
@@ -497,45 +330,26 @@ export interface MigrationPreview {
   willRemoveTags: boolean;
 }
 
-export async function getMigrationPreview(fieldKey: string): Promise<MigrationPreview | null> {
+export async function getMigrationPreview(tenantId: string, fieldKey: string): Promise<MigrationPreview | null> {
   try {
-    const template = await getTemplate();
-    const objects = await getObjects();
-
-    // Find the field by key or fieldName
-    const field = template.fields.find(f =>
-      f.key === fieldKey || f.fieldName === fieldKey
-    );
-
-    if (!field) {
-      return null;
-    }
+    const [template, objects] = await Promise.all([getTemplate(tenantId), getObjects(tenantId)]);
+    const field = template.fields.find(f => f.key === fieldKey || f.fieldName === fieldKey);
+    if (!field) return null;
 
     const fieldType = field.fieldType || field.type;
-    if (fieldType !== 'category' && fieldType !== 'tags') {
-      return null;
-    }
+    if (fieldType !== 'category' && fieldType !== 'tags') return null;
 
-    // Count pins that have data for this field
-    const actualFieldKey = field.key || field.fieldName;
-    let pinCount = 0;
-    for (const obj of objects) {
-      const fieldData = obj.data[actualFieldKey];
-      if (fieldData && typeof fieldData === 'object') {
-        pinCount++;
-      }
-    }
-
-    // Check if there are other legacy fields
+    const actualKey = field.key || field.fieldName;
+    const pinCount = objects.filter(obj => obj.data[actualKey] && typeof obj.data[actualKey] === 'object').length;
     const otherLegacyFields = template.fields.filter(f => {
-      const fKey = f.key || f.fieldName;
-      const fType = f.fieldType || f.type;
-      return fKey !== actualFieldKey && (fType === 'category' || fType === 'tags');
+      const k = f.key || f.fieldName;
+      const t = f.fieldType || f.type;
+      return k !== actualKey && (t === 'category' || t === 'tags');
     });
 
     return {
-      fieldKey: actualFieldKey,
-      fieldLabel: field.label || field.displayLabel || actualFieldKey,
+      fieldKey: actualKey,
+      fieldLabel: field.label || field.displayLabel || actualKey,
       fieldType: fieldType as 'category' | 'tags',
       targetMode: fieldType === 'category' ? 'hierarchical' : 'multi',
       tagCount: template.tags.filter(t => t.visible !== false).length,
@@ -548,138 +362,69 @@ export async function getMigrationPreview(fieldKey: string): Promise<MigrationPr
   }
 }
 
-export async function migrateFieldToSelection(fieldKey: string): Promise<MigrationResult> {
+export async function migrateFieldToSelection(tenantId: string, fieldKey: string): Promise<MigrationResult> {
   try {
     const db = await connectToDatabase();
-    const objectsCollection = db.collection('objects');
+    const template = await getTemplate(tenantId);
 
-    // 1. Get current template
-    const template = await getTemplate();
-
-    // 2. Find the field by key or fieldName
-    const fieldIndex = template.fields.findIndex(f =>
-      f.key === fieldKey || f.fieldName === fieldKey
-    );
-
-    if (fieldIndex === -1) {
-      return { success: false, migratedPins: 0, removedTags: [], error: 'Nie znaleziono pola' };
-    }
+    const fieldIndex = template.fields.findIndex(f => f.key === fieldKey || f.fieldName === fieldKey);
+    if (fieldIndex === -1) return { success: false, migratedPins: 0, removedTags: [], error: 'Nie znaleziono pola' };
 
     const field = template.fields[fieldIndex];
     const fieldType = field.fieldType || field.type;
-    const actualFieldKey = field.key || field.fieldName;
+    const actualKey = field.key || field.fieldName;
 
-    // 3. Validate it's a legacy field type
     if (fieldType !== 'category' && fieldType !== 'tags') {
       return { success: false, migratedPins: 0, removedTags: [], error: 'Pole nie jest typu category lub tags' };
     }
 
-    // 4. Determine target mode
-    const targetMode = fieldType === 'category' ? 'hierarchical' : 'multi';
-
-    // 5. Build SelectionConfig from template.tags
     const options: SelectionOption[] = template.tags.map(tag => ({
-      id: tag.id,
-      value: tag.displayName || tag.name,
-      color: tag.color,
-      order: tag.order,
-      archived: tag.visible === false
+      id: tag.id, value: tag.displayName || tag.name, color: tag.color, order: tag.order, archived: tag.visible === false
     }));
+    const config: SelectionConfig = { mode: fieldType === 'category' ? 'hierarchical' : 'multi', options, allowCustom: false };
+    if (config.mode === 'hierarchical' && field.tagConfig?.maxMinorTags) config.maxSecondary = field.tagConfig.maxMinorTags;
 
-    const config: SelectionConfig = {
-      mode: targetMode,
-      options,
-      allowCustom: false
-    };
+    template.fields[fieldIndex] = { ...field, fieldType: 'selection', type: 'selection', config };
+    delete template.fields[fieldIndex].tagConfig;
 
-    // Add maxSecondary from tagConfig if available
-    if (targetMode === 'hierarchical' && field.tagConfig?.maxMinorTags) {
-      config.maxSecondary = field.tagConfig.maxMinorTags;
-    }
-
-    // 6. Update field definition
-    const updatedField: Field = {
-      ...field,
-      fieldType: 'selection',
-      type: 'selection',
-      config
-    };
-
-    // Remove legacy tagConfig
-    delete updatedField.tagConfig;
-
-    template.fields[fieldIndex] = updatedField;
-
-    // 7. Transform all pin data
-    const objects = await getObjects();
+    const objects = await getObjects(tenantId);
     let migratedPins = 0;
 
     for (const obj of objects) {
-      const oldData = obj.data[actualFieldKey];
+      const oldData = obj.data[actualKey];
       if (!oldData || typeof oldData !== 'object') continue;
 
       let newData: SelectionFieldData;
-
       if ('majorTag' in oldData) {
-        // CategoryFieldData → SelectionFieldData (hierarchical)
-        const catData = oldData as CategoryFieldData;
-        newData = {
-          primary: catData.majorTag,
-          secondary: catData.minorTags || [],
-          customEntries: []
-        };
+        const c = oldData as CategoryFieldData;
+        newData = { primary: c.majorTag, secondary: c.minorTags || [], customEntries: [] };
       } else if ('selectedTags' in oldData) {
-        // TagsFieldData → SelectionFieldData (multi)
-        const tagsData = oldData as TagsFieldData;
-        newData = {
-          selections: tagsData.selectedTags || [],
-          customEntries: []
-        };
+        const t = oldData as TagsFieldData;
+        newData = { selections: t.selectedTags || [], customEntries: [] };
       } else {
-        // Unknown format, skip
         continue;
       }
 
-      // Update the pin in database directly
-      const { ObjectId } = await import('mongodb');
-      await objectsCollection.updateOne(
-        { _id: new ObjectId(obj.id) },
-        { $set: { [`data.${actualFieldKey}`]: newData } }
+      // tenantId in filter ensures we never touch another tenant's documents
+      await db.collection('objects').updateOne(
+        { _id: new ObjectId(obj.id), tenantId },
+        { $set: { [`data.${actualKey}`]: newData } }
       );
-
       migratedPins++;
     }
 
-    // 8. Check if we should clean up template.tags
     const otherLegacyFields = template.fields.filter((f, i) => {
       if (i === fieldIndex) return false;
-      const fType = f.fieldType || f.type;
-      return fType === 'category' || fType === 'tags';
+      const t = f.fieldType || f.type;
+      return t === 'category' || t === 'tags';
     });
+    const removedTags = otherLegacyFields.length === 0 ? template.tags.map(t => t.id) : [];
+    if (otherLegacyFields.length === 0) template.tags = [];
 
-    let removedTags: string[] = [];
-
-    if (otherLegacyFields.length === 0) {
-      // No other legacy fields - remove all tags from global pool
-      removedTags = template.tags.map(t => t.id);
-      template.tags = [];
-    }
-
-    // 9. Save updated template
-    await updateTemplate(template);
-
-    return {
-      success: true,
-      migratedPins,
-      removedTags
-    };
+    await updateTemplate(tenantId, template);
+    return { success: true, migratedPins, removedTags };
   } catch (error) {
     console.error('Error migrating field to selection:', error);
-    return {
-      success: false,
-      migratedPins: 0,
-      removedTags: [],
-      error: error instanceof Error ? error.message : 'Nieznany błąd'
-    };
+    return { success: false, migratedPins: 0, removedTags: [], error: error instanceof Error ? error.message : 'Nieznany błąd' };
   }
 }

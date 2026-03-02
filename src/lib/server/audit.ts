@@ -51,12 +51,12 @@ export async function logAudit(entry: Omit<AuditEntry, 'timestamp'>): Promise<vo
 /**
  * Helper to extract client info from request event
  */
-export function getClientInfo(event: { getClientAddress: () => string; locals: { user?: { username: string } | null } }): {
+export function getClientInfo(event: { getClientAddress: () => string; locals: { user?: { userId: string } | null } }): {
   ip: string;
   userId?: string;
 } {
   return {
     ip: event.getClientAddress(),
-    userId: event.locals.user?.username
+    userId: event.locals.user?.userId
   };
 }

@@ -6,6 +6,23 @@ LLM-focused development guide for this SvelteKit mapping application.
 
 ---
 
+## Code Style (Mandatory)
+
+Write all code at senior-developer quality. Specifically:
+
+- **Dispatch tables over switch statements** — `Record<FieldType, Handler>` instead of `switch(type)`. Adding a new case means adding one entry, not touching multiple files.
+- **Composition over nesting** — chain `.map().filter().reduce()` rather than building intermediate arrays with loops
+- **Trust the type system** — no defensive null-checking where types already guarantee the value; only validate at system boundaries (user input, API responses, database reads)
+- **No unnecessary abstraction** — don't create helpers or utilities for one-off operations; three similar lines is better than a premature abstraction
+- **Minimal file splitting** — only split when there is a genuine reason (file too large, reused elsewhere, clear separation of concerns); not just because a concern exists
+- **No redundant comments** — never comment what the code already says; only comment architectural decisions, non-obvious contracts, and where things connect to the wider system
+
+**Comments must document decisions, not mechanics.** Good: `// dispatch table — add new field types here only, no other files need touching`. Bad: `// loop through fields`.
+
+The owner has limited TypeScript knowledge but quickly grasps concepts when explained. Write the best code possible; explain it when asked rather than simplifying it preemptively.
+
+---
+
 ## Quick Start
 
 ```bash

@@ -3,37 +3,26 @@ import type { RequestHandler } from './$types';
 import { getObjects, getTemplate } from '$lib/server/schemadb.js';
 import { logAudit, getClientInfo } from '$lib/server/audit.js';
 
-/**
- * Export all database data as JSON for backup/migration
- */
 export const GET: RequestHandler = async (event) => {
+  const tenantId = event.locals.user!.tenantId!;
   try {
-    const [objects, template] = await Promise.all([
-      getObjects(),
-      getTemplate()
-    ]);
+    const [objects, template] = await Promise.all([getObjects(tenantId), getTemplate(tenantId)]);
 
     const exportData = {
       exportedAt: new Date().toISOString(),
       version: '1.0',
+      tenantId,
       template,
       objects,
-      stats: {
-        objectCount: objects.length,
-        fieldCount: template.fields.length,
-        tagCount: template.tags.length
-      }
+      stats: { objectCount: objects.length, fieldCount: template.fields.length, tagCount: template.tags.length }
     };
 
-    // Audit log
     await logAudit({
-      action: 'database_reset', // Using existing action type for export
-      ...getClientInfo(event),
+      action: 'database_reset', ...getClientInfo(event),
       details: { type: 'export', objectCount: objects.length },
       success: true
     });
 
-    // Return as downloadable JSON
     return new Response(JSON.stringify(exportData, null, 2), {
       headers: {
         'Content-Type': 'application/json',
@@ -42,9 +31,6 @@ export const GET: RequestHandler = async (event) => {
     });
   } catch (error) {
     console.error('Export error:', error);
-    return json(
-      { success: false, error: 'Failed to export database' },
-      { status: 500 }
-    );
+    return json({ success: false, error: 'Failed to export database' }, { status: 500 });
   }
 };
