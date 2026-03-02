@@ -1,6 +1,5 @@
 <script lang="ts">
   import { enhance } from '$app/forms';
-  import { goto } from '$app/navigation';
   
   interface Props {
     form?: {
@@ -28,14 +27,9 @@
       use:enhance={({ formElement, formData, action, cancel, submitter }) => {
         loading = true;
         
-        return async ({ result, update }) => {
+        return async ({ update }) => {
           loading = false;
-          
-          if (result.type === 'redirect') {
-            goto(result.location);
-          } else {
-            await update();
-          }
+          await update();
         };
       }}
     >
